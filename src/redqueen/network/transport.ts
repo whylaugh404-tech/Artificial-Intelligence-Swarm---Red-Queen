@@ -12,14 +12,21 @@ export class P2PTransport {
   private readonly component = 'p2p_transport';
   private peers: Map<string, Peer> = new Map();
   private replayCache = new ReplayCache();
+  public publicEndpoint?: string;
   
   private messageListeners: ((msg: NetworkMessage) => void)[] = [];
+  private peerConnectedListeners: ((peer: Peer) => void)[] = [];
+  private peerDisconnectedListeners: ((peer: Peer) => void)[] = [];
 
   constructor(
     private readonly localNodeId: string,
     private readonly privateKey: string,
     private readonly publicKey: string
   ) {}
+
+  setEndpoint(url: string) {
+    this.publicEndpoint = url;
+  }
 
   async startServer(port: number): Promise<void> {
     return new Promise((resolve) => {
@@ -94,6 +101,7 @@ export class P2PTransport {
       this.privateKey,
       this.publicKey,
       isInitiator,
+      this.publicEndpoint,
       (p) => this.onPeerAuthenticated(p),
       (msg, p) => this.onMessageReceived(msg, p),
       (p) => this.onPeerDisconnected(p)
@@ -111,6 +119,10 @@ export class P2PTransport {
        this.peers.set(peer.remoteNodeId, peer);
        for (const [id, p] of this.peers.entries()) { if (p === peer && id !== peer.remoteNodeId) this.peers.delete(id); }
        logger.info(this.component, 'peer_registered', { nodeId: peer.remoteNodeId });
+       
+       for (const listener of this.peerConnectedListeners) {
+           listener(peer);
+       }
     }
   }
   
@@ -123,6 +135,10 @@ export class P2PTransport {
       if (p === peer) {
          this.peers.delete(id);
       }
+    }
+
+    for (const listener of this.peerDisconnectedListeners) {
+        listener(peer);
     }
   }
 
@@ -142,6 +158,14 @@ export class P2PTransport {
     this.messageListeners.push(listener);
   }
 
+  public onPeerConnected(listener: (peer: Peer) => void) {
+    this.peerConnectedListeners.push(listener);
+  }
+
+  public onPeerDisconnected(listener: (peer: Peer) => void) {
+    this.peerDisconnectedListeners.push(listener);
+  }
+
   broadcast(msgType: MessageType, payload: any) {
     if (this.peers.size === 0) return;
     
@@ -152,11 +176,37 @@ export class P2PTransport {
     }
   }
 
-  sendTo(targetNodeId: string, msgType: MessageType, payload: any) {
+  sendTo(targetNodeId: string, msgType: MessageType, payload: any, replyToId?: string): string | undefined {
     const peer = this.peers.get(targetNodeId);
     if (peer && peer.getState() === PeerState.AUTHENTICATED) {
-       peer.send(msgType, payload);
+       const msg = peer.send(msgType, payload, replyToId);
+       return msg.messageId;
     }
+    return undefined;
+  }
+
+  async requestFromPeer(targetNodeId: string, msgType: MessageType, payload: any, timeoutMs: number = 5000): Promise<NetworkMessage> {
+    return new Promise((resolve, reject) => {
+      const msgId = this.sendTo(targetNodeId, msgType, payload);
+      if (!msgId) {
+        return reject(new Error('Peer not authenticated or not found'));
+      }
+
+      const timeout = setTimeout(() => {
+        this.messageListeners = this.messageListeners.filter(l => l !== listener);
+        reject(new Error('Request timeout'));
+      }, timeoutMs);
+
+      const listener = (msg: NetworkMessage) => {
+        if (msg.replyToId === msgId) {
+          clearTimeout(timeout);
+          this.messageListeners = this.messageListeners.filter(l => l !== listener);
+          resolve(msg);
+        }
+      };
+
+      this.messageListeners.push(listener);
+    });
   }
 
   stop() {
@@ -176,5 +226,9 @@ export class P2PTransport {
       if (peer.getState() === PeerState.AUTHENTICATED) count++;
     }
     return count;
+  }
+
+  getPeers(): Peer[] {
+    return Array.from(this.peers.values());
   }
 }

@@ -21,9 +21,9 @@ A modular, observable, testable distributed autonomous cyber-research agent fram
 - **Peer Authentication**: Handshake (HELLO -> CHALLENGE -> AUTH) with strict cryptographic verification and Node-ID bounds checking.
 - **Replay Protection**: Strict cache window checking nonces, message IDs, and timestamps.
 - **OSINT**: Basic scanner modules (TCP Port scanning, DNS evaluation).
+- **Kademlia Peer Discovery**: Iterative lookups (FIND_NODE), automatic peer connections, and bucket management over authenticated transport.
 
 ### PARTIAL
-- **Kademlia**: Basic routing table bucket logic created, but iterative lookups over the network are not fully active yet.
 - **Leader Election**: Logic for terms, voting, and candidate promotion implemented (`election.ts`), currently bound to the P2P transport but marked as explicitly partial for this milestone.
 
 ### NOT IMPLEMENTED
@@ -43,7 +43,7 @@ A modular, observable, testable distributed autonomous cyber-research agent fram
 | Memory | PASS | `src/redqueen/memory/store.ts` (File backed) |
 | Transport | PASS | `src/redqueen/network/transport.ts` (Real WebSockets) |
 | Peer Auth | PASS | `src/redqueen/network/peer.ts` (HELLO/CHALLENGE/AUTH) |
-| Kademlia | PARTIAL | `src/redqueen/dht/routing.ts` (Routing table built) |
+| Kademlia | PASS | `src/redqueen/dht/routing.ts` (Iterative lookup) |
 | AI | PASS | `src/redqueen/cognition/ai-provider.ts` |
 | Reasoning | PASS | `src/redqueen/cognition/pipeline.ts` |
 | Governance | NOT IMPLEMENTED | Planned for future phase |

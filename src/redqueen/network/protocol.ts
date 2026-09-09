@@ -9,6 +9,7 @@ export enum MessageType {
   PING = 'PING',
   PONG = 'PONG',
   FIND_NODE = 'FIND_NODE',
+  FIND_NODE_RESPONSE = 'FIND_NODE_RESPONSE',
   FIND_VALUE = 'FIND_VALUE',
   STORE = 'STORE',
   HEARTBEAT = 'HEARTBEAT',
@@ -25,23 +26,24 @@ export const MessageSchema = z.object({
   timestamp: z.number(),
   nonce: z.string(),
   payload: z.any(),
-  signature: z.string().optional()
+  signature: z.string().optional(),
+  replyToId: z.string().optional()
 });
 
 export type NetworkMessage = z.infer<typeof MessageSchema>;
 
 /**
  * Deterministic canonical serialization.
- * version:type:messageId:senderId:timestamp:nonce:stringify(payload)
+ * version:type:messageId:senderId:timestamp:nonce:stringify(payload):replyToId
  */
 export function getCanonicalString(msg: NetworkMessage): string {
   // We stringify payload deterministically if possible, but standard JSON.stringify 
   // is fine as long as the sender creates the signature immediately after stringifying 
   // the exact same object they attach to the message.
-  return `${msg.version}:${msg.type}:${msg.messageId}:${msg.senderId}:${msg.timestamp}:${msg.nonce}:${JSON.stringify(msg.payload)}`;
+  return `${msg.version}:${msg.type}:${msg.messageId}:${msg.senderId}:${msg.timestamp}:${msg.nonce}:${JSON.stringify(msg.payload)}${msg.replyToId ? ':' + msg.replyToId : ''}`;
 }
 
-export function createMessage(type: MessageType, senderId: string, payload: any, privateKeyPem: string): NetworkMessage {
+export function createMessage(type: MessageType, senderId: string, payload: any, privateKeyPem: string, replyToId?: string): NetworkMessage {
   const msg: NetworkMessage = {
     version: 1,
     type,
@@ -51,6 +53,10 @@ export function createMessage(type: MessageType, senderId: string, payload: any,
     nonce: crypto.randomUUID(),
     payload
   };
+
+  if (replyToId) {
+    msg.replyToId = replyToId;
+  }
 
   const payloadToSign = getCanonicalString(msg);
   msg.signature = signingCrypto.sign(payloadToSign, privateKeyPem);

@@ -16,6 +16,7 @@ export class Peer {
   private state: PeerState = PeerState.NEW;
   public remoteNodeId?: string;
   public remotePublicKey?: string;
+  public remoteEndpoint?: string;
   private pendingChallenge?: string;
   
   public lastSeen: number = Date.now();
@@ -26,6 +27,7 @@ export class Peer {
     private readonly localPrivateKey: string,
     public readonly localPublicKey: string,
     private readonly isInitiator: boolean,
+    private readonly localEndpoint: string | undefined,
     private readonly onAuthenticated: (peer: Peer) => void,
     private readonly onMessage: (msg: NetworkMessage, peer: Peer) => void,
     private readonly onDisconnected: (peer: Peer) => void
@@ -62,7 +64,7 @@ export class Peer {
     });
   }
 
-  public send(msgType: MessageType, payload: any) {
+  public send(msgType: MessageType, payload: any, replyToId?: string): NetworkMessage {
     if (this.state !== PeerState.AUTHENTICATED && 
         msgType !== MessageType.HELLO && 
         msgType !== MessageType.CHALLENGE && 
@@ -71,9 +73,11 @@ export class Peer {
     }
     
     if (this.socket.readyState === WebSocket.OPEN) {
-      const msg = createMessage(msgType, this.localNodeId, payload, this.localPrivateKey);
+      const msg = createMessage(msgType, this.localNodeId, payload, this.localPrivateKey, replyToId);
       this.socket.send(JSON.stringify(msg));
+      return msg;
     }
+    throw new Error('Socket not open');
   }
 
   public disconnect() {
@@ -84,7 +88,7 @@ export class Peer {
   }
 
   private initiateHandshake() {
-    this.send(MessageType.HELLO, { publicKey: this.localPublicKey });
+    this.send(MessageType.HELLO, { publicKey: this.localPublicKey, endpoint: this.localEndpoint });
     this.state = PeerState.CHALLENGING;
   }
 
@@ -95,6 +99,7 @@ export class Peer {
       case PeerState.NEW:
         if (msg.type === MessageType.HELLO) {
           this.remotePublicKey = msg.payload.publicKey;
+          this.remoteEndpoint = msg.payload.endpoint;
           if (!this.remotePublicKey || !identityCrypto.isValidPublicKey(this.remotePublicKey)) {
             logger.warn(this.component, 'invalid_public_key');
             this.disconnect();
@@ -120,7 +125,8 @@ export class Peer {
           
           this.send(MessageType.CHALLENGE, { 
             challenge: this.pendingChallenge,
-            publicKey: this.localPublicKey 
+            publicKey: this.localPublicKey,
+            endpoint: this.localEndpoint
           });
         } else {
            this.disconnect();
@@ -130,6 +136,7 @@ export class Peer {
       case PeerState.CHALLENGING:
         if (msg.type === MessageType.CHALLENGE && this.isInitiator) {
            this.remotePublicKey = msg.payload.publicKey;
+           this.remoteEndpoint = msg.payload.endpoint;
            if (!this.remotePublicKey || !identityCrypto.isValidPublicKey(this.remotePublicKey)) { 
                logger.warn(this.component, 'invalid_public_key_on_challenge');
                this.disconnect(); 
