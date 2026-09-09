@@ -30,6 +30,12 @@ import {
   deepFreeze
 } from '../genome';
 import { CognitiveStateManager } from '../cognition/state';
+import {
+  MetabolismEngine,
+  MetabolismResult,
+  InformationRecordInput,
+  MetabolismBudget
+} from '../metabolism';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -39,6 +45,7 @@ export interface CellOptions {
   parentCellId?: string | null;
   generation?: number;
   lineageId?: string;
+  metabolismBudget?: Partial<MetabolismBudget>;
 }
 
 export class Cell {
@@ -57,6 +64,7 @@ export class Cell {
   public readonly transport: P2PTransport;
   public readonly osint: OsintScanner;
   public readonly swarm: SwarmMembershipManager;
+  public readonly metabolism: MetabolismEngine;
 
   private _genome: CellGenome;
   private _lineage: CellLineage;
@@ -129,6 +137,14 @@ export class Cell {
       this._genome.specialization,
       [],
       1.0
+    );
+
+    // Initialize Information Metabolism Subsystem
+    this.metabolism = new MetabolismEngine(
+      this.nodeId,
+      this.memory,
+      this.cognitiveState,
+      { budget: cellOptions?.metabolismBudget }
     );
 
     this.routing = new RoutingTable(this.nodeId);
@@ -479,6 +495,20 @@ export class Cell {
     return closest;
   }
 
+  /**
+   * Metabolizes an incoming InformationRecord through the Cell's metabolism engine.
+   */
+  async metabolize(input: InformationRecordInput): Promise<MetabolismResult> {
+    const state = this.lifecycle.getState();
+    if (state === CellState.RETIRED) {
+      throw new Error('Cell is retired and cannot metabolize information');
+    }
+    if (state === CellState.SUSPENDED) {
+      throw new Error('Cell is suspended and cannot metabolize information');
+    }
+    return this.metabolism.metabolize(input);
+  }
+
   async stop() {
     if (this.syncIntervalTimer) {
       clearInterval(this.syncIntervalTimer);
@@ -497,6 +527,7 @@ export class Cell {
       dhtBucketsActive: this.routing.getActiveBucketCount(),
       swarmState: this.swarm.getMembershipState(this.nodeId),
       swarmId: this.swarm.swarmId,
+      metabolismAuditEventsCount: this.metabolism.audit.getEvents().length,
       genome: {
         genomeId: this.genome.genomeId,
         generation: this.genome.generation,

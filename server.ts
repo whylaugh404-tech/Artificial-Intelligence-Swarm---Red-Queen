@@ -55,6 +55,35 @@ async function startServer() {
     res.json(cell.cognitiveState.getState());
   });
 
+  app.post('/api/cell/metabolize', async (req, res) => {
+    try {
+      const result = await cell.metabolize(req.body);
+      const statusCode = result.status === 'ACCEPTED' ? 200 : (result.status === 'INVALID' ? 400 : 202);
+      res.status(statusCode).json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/cell/metabolism/events', (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string || '100', 10);
+      res.json({ events: cell.metabolism.audit.getEvents(limit) });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/cell/knowledge', async (req, res) => {
+    try {
+      const entries = await cell.memory.search({ category: 'SEMANTIC' as any });
+      const knowledge = entries.filter(e => e.type === 'KNOWLEDGE_RECORD' || e.content?.knowledgeId);
+      res.json({ data: knowledge });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/observe', async (req, res) => {
     try {
       const { observation } = req.body;
