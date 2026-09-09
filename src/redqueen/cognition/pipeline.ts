@@ -80,8 +80,12 @@ Allowed action types are: 'query_dht', 'log', 'store_memory', 'noop'.`,
     // 6. ACTION & 7. OBSERVE RESULT
     const results = [];
     for (const action of plan.actions) {
-      const res = await this.executeActionSafely(action);
-      results.push(res);
+      try {
+        const res = await this.executeActionSafely(action);
+        results.push(res);
+      } catch (err: any) {
+        results.push({ status: 'failed', error: err.message, type: action.type });
+      }
     }
 
     // 8. VERIFY
@@ -114,15 +118,26 @@ Allowed action types are: 'query_dht', 'log', 'store_memory', 'noop'.`,
   }
 
   private async executeActionSafely(action: any): Promise<any> {
-    // Safe executor sandbox
+    // Action Executor must NOT pretend to succeed if it didn't run.
     logger.debug(this.component, 'executing_action', { type: action.type });
-    // implementation of action execution
-    return { success: true, action: action.type };
+    
+    if (action.type === 'log') {
+      logger.info('action_executor', 'log_action', { payload: action.payload });
+      return { status: 'executed', type: 'log' };
+    }
+    
+    if (action.type === 'noop') {
+      return { status: 'executed', type: 'noop' };
+    }
+    
+    // Explicitly flag missing implementations instead of faking them.
+    logger.warn(this.component, 'action_not_implemented', { type: action.type });
+    throw new Error(`ACTION_NOT_IMPLEMENTED: ${action.type}`);
   }
 
   private verifyResults(results: any[], criteria: string[]): boolean {
     // Check if the results meet the verification criteria
-    // For now, if all actions claim success
-    return results.every(r => r.success);
+    // Explicitly fail if we encounter unimplemented actions that threw an error.
+    return results.every(r => r.status === 'executed');
   }
 }

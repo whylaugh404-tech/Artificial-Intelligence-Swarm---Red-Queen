@@ -6,6 +6,8 @@ import { CognitionPipeline } from '../cognition/pipeline';
 import { logger } from './logger';
 import { ElectionManager } from '../swarm/election';
 import { RoutingTable } from '../dht/routing';
+import { P2PTransport } from '../network/transport';
+import { OsintScanner } from '../osint/scanner';
 
 export class Cell {
   private readonly component = 'cell';
@@ -20,8 +22,8 @@ export class Cell {
   public readonly cognition: CognitionPipeline;
   public readonly routing: RoutingTable;
   public readonly election: ElectionManager;
-
-  private peers: Map<string, any> = new Map();
+  public readonly transport: P2PTransport;
+  public readonly osint: OsintScanner;
 
   constructor(
     storagePath: string, 
@@ -46,12 +48,14 @@ export class Cell {
     this.cognition = new CognitionPipeline(this.aiProvider, this.memory, this.nodeId);
     
     this.routing = new RoutingTable(this.nodeId);
+    this.transport = new P2PTransport(this.nodeId);
+    this.osint = new OsintScanner();
     
     this.election = new ElectionManager(
       this.nodeId,
-      () => this.peers.size,
-      (term) => this.broadcast({ type: 'VOTE_REQUEST', term }),
-      (term) => this.broadcast({ type: 'HEARTBEAT', term, leaderId: this.nodeId })
+      () => this.transport.getActivePeerCount(),
+      (term) => this.transport.broadcast({ type: 'VOTE_REQUEST', payload: { term } }),
+      (term) => this.transport.broadcast({ type: 'HEARTBEAT', payload: { term, leaderId: this.nodeId } })
     );
 
     this.setupHooks();
@@ -60,14 +64,21 @@ export class Cell {
   private setupHooks() {
     this.lifecycle.registerShutdownHook(async () => {
       logger.info(this.component, 'shutting_down_cell', { nodeId: this.nodeId });
-      // Clean up connections, flush memory, etc.
+      this.election.stop();
+      this.transport.stop();
     });
   }
 
-  async start() {
+  async start(p2pPort: number = 0) {
     await this.lifecycle.initialize(async () => {
       logger.info(this.component, 'starting_cell', { nodeId: this.nodeId });
       await this.memory.initialize();
+      
+      // Start REAL WebSocket listener if a port is provided
+      if (p2pPort > 0) {
+        await this.transport.startServer(p2pPort);
+      }
+
       logger.info(this.component, 'cell_active');
     });
   }
@@ -76,17 +87,12 @@ export class Cell {
     await this.lifecycle.shutdown();
   }
 
-  private broadcast(msg: any) {
-    // In a real network, this sends to all connected peers
-    logger.debug(this.component, 'mock_broadcast', { msg });
-  }
-
   // Diagnostics and API bindings
   getStatus() {
     return {
       nodeId: this.nodeId,
       state: this.lifecycle.getState(),
-      peers: this.peers.size,
+      peers: this.transport.getActivePeerCount(),
       dhtBucketsActive: 0 // real metric calculation would go here
     };
   }

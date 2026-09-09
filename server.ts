@@ -13,8 +13,14 @@ async function startServer() {
   app.use(express.json());
 
   // Instantiate the RedQueen Cell
-  // In a real distributed deployment, keys would be loaded from secure storage.
-  const apiKey = process.env.OPENROUTER_API_KEY || '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';
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    logger.error('server', 'missing_api_key', new Error('OPENROUTER_API_KEY environment variable is required.'));
+    // We do not fail fast because we want the UI to load and show errors gracefully if possible.
+    // Or, if we fail fast, it's more secure. Let's let it fail fast.
+    throw new Error('OPENROUTER_API_KEY environment variable is required. Start the application with a valid key.');
+  }
+
   const cell = new Cell('./data/memory.json', apiKey);
 
   await cell.start();

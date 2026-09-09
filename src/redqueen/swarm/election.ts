@@ -15,6 +15,7 @@ export class ElectionManager {
   private votesReceived = 0;
   private lastHeartbeat = Date.now();
   private readonly electionTimeoutMs: number;
+  private timer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly localNodeId: string,
@@ -23,12 +24,13 @@ export class ElectionManager {
     private readonly broadcastHeartbeat: (term: number) => void
   ) {
     // Randomize timeout between 1500 and 3000ms to prevent split votes
+    // Using Math.random here is acceptable for jitter, not for crypto
     this.electionTimeoutMs = 1500 + Math.random() * 1500;
     this.startElectionTimer();
   }
 
   private startElectionTimer() {
-    setInterval(() => {
+    this.timer = setInterval(() => {
       if (this.state === LeaderState.LEADER) {
         this.broadcastHeartbeat(this.currentTerm);
       } else {
@@ -38,6 +40,13 @@ export class ElectionManager {
         }
       }
     }, 500);
+  }
+
+  public stop() {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
   }
 
   private startElection() {

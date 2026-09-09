@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Settings2 } from 'lucide-react';
 
 interface ChatMessage {

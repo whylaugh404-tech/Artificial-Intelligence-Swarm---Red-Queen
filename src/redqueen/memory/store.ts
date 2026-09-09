@@ -14,6 +14,7 @@ export interface MemoryEntry {
 }
 
 export interface MemoryStore {
+  initialize(): Promise<void>;
   put(entry: MemoryEntry): Promise<void>;
   get(id: string): Promise<MemoryEntry | null>;
   search(query: Partial<MemoryEntry>): Promise<MemoryEntry[]>;

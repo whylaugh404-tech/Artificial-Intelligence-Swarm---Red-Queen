@@ -1,3 +1,4 @@
+import React from 'react';
 import { motion } from 'motion/react';
 import { Network, Activity, Cpu, Shield, Zap } from 'lucide-react';
 

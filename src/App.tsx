@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { RedQueenCellVisualizer } from './components/RedQueenCell';
 import { ChatInterface } from './components/Chat';
 import { Database, Shield, Zap, MessageSquare, LayoutDashboard } from 'lucide-react';
