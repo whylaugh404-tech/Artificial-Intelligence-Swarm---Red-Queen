@@ -1,6 +1,6 @@
 import { identityCrypto } from '../crypto/identity';
-import { Lifecycle } from './lifecycle';
-import { JsonFileMemoryStore, MemoryStore } from '../memory/store';
+import { CellState, Lifecycle } from './lifecycle';
+import { JsonFileMemoryStore, MemoryStore, MemoryCategory } from '../memory/store';
 import { OpenRouterAIProvider, AIProvider } from '../cognition/ai-provider';
 import { CognitionPipeline } from '../cognition/pipeline';
 import { logger } from './logger';
@@ -18,6 +18,27 @@ import {
   FindNodePayloadSchema,
   FindNodeResponsePayloadSchema
 } from '../validation/validators';
+import {
+  CellGenome,
+  CellLineage,
+  CellCapability,
+  CellTraits,
+  CellGenomeSchema,
+  createGenesisGenome,
+  constructLineage,
+  validateGenome
+} from '../genome';
+import { CognitiveStateManager } from '../cognition/state';
+
+export interface CellOptions {
+  genome?: Partial<CellGenome>;
+  specialization?: string | null;
+  customTraits?: Partial<CellTraits>;
+  capabilities?: CellCapability[];
+  parentCellId?: string | null;
+  generation?: number;
+  lineageId?: string;
+}
 
 export class Cell {
   private readonly component = 'cell';
@@ -36,6 +57,10 @@ export class Cell {
   public readonly osint: OsintScanner;
   public readonly swarm: SwarmMembershipManager;
 
+  public readonly genome: CellGenome;
+  public readonly lineage: CellLineage;
+  public readonly cognitiveState: CognitiveStateManager;
+
   private syncIntervalTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -43,7 +68,8 @@ export class Cell {
     openRouterApiKey: string, 
     existingPrivateKey?: string, 
     existingPublicKey?: string,
-    swarmOptions?: SwarmMembershipOptions
+    swarmOptions?: SwarmMembershipOptions,
+    cellOptions?: CellOptions
   ) {
     if (existingPrivateKey && existingPublicKey) {
       this.privateKey = existingPrivateKey.trim();
@@ -57,10 +83,36 @@ export class Cell {
     this.nodeId = identityCrypto.deriveNodeId(this.publicKey);
     this.lifecycle = new Lifecycle(this.nodeId);
     
-    this.memory = new JsonFileMemoryStore(storagePath);
+    // Scoped storage: ensure individual memory store enforces ownership by this.nodeId
+    this.memory = new JsonFileMemoryStore(storagePath, this.nodeId);
     this.aiProvider = new OpenRouterAIProvider(openRouterApiKey);
     this.cognition = new CognitionPipeline(this.aiProvider, this.memory, this.nodeId);
     
+    // Initialize Genome
+    if (cellOptions?.genome && validateGenome(cellOptions.genome).valid) {
+      this.genome = CellGenomeSchema.parse(cellOptions.genome);
+    } else {
+      this.genome = createGenesisGenome({
+        parentCellId: cellOptions?.parentCellId,
+        generation: cellOptions?.generation,
+        lineageId: cellOptions?.lineageId,
+        traits: cellOptions?.customTraits,
+        capabilities: cellOptions?.capabilities,
+        specialization: cellOptions?.specialization
+      });
+    }
+
+    // Initialize Lineage
+    this.lineage = constructLineage(this.genome);
+
+    // Initialize Individual Cognitive State
+    this.cognitiveState = new CognitiveStateManager(
+      this.nodeId,
+      this.genome.specialization,
+      [],
+      1.0
+    );
+
     this.routing = new RoutingTable(this.nodeId);
     this.transport = new P2PTransport(this.nodeId, this.privateKey, this.publicKey);
     this.osint = new OsintScanner();
@@ -92,6 +144,8 @@ export class Cell {
         clearInterval(this.syncIntervalTimer);
         this.syncIntervalTimer = null;
       }
+      this.cognitiveState.syncLifecycleState(CellState.STOPPED);
+      await this.cognitiveState.persist(this.memory);
       this.swarm.stop();
       this.election.stop();
       this.transport.stop();
@@ -145,10 +199,49 @@ export class Cell {
     });
   }
 
+  private async restoreOrPersistGenome(): Promise<void> {
+    const key = `cell_genome_${this.nodeId}`;
+    const existing = await this.memory.get(key);
+    if (existing && existing.content) {
+      const check = validateGenome(existing.content);
+      if (check.valid && check.genome) {
+        (this as any).genome = check.genome;
+        (this as any).lineage = constructLineage(check.genome);
+        logger.info(this.component, 'cell_genome_restored_from_storage', {
+          genomeId: this.genome.genomeId,
+          generation: this.genome.generation,
+          lineageId: this.lineage.lineageId
+        });
+        return;
+      }
+    }
+
+    await this.memory.put({
+      id: key,
+      cellId: this.nodeId,
+      category: MemoryCategory.SEMANTIC,
+      content: this.genome,
+      source: 'cell_initialization',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      confidence: 1.0,
+      hash: '',
+      provenance: [this.nodeId],
+      version: 1
+    });
+  }
+
   async start(p2pPort: number = 0) {
     await this.lifecycle.initialize(async () => {
       logger.info(this.component, 'starting_cell', { nodeId: this.nodeId });
       await this.memory.initialize();
+      await this.restoreOrPersistGenome();
+      await this.cognitiveState.restore(this.memory);
+      this.cognitiveState.syncLifecycleState(CellState.ACTIVE);
+      if (this.memory.getStats) {
+        this.cognitiveState.updateMemoryStats(this.memory.getStats());
+      }
+      await this.cognitiveState.persist(this.memory);
       await this.swarm.restoreFromStorage();
       
       if (p2pPort > 0) {
@@ -342,6 +435,8 @@ export class Cell {
       clearInterval(this.syncIntervalTimer);
       this.syncIntervalTimer = null;
     }
+    this.cognitiveState.syncLifecycleState(CellState.STOPPED);
+    await this.cognitiveState.persist(this.memory);
     await this.lifecycle.shutdown();
   }
 
@@ -352,7 +447,21 @@ export class Cell {
       peers: this.transport.getActivePeerCount(),
       dhtBucketsActive: this.routing.getActiveBucketCount(),
       swarmState: this.swarm.getMembershipState(this.nodeId),
-      swarmId: this.swarm.swarmId
+      swarmId: this.swarm.swarmId,
+      genome: {
+        genomeId: this.genome.genomeId,
+        generation: this.genome.generation,
+        logicVersion: this.genome.logicVersion,
+        capabilities: this.genome.capabilities,
+        specialization: this.cognitiveState.getSpecialization(),
+        genomeVersion: this.genome.genomeVersion
+      },
+      lineage: {
+        lineageId: this.lineage.lineageId,
+        generation: this.lineage.generation,
+        parentCellId: this.lineage.parentCellId
+      },
+      cognitiveState: this.cognitiveState.getState()
     };
   }
 }

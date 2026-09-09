@@ -39,6 +39,22 @@ async function startServer() {
     });
   });
 
+  app.get('/api/cell/status', (req, res) => {
+    res.json(cell.getStatus());
+  });
+
+  app.get('/api/cell/genome', (req, res) => {
+    res.json(cell.genome);
+  });
+
+  app.get('/api/cell/lineage', (req, res) => {
+    res.json(cell.lineage);
+  });
+
+  app.get('/api/cell/cognitive-state', (req, res) => {
+    res.json(cell.cognitiveState.getState());
+  });
+
   app.post('/api/observe', async (req, res) => {
     try {
       const { observation } = req.body;

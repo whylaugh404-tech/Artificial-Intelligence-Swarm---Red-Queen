@@ -27,7 +27,8 @@ import { AllowlistAuthorizationPolicy } from './policy';
 export interface SwarmMembershipOptions {
   swarmId?: string;
   issuerAuthority?: MembershipAuthority;
-  issuerPublicKey?: string;
+  trustedIssuerPublicKey?: string;
+  issuerPublicKey?: string; // Backward-compatible alias
   authorizationPolicy?: AuthorizationPolicy;
   capabilities?: SwarmCapability[];
   certificateTtlMs?: number;
@@ -44,9 +45,17 @@ export class SwarmMembershipManager {
   private readonly component = 'swarm_membership';
   public readonly swarmId: string;
   public readonly authority?: MembershipAuthority;
-  public issuerPublicKey?: string;
+  public trustedIssuerPublicKey?: string;
   public policy: AuthorizationPolicy;
   public readonly capabilities: SwarmCapability[];
+  
+  public get issuerPublicKey(): string | undefined {
+    return this.trustedIssuerPublicKey;
+  }
+
+  public set issuerPublicKey(val: string | undefined) {
+    this.trustedIssuerPublicKey = val ? val.trim() : undefined;
+  }
   
   private myCertificate?: MembershipCertificate;
   private peerRecords: Map<string, PeerMembershipRecord> = new Map();
@@ -64,7 +73,7 @@ export class SwarmMembershipManager {
   ) {
     this.swarmId = options.swarmId || 'redqueen-swarm-alpha-1';
     this.authority = options.issuerAuthority;
-    this.issuerPublicKey = options.issuerPublicKey || (this.authority ? this.authority.publicKey : undefined);
+    this.trustedIssuerPublicKey = (options.trustedIssuerPublicKey || options.issuerPublicKey || (this.authority ? this.authority.publicKey : undefined))?.trim();
     this.policy = options.authorizationPolicy || new AllowlistAuthorizationPolicy({ expectedSwarmId: this.swarmId });
     this.capabilities = options.capabilities || [...ALLOWED_CAPABILITIES];
     this.memoryStore = options.memoryStore;
@@ -435,10 +444,18 @@ export class SwarmMembershipManager {
     const cert = parseResult.data.certificate;
 
     // Cryptographically verify certificate independently
+    if (!this.trustedIssuerPublicKey) {
+      logger.warn(this.component, 'announced_cert_dropped_no_trust_anchor', {
+        memberNodeId: cert.memberNodeId,
+        reason: 'Cell has no configured trusted swarm authority'
+      });
+      return;
+    }
+
     const verifyResult = verifyMembershipCertificate(
       cert,
       this.swarmId,
-      this.issuerPublicKey,
+      this.trustedIssuerPublicKey,
       (cId, nId) => this.isLocallyRevoked(cId, nId)
     );
 

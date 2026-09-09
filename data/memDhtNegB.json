@@ -1,1 +1,71 @@
-[]
+[
+  {
+    "id": "cell_genome_732e64450c2751a6b8e9fd51601a534b5b6a2947e853d18ca77f5a15469c219d",
+    "cellId": "732e64450c2751a6b8e9fd51601a534b5b6a2947e853d18ca77f5a15469c219d",
+    "category": "SEMANTIC",
+    "content": {
+      "genomeId": "4e0b1e27ee054a77b084f9f331ec739d",
+      "parentGenomeId": null,
+      "parentCellId": null,
+      "generation": 0,
+      "lineageId": "d84859acb98a418bba54716260cde1cd",
+      "createdAt": "2026-09-09T20:30:13.033Z",
+      "logicVersion": "1.0.0",
+      "traits": {
+        "mutationRate": 0.05,
+        "riskTolerance": 0.2,
+        "explorationVsExploitation": 0.5,
+        "maxCognitiveCycleDepth": 5
+      },
+      "capabilities": [
+        "OSINT_SCAN",
+        "KNOWLEDGE_QUERY",
+        "COGNITIVE_REASONING",
+        "SWARM_COORDINATION"
+      ],
+      "specialization": null,
+      "genomeVersion": 1,
+      "ancestorGenomeIds": [],
+      "ancestorCellIds": []
+    },
+    "source": "cell_initialization",
+    "createdAt": "2026-09-09T20:30:13.037Z",
+    "updatedAt": "2026-09-09T20:30:13.037Z",
+    "confidence": 1,
+    "hash": "",
+    "provenance": [
+      "732e64450c2751a6b8e9fd51601a534b5b6a2947e853d18ca77f5a15469c219d"
+    ],
+    "version": 1
+  },
+  {
+    "id": "cognitive_state_732e64450c2751a6b8e9fd51601a534b5b6a2947e853d18ca77f5a15469c219d",
+    "cellId": "732e64450c2751a6b8e9fd51601a534b5b6a2947e853d18ca77f5a15469c219d",
+    "category": "SEMANTIC",
+    "content": {
+      "cellId": "732e64450c2751a6b8e9fd51601a534b5b6a2947e853d18ca77f5a15469c219d",
+      "lifecycleState": "STOPPED",
+      "specialization": null,
+      "activeGoals": [],
+      "knowledgeReferences": [],
+      "operationalConfidence": 1,
+      "lastCognitiveUpdate": "2026-09-09T20:30:13.401Z",
+      "memoryStats": {
+        "total": 1,
+        "episodic": 0,
+        "semantic": 1,
+        "procedural": 0
+      },
+      "metadata": {}
+    },
+    "source": "cognitive_state_manager",
+    "createdAt": "2026-09-09T20:30:13.401Z",
+    "updatedAt": "2026-09-09T20:30:13.401Z",
+    "confidence": 1,
+    "hash": "",
+    "provenance": [
+      "732e64450c2751a6b8e9fd51601a534b5b6a2947e853d18ca77f5a15469c219d"
+    ],
+    "version": 1
+  }
+]

@@ -4,6 +4,8 @@ export enum CellState {
   CREATED = 'CREATED',
   INITIALIZING = 'INITIALIZING',
   ACTIVE = 'ACTIVE',
+  SUSPENDED = 'SUSPENDED',
+  RETIRED = 'RETIRED',
   DEGRADED = 'DEGRADED',
   RECOVERING = 'RECOVERING',
   SHUTTING_DOWN = 'SHUTTING_DOWN',
@@ -48,6 +50,26 @@ export class Lifecycle {
     }
   }
 
+  suspend(reason: string) {
+    this.transition(CellState.SUSPENDED, [CellState.ACTIVE, CellState.DEGRADED]);
+    logger.info(this.component, 'cell_suspended', { cellId: this.cellId, reason });
+  }
+
+  resume() {
+    this.transition(CellState.ACTIVE, [CellState.SUSPENDED]);
+    logger.info(this.component, 'cell_resumed', { cellId: this.cellId });
+  }
+
+  retire(reason: string) {
+    this.transition(CellState.RETIRED, [
+      CellState.ACTIVE,
+      CellState.SUSPENDED,
+      CellState.DEGRADED,
+      CellState.STOPPED
+    ]);
+    logger.info(this.component, 'cell_retired', { cellId: this.cellId, reason });
+  }
+
   degrade(reason: string) {
     this.transition(CellState.DEGRADED, [CellState.ACTIVE, CellState.RECOVERING]);
     logger.warn(this.component, 'system_degraded', { cellId: this.cellId, reason });
@@ -77,7 +99,15 @@ export class Lifecycle {
       return;
     }
     
-    this.transition(CellState.SHUTTING_DOWN, [CellState.CREATED, CellState.INITIALIZING, CellState.ACTIVE, CellState.DEGRADED, CellState.RECOVERING]);
+    this.transition(CellState.SHUTTING_DOWN, [
+      CellState.CREATED,
+      CellState.INITIALIZING,
+      CellState.ACTIVE,
+      CellState.DEGRADED,
+      CellState.RECOVERING,
+      CellState.SUSPENDED,
+      CellState.RETIRED
+    ]);
     
     logger.info(this.component, 'shutdown_started', { cellId: this.cellId, hooks: this.shutdownHooks.length });
     

@@ -33,7 +33,7 @@ export class IdentityCrypto {
   isValidPublicKey(publicKeyPem: string): boolean {
     if (!publicKeyPem || typeof publicKeyPem !== 'string') return false;
     try {
-      const key = crypto.createPublicKey(publicKeyPem);
+      const key = crypto.createPublicKey(publicKeyPem.trim());
       return key.asymmetricKeyType === 'ed25519';
     } catch (e) {
       return false;
@@ -42,11 +42,11 @@ export class IdentityCrypto {
 
   /**
    * Derives a stable Node ID from a public key.
-   * Uses SHA-256 hash of the PEM formatted public key.
+   * Uses SHA-256 hash of the normalized PEM formatted public key.
    */
   deriveNodeId(publicKeyPem: string): string {
     const hash = crypto.createHash('sha256');
-    hash.update(publicKeyPem);
+    hash.update(publicKeyPem.trim());
     const nodeId = hash.digest('hex');
     return nodeId;
   }

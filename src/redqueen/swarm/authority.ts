@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto';
+import * as fs from 'fs/promises';
+import * as path from 'path';
 import { identityCrypto } from '../crypto/identity';
 import { signingCrypto } from '../crypto/signing';
 import { validatePeerIdentity } from '../validation/validators';
@@ -31,8 +33,8 @@ export interface IssueCertificateParams {
  * Dedicated cryptographic signing authority for Red Queen swarm membership.
  * 
  * Strict separation: This authority maintains its own Ed25519 keypair, distinct
- * from any cell's transport keypair. The private key is strictly isolated and
- * never transmitted over network protocols.
+ * from any cell's transport keypair. The private key is strictly isolated in memory,
+ * never logged, never returned over API endpoints, and never transmitted over network protocols.
  */
 export class MembershipAuthority {
   public readonly issuerId: string;
@@ -40,15 +42,56 @@ export class MembershipAuthority {
   private readonly privateKey: string;
 
   constructor(privateKeyPem?: string, publicKeyPem?: string) {
+    let priv: string;
+    let pub: string;
     if (privateKeyPem && publicKeyPem) {
-      this.privateKey = privateKeyPem.trim();
-      this.publicKey = publicKeyPem.trim();
+      priv = privateKeyPem.trim();
+      pub = publicKeyPem.trim();
     } else {
       const kp = identityCrypto.generateKeyPair();
-      this.privateKey = kp.privateKey.trim();
-      this.publicKey = kp.publicKey.trim();
+      priv = kp.privateKey.trim();
+      pub = kp.publicKey.trim();
     }
+    this.publicKey = pub;
     this.issuerId = identityCrypto.deriveNodeId(this.publicKey);
+
+    // Keep privateKey non-enumerable to prevent accidental leaks via JSON.stringify or enumeration
+    Object.defineProperty(this, 'privateKey', {
+      value: priv,
+      writable: false,
+      enumerable: false,
+      configurable: false
+    });
+  }
+
+  /**
+   * Loads an existing persistent authority from keypair strings.
+   */
+  public static fromKeyPair(privateKeyPem: string, publicKeyPem: string): MembershipAuthority {
+    return new MembershipAuthority(privateKeyPem, publicKeyPem);
+  }
+
+  /**
+   * Loads an existing persistent authority from key files on disk.
+   */
+  public static async fromFiles(privateKeyPath: string, publicKeyPath: string): Promise<MembershipAuthority> {
+    const [privateKeyPem, publicKeyPem] = await Promise.all([
+      fs.readFile(privateKeyPath, 'utf8'),
+      fs.readFile(publicKeyPath, 'utf8')
+    ]);
+    return new MembershipAuthority(privateKeyPem, publicKeyPem);
+  }
+
+  /**
+   * Persists the authority keypair securely to disk.
+   */
+  public async saveToFiles(privateKeyPath: string, publicKeyPath: string): Promise<void> {
+    await fs.mkdir(path.dirname(privateKeyPath), { recursive: true });
+    await fs.mkdir(path.dirname(publicKeyPath), { recursive: true });
+    await Promise.all([
+      fs.writeFile(privateKeyPath, this.privateKey, { encoding: 'utf8', mode: 0o600 }), // Restrict private key permissions
+      fs.writeFile(publicKeyPath, this.publicKey, { encoding: 'utf8', mode: 0o644 })
+    ]);
   }
 
   /**
@@ -111,5 +154,19 @@ export class MembershipAuthority {
 
     // 4. Validate output matches schema
     return MembershipCertificateSchema.parse(cert);
+  }
+
+  /**
+   * Safe serialization: NEVER exports or logs the private signing key.
+   */
+  public toJSON() {
+    return {
+      issuerId: this.issuerId,
+      publicKey: this.publicKey
+    };
+  }
+
+  public toString() {
+    return `MembershipAuthority(issuerId: ${this.issuerId})`;
   }
 }
