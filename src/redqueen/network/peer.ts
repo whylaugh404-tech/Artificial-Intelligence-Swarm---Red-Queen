@@ -2,6 +2,7 @@ import { WebSocket } from 'ws';
 import { logger } from '../core/logger';
 import { NetworkMessage, MessageType, createMessage, verifyMessageSignature, MessageSchema } from './protocol';
 import { identityCrypto } from '../crypto/identity';
+import { isValidNodeId, validateEndpoint, MAX_MESSAGE_BYTES } from '../validation/validators';
 import { randomUUID } from 'crypto';
 
 export enum PeerState {
@@ -26,7 +27,7 @@ export class Peer {
     private readonly localNodeId: string,
     private readonly localPrivateKey: string,
     public readonly localPublicKey: string,
-    private readonly isInitiator: boolean,
+    public readonly isInitiator: boolean,
     private readonly localEndpoint: string | undefined,
     private readonly onAuthenticated: (peer: Peer) => void,
     private readonly onMessage: (msg: NetworkMessage, peer: Peer) => void,
@@ -40,11 +41,33 @@ export class Peer {
   }
 
   private setupListeners() {
-    this.socket.on('message', (data) => {
+    this.socket.on('message', (data: any) => {
+      // 1. Message size check to prevent memory exhaustion / DoS
+      const byteLength = Buffer.isBuffer(data) ? data.length : typeof data === 'string' ? Buffer.byteLength(data) : 0;
+      if (byteLength > MAX_MESSAGE_BYTES) {
+        logger.warn(this.component, 'oversized_message_dropped', { byteLength, max: MAX_MESSAGE_BYTES });
+        this.disconnect();
+        return;
+      }
+
       try {
         const raw = JSON.parse(data.toString());
         const msg = MessageSchema.parse(raw);
-        this.lastSeen = Date.now();
+        
+        // 2. Validate senderId format
+        if (!isValidNodeId(msg.senderId)) {
+          logger.warn(this.component, 'malformed_sender_id_dropped', { senderId: msg.senderId });
+          this.disconnect();
+          return;
+        }
+
+        // 3. Reject self connection
+        if (msg.senderId === this.localNodeId) {
+          logger.warn(this.component, 'self_connection_rejected', { senderId: msg.senderId });
+          this.disconnect();
+          return;
+        }
+
         this.handleMessage(msg);
       } catch (err: any) {
         logger.warn(this.component, 'invalid_message_dropped', { error: err.message });
@@ -81,8 +104,12 @@ export class Peer {
   }
 
   public disconnect() {
-    if (this.socket.readyState === WebSocket.OPEN) {
-      this.socket.terminate();
+    if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
+      try {
+        this.socket.terminate();
+      } catch (err) {
+        // ignore error during terminate
+      }
     }
     this.state = PeerState.DISCONNECTED;
   }
@@ -98,28 +125,39 @@ export class Peer {
     switch (this.state) {
       case PeerState.NEW:
         if (msg.type === MessageType.HELLO) {
-          this.remotePublicKey = msg.payload.publicKey;
-          this.remoteEndpoint = msg.payload.endpoint;
-          if (!this.remotePublicKey || !identityCrypto.isValidPublicKey(this.remotePublicKey)) {
-            logger.warn(this.component, 'invalid_public_key');
-            this.disconnect();
-            return;
-          }
-          const expectedNodeId = identityCrypto.deriveNodeId(this.remotePublicKey);
-          
-          if (expectedNodeId !== msg.senderId) {
-            logger.warn(this.component, 'nodeid_mismatch', { expected: expectedNodeId, actual: msg.senderId });
+          const pubKey = msg.payload?.publicKey;
+          if (!pubKey || !identityCrypto.isValidPublicKey(pubKey)) {
+            logger.warn(this.component, 'invalid_public_key_on_hello');
             this.disconnect();
             return;
           }
 
-          if (!verifyMessageSignature(msg, this.remotePublicKey)) {
+          const expectedNodeId = identityCrypto.deriveNodeId(pubKey);
+          if (expectedNodeId !== msg.senderId) {
+            logger.warn(this.component, 'nodeid_mismatch_on_hello', { expected: expectedNodeId, actual: msg.senderId });
+            this.disconnect();
+            return;
+          }
+
+          if (!verifyMessageSignature(msg, pubKey)) {
             logger.warn(this.component, 'signature_invalid_on_hello', { senderId: msg.senderId });
             this.disconnect();
             return;
           }
 
+          // Validate endpoint if provided
+          if (msg.payload?.endpoint) {
+            const epCheck = validateEndpoint(msg.payload.endpoint);
+            if (epCheck.valid) {
+              this.remoteEndpoint = epCheck.normalizedUrl;
+            } else {
+              logger.warn(this.component, 'invalid_endpoint_in_hello_ignored', { reason: epCheck.reason });
+            }
+          }
+
+          this.remotePublicKey = pubKey;
           this.remoteNodeId = msg.senderId;
+          this.lastSeen = Date.now();
           this.pendingChallenge = randomUUID();
           this.state = PeerState.CHALLENGING;
           
@@ -129,40 +167,55 @@ export class Peer {
             endpoint: this.localEndpoint
           });
         } else {
-           this.disconnect();
+          logger.warn(this.component, 'unexpected_message_in_new_state', { type: msg.type });
+          this.disconnect();
         }
         break;
 
       case PeerState.CHALLENGING:
         if (msg.type === MessageType.CHALLENGE && this.isInitiator) {
-           this.remotePublicKey = msg.payload.publicKey;
-           this.remoteEndpoint = msg.payload.endpoint;
-           if (!this.remotePublicKey || !identityCrypto.isValidPublicKey(this.remotePublicKey)) { 
-               logger.warn(this.component, 'invalid_public_key_on_challenge');
-               this.disconnect(); 
-               return; 
-           }
+          const pubKey = msg.payload?.publicKey;
+          if (!pubKey || !identityCrypto.isValidPublicKey(pubKey)) { 
+            logger.warn(this.component, 'invalid_public_key_on_challenge');
+            this.disconnect(); 
+            return; 
+          }
 
-           const expectedNodeId = identityCrypto.deriveNodeId(this.remotePublicKey);
-           if (expectedNodeId !== msg.senderId) {
-             logger.warn(this.component, 'nodeid_mismatch', { expected: expectedNodeId, actual: msg.senderId });
-             this.disconnect();
-             return;
-           }
+          const expectedNodeId = identityCrypto.deriveNodeId(pubKey);
+          if (expectedNodeId !== msg.senderId) {
+            logger.warn(this.component, 'nodeid_mismatch_on_challenge', { expected: expectedNodeId, actual: msg.senderId });
+            this.disconnect();
+            return;
+          }
 
-           this.remoteNodeId = msg.senderId;
-           
-           if (!verifyMessageSignature(msg, this.remotePublicKey)) { 
-               logger.warn(this.component, 'signature_invalid_on_challenge');
-               this.disconnect(); 
-               return; 
-           }
-           
-           this.send(MessageType.AUTH, { response: msg.payload.challenge });
-           
-           this.state = PeerState.AUTHENTICATED;
-           this.onAuthenticated(this);
-           logger.info(this.component, 'peer_authenticated_initiator', { remoteId: this.remoteNodeId });
+          if (!verifyMessageSignature(msg, pubKey)) { 
+            logger.warn(this.component, 'signature_invalid_on_challenge');
+            this.disconnect(); 
+            return; 
+          }
+
+          if (!msg.payload?.challenge || typeof msg.payload.challenge !== 'string') {
+            logger.warn(this.component, 'missing_challenge_token');
+            this.disconnect();
+            return;
+          }
+
+          if (msg.payload?.endpoint) {
+            const epCheck = validateEndpoint(msg.payload.endpoint);
+            if (epCheck.valid) {
+              this.remoteEndpoint = epCheck.normalizedUrl;
+            }
+          }
+
+          this.remotePublicKey = pubKey;
+          this.remoteNodeId = msg.senderId;
+          this.lastSeen = Date.now();
+          
+          this.send(MessageType.AUTH, { response: msg.payload.challenge });
+          
+          this.state = PeerState.AUTHENTICATED;
+          this.onAuthenticated(this);
+          logger.info(this.component, 'peer_authenticated_initiator', { remoteId: this.remoteNodeId });
         }
         else if (msg.type === MessageType.AUTH && !this.isInitiator) {
           if (!this.remotePublicKey || !verifyMessageSignature(msg, this.remotePublicKey)) {
@@ -171,23 +224,25 @@ export class Peer {
             return;
           }
           
-          if (msg.payload.response !== this.pendingChallenge) {
+          if (!msg.payload?.response || msg.payload.response !== this.pendingChallenge) {
             logger.warn(this.component, 'challenge_failed');
             this.disconnect();
             return;
           }
           
+          this.lastSeen = Date.now();
           this.state = PeerState.AUTHENTICATED;
           logger.info(this.component, 'peer_authenticated_receiver', { remoteId: this.remoteNodeId });
           this.onAuthenticated(this);
         } else {
-            this.disconnect();
+          logger.warn(this.component, 'unexpected_message_in_challenging_state', { type: msg.type });
+          this.disconnect();
         }
         break;
 
       case PeerState.AUTHENTICATED:
         if (!this.remotePublicKey || !verifyMessageSignature(msg, this.remotePublicKey)) {
-          logger.warn(this.component, 'signature_invalid', { senderId: msg.senderId });
+          logger.warn(this.component, 'signature_invalid_authenticated_state', { senderId: msg.senderId });
           return;
         }
 
@@ -196,10 +251,13 @@ export class Peer {
           return;
         }
 
+        // Message is genuine and from the authenticated remote node
+        this.lastSeen = Date.now();
+
         if (msg.type === MessageType.PING) {
           this.send(MessageType.PONG, {});
         } else if (msg.type === MessageType.PONG) {
-          // Handled, lastSeen updated
+          // Handled, lastSeen already updated above
         } else {
           this.onMessage(msg, this);
         }

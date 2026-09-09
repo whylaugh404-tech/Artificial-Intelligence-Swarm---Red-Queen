@@ -21,7 +21,16 @@ A modular, observable, testable distributed autonomous cyber-research agent fram
 - **Peer Authentication**: Handshake (HELLO -> CHALLENGE -> AUTH) with strict cryptographic verification and Node-ID bounds checking.
 - **Replay Protection**: Strict cache window checking nonces, message IDs, and timestamps.
 - **OSINT**: Basic scanner modules (TCP Port scanning, DNS evaluation).
-- **Kademlia Peer Discovery**: Iterative lookups (FIND_NODE), automatic peer connections, and bucket management over authenticated transport.
+- **Hardened Kademlia DHT Foundation (P1.5)**:
+  - Canonical 32-byte numerical XOR distance comparison (no `localeCompare` or lexicographical comparisons).
+  - Strict Node ID validator (64-character lowercase hex) enforcing Ed25519 public key derivation.
+  - Strict endpoint validator for `ws:` and `wss:` with port bounds, hostname validation, and traversal rejection.
+  - Real K-bucket maintenance (K=20, 256 buckets, stale peer eviction, duplicate suppression, self-rejection).
+  - Deterministic duplicate connection handling with symmetric tie-breaking policy.
+  - Connection concurrency limiting (ALPHA=3 lookup queries, MAX_CONCURRENT_PEER_CONNECTIONS=3).
+  - Iterative FIND_NODE lookup with untrusted payload parsing, validation, and deterministic termination.
+  - Resource and payload bounds (max 64KB messages, max 20 peers per FIND_NODE_RESPONSE).
+  - Comprehensive negative test suite covering 25+ DHT and security scenarios with clean timer lifecycle teardown.
 
 ### PARTIAL
 - **Leader Election**: Logic for terms, voting, and candidate promotion implemented (`election.ts`), currently bound to the P2P transport but marked as explicitly partial for this milestone.
@@ -43,7 +52,7 @@ A modular, observable, testable distributed autonomous cyber-research agent fram
 | Memory | PASS | `src/redqueen/memory/store.ts` (File backed) |
 | Transport | PASS | `src/redqueen/network/transport.ts` (Real WebSockets) |
 | Peer Auth | PASS | `src/redqueen/network/peer.ts` (HELLO/CHALLENGE/AUTH) |
-| Kademlia | PASS | `src/redqueen/dht/routing.ts` (Iterative lookup) |
+| Kademlia / DHT | PASS | `src/redqueen/dht/routing.ts`, `src/redqueen/core/cell.ts` (P1.5 Hardened) |
 | AI | PASS | `src/redqueen/cognition/ai-provider.ts` |
 | Reasoning | PASS | `src/redqueen/cognition/pipeline.ts` |
 | Governance | NOT IMPLEMENTED | Planned for future phase |
@@ -53,7 +62,7 @@ A modular, observable, testable distributed autonomous cyber-research agent fram
 | Lifecycle | PASS | `src/redqueen/core/lifecycle.ts` |
 | Telemetry | PASS | Metrics derived from real `cell.getStatus()` in `server.ts` |
 | API | PASS | Full Express routing in `server.ts` |
-| Tests | PASS | Integration tests (including 5-scenario security suite) passing |
+| Tests | PASS | 72 tests passing across 8 suites (including 25-scenario security suite) |
 
 ## Setup Instructions
 1. Run `npm install`
