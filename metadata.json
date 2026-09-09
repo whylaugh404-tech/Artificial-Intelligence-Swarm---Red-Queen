@@ -1,0 +1,6 @@
+{
+  "name": "Red Queen",
+  "description": "Autonomous Cyber-Research Agent Framework",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
