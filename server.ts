@@ -4,26 +4,32 @@ import { createServer as createViteServer } from 'vite';
 import { Cell } from './src/redqueen/core/cell';
 import { logger } from './src/redqueen/core/logger';
 import dotenv from 'dotenv';
+
 dotenv.config();
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
-
+  
   app.use(express.json());
 
   // Instantiate the RedQueen Cell
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     logger.error('server', 'missing_api_key', new Error('OPENROUTER_API_KEY environment variable is required.'));
-    // We do not fail fast because we want the UI to load and show errors gracefully if possible.
-    // Or, if we fail fast, it's more secure. Let's let it fail fast.
     throw new Error('OPENROUTER_API_KEY environment variable is required. Start the application with a valid key.');
   }
 
   const cell = new Cell('./data/memory.json', apiKey);
+  
+  const p2pPort = parseInt(process.env.P2P_PORT || '0', 10);
+  if (p2pPort > 0) {
+    logger.info('server', 'p2p_enabled', { port: p2pPort });
+  } else {
+    logger.info('server', 'P2P: DISABLED');
+  }
 
-  await cell.start();
+  await cell.start(p2pPort);
 
   // API Routes
   app.get('/api/health', (req, res) => {
@@ -44,7 +50,6 @@ async function startServer() {
       cell.cognition.executeCycle(observation).catch(err => {
         logger.error('api', 'cognition_error', err);
       });
-
       res.json({ status: 'accepted', message: 'Observation injected into cognition pipeline' });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -57,19 +62,16 @@ async function startServer() {
       if (!message) {
         return res.status(400).json({ error: 'message required' });
       }
-
+      
       logger.info('api', 'chat_request', { model });
-
       const aiResult = await cell.aiProvider.generate({
         systemPrompt: 'You are Red Queen, an advanced, autonomous cyber-research AI. You analyze threats, manage distributed nodes, and speak with a precise, analytical, and slightly cold professional tone. Be concise and highly technical. Do not break character.',
         userPrompt: message,
         model: model || 'google/gemini-2.5-flash',
       });
-
       if (!aiResult.success) {
         return res.status(500).json({ error: aiResult.error });
       }
-
       res.json({ response: aiResult.rawText });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

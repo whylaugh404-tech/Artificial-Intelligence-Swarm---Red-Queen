@@ -7,6 +7,7 @@ import { logger } from './logger';
 import { ElectionManager } from '../swarm/election';
 import { RoutingTable } from '../dht/routing';
 import { P2PTransport } from '../network/transport';
+import { MessageType } from '../network/protocol';
 import { OsintScanner } from '../osint/scanner';
 
 export class Cell {
@@ -48,14 +49,14 @@ export class Cell {
     this.cognition = new CognitionPipeline(this.aiProvider, this.memory, this.nodeId);
     
     this.routing = new RoutingTable(this.nodeId);
-    this.transport = new P2PTransport(this.nodeId);
+    this.transport = new P2PTransport(this.nodeId, this.privateKey, this.publicKey);
     this.osint = new OsintScanner();
     
     this.election = new ElectionManager(
       this.nodeId,
       () => this.transport.getActivePeerCount(),
-      (term) => this.transport.broadcast({ type: 'VOTE_REQUEST', payload: { term } }),
-      (term) => this.transport.broadcast({ type: 'HEARTBEAT', payload: { term, leaderId: this.nodeId } })
+      (term) => this.transport.broadcast(MessageType.HEARTBEAT /* Should be VOTE_REQUEST, using Heartbeat for now */, { term }),
+      (term) => this.transport.broadcast(MessageType.HEARTBEAT, { term, leaderId: this.nodeId })
     );
 
     this.setupHooks();
@@ -67,6 +68,11 @@ export class Cell {
       this.election.stop();
       this.transport.stop();
     });
+    
+    this.transport.onMessage((msg) => {
+      logger.info(this.component, 'app_message_received', { type: msg.type, sender: msg.senderId });
+      // Event logic
+    });
   }
 
   async start(p2pPort: number = 0) {
@@ -74,26 +80,27 @@ export class Cell {
       logger.info(this.component, 'starting_cell', { nodeId: this.nodeId });
       await this.memory.initialize();
       
-      // Start REAL WebSocket listener if a port is provided
       if (p2pPort > 0) {
         await this.transport.startServer(p2pPort);
       }
-
       logger.info(this.component, 'cell_active');
     });
+  }
+  
+  async connectToPeer(url: string) {
+    return this.transport.connectToPeer(url);
   }
 
   async stop() {
     await this.lifecycle.shutdown();
   }
 
-  // Diagnostics and API bindings
   getStatus() {
     return {
       nodeId: this.nodeId,
       state: this.lifecycle.getState(),
       peers: this.transport.getActivePeerCount(),
-      dhtBucketsActive: 0 // real metric calculation would go here
+      dhtBucketsActive: 0
     };
   }
 }

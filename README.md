@@ -1,5 +1,4 @@
 # Red Queen
-
 A modular, observable, testable distributed autonomous cyber-research agent framework.
 
 ## Project Principles
@@ -18,15 +17,19 @@ A modular, observable, testable distributed autonomous cyber-research agent fram
 - **Persistent Memory**: Disk-backed JSON store with asynchronous read/write and metadata tagging.
 - **AI / OpenRouter**: Real integration with OpenRouter API, structured schema enforcement via Zod, and full Cognition Pipeline.
 - **API & Dashboard**: Express.js server providing real-time data to a React dashboard.
+- **Authenticated P2P Transport**: Fully functional two-cell WebSocket communication.
+- **Peer Authentication**: Handshake (HELLO -> CHALLENGE -> AUTH) with cryptographic verification.
+- **Replay Protection**: Strict cache window checking nonces, message IDs, and timestamps.
+- **OSINT**: Basic scanner modules (TCP Port scanning, DNS evaluation).
 
 ### PARTIAL
-- **Authenticated Transport**: Message schemas defined with nonces, signatures, and timestamps. Handshake protocol designed (`protocol.ts` and `peer.ts`), but full WebSocket mesh networking is pending integration into the central Cell lifecycle.
 - **Kademlia**: Basic routing table bucket logic created, but iterative lookups over the network are not fully active yet.
-- **Leader Election**: Logic for terms, voting, and candidate promotion implemented (`election.ts`), waiting on the mesh network layer to propagate UDP/TCP broadcasts.
+- **Leader Election**: Logic for terms, voting, and candidate promotion implemented (`election.ts`), currently bound to the P2P transport.
 
-### PLANNED
-- **Task Distribution**
+### NOT IMPLEMENTED
+- **Distributed Memory**
 - **Data Replication / Erasure Coding**
+- **Task Distribution**
 - **Governance**
 
 ---
@@ -38,21 +41,22 @@ A modular, observable, testable distributed autonomous cyber-research agent fram
 | Identity | PASS | `src/redqueen/crypto/identity.ts` |
 | Crypto | PASS | `src/redqueen/crypto/signing.ts`, `encryption.ts` |
 | Memory | PASS | `src/redqueen/memory/store.ts` (File backed) |
-| Transport | PARTIAL | `src/redqueen/network/peer.ts` (Schemas & Logic built) |
-| Peer Auth | PARTIAL | `src/redqueen/network/peer.ts` (Auth Handshake mapped) |
+| Transport | PASS | `src/redqueen/network/transport.ts` (Real WebSockets) |
+| Peer Auth | PASS | `src/redqueen/network/peer.ts` (HELLO/CHALLENGE/AUTH) |
 | Kademlia | PARTIAL | `src/redqueen/dht/routing.ts` (Routing table built) |
-| AI | PASS | `src/redqueen/cognition/ai-provider.ts` (OpenRouter integration) |
-| Reasoning | PASS | `src/redqueen/cognition/pipeline.ts` (Observe->Plan schema) |
+| AI | PASS | `src/redqueen/cognition/ai-provider.ts` |
+| Reasoning | PASS | `src/redqueen/cognition/pipeline.ts` |
 | Governance | NOT IMPLEMENTED | Planned for future phase |
-| Swarm | PARTIAL | `src/redqueen/swarm/election.ts` |
-| Leader Election | PARTIAL | `src/redqueen/swarm/election.ts` (Logic implemented, network binding pending) |
+| Leader Election | PARTIAL | `src/redqueen/swarm/election.ts` |
+| Distributed Memory | NOT IMPLEMENTED | Planned for future phase |
 | Replication | NOT IMPLEMENTED | Planned for future phase |
 | Lifecycle | PASS | `src/redqueen/core/lifecycle.ts` |
 | Telemetry | PASS | Metrics derived from real `cell.getStatus()` in `server.ts` |
 | API | PASS | Full Express routing in `server.ts` |
-| Tests | PARTIAL | Test logic exists implicitly in structural constraints, explicit suites pending |
+| Tests | PASS | Integration tests for real multi-cell networking passing |
 
 ## Setup Instructions
 1. Run `npm install`
-2. Add your OpenRouter API key to `.env` or leave the default injected one.
-3. Run `npm run dev` to start the Node server and the React UI.
+2. Add your OpenRouter API key to `.env`
+3. Optional: Add `P2P_PORT=4000` to your `.env` to enable inbound networking.
+4. Run `npm run dev` to start the Node server and the React UI.

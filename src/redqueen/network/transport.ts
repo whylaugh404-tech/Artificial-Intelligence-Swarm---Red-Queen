@@ -1,27 +1,25 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { logger } from '../core/logger';
+import { Peer, PeerState } from './peer';
+import { NetworkMessage, MessageType, ReplayCache } from './protocol';
 import { randomUUID } from 'crypto';
 
-export interface NetworkMessage {
-  id: string;
-  senderId: string;
-  type: string;
-  payload: any;
-  timestamp: number;
-  signature?: string;
-}
-
 /**
- * REAL P2P WebSocket Transport.
- * No local event buses. No fake console logs.
- * This binds to an actual port and establishes raw TCP WebSockets.
+ * REAL P2P WebSocket Transport managing Peer instances.
  */
 export class P2PTransport {
   private wss: WebSocketServer | null = null;
   private readonly component = 'p2p_transport';
-  private peers: Map<string, WebSocket> = new Map();
+  private peers: Map<string, Peer> = new Map();
+  private replayCache = new ReplayCache();
+  
+  private messageListeners: ((msg: NetworkMessage) => void)[] = [];
 
-  constructor(private readonly localNodeId: string) {}
+  constructor(
+    private readonly localNodeId: string,
+    private readonly privateKey: string,
+    private readonly publicKey: string
+  ) {}
 
   async startServer(port: number): Promise<void> {
     return new Promise((resolve) => {
@@ -30,7 +28,7 @@ export class P2PTransport {
       this.wss.on('connection', (ws: WebSocket, req) => {
         const ip = req.socket.remoteAddress;
         logger.info(this.component, 'inbound_connection', { ip });
-        this.setupSocket(ws, `inbound-${randomUUID().substring(0,8)}`);
+        this.setupPeer(ws, false);
       });
 
       this.wss.on('listening', () => {
@@ -57,16 +55,28 @@ export class P2PTransport {
 
       ws.on('open', () => {
         clearTimeout(timeout);
-        logger.info(this.component, 'outbound_connected', { url });
-        this.setupSocket(ws, `outbound-${randomUUID().substring(0,8)}`);
+        logger.info(this.component, 'outbound_tcp_connected', { url });
         
-        // Send initial handshake
-        this.sendToSocket(ws, {
-          type: 'HANDSHAKE',
-          payload: { version: '1.0' }
-        });
+        const peer = this.setupPeer(ws, true);
         
-        resolve();
+        // Wait for auth to complete
+        const authCheck = setInterval(() => {
+           if (peer.getState() === PeerState.AUTHENTICATED) {
+              clearInterval(authCheck);
+              resolve();
+           } else if (peer.getState() === PeerState.DISCONNECTED) {
+              clearInterval(authCheck);
+              reject(new Error('Authentication failed / disconnected'));
+           }
+        }, 100);
+        
+        setTimeout(() => {
+           clearInterval(authCheck);
+           if (peer.getState() !== PeerState.AUTHENTICATED) {
+             peer.disconnect();
+             reject(new Error('Authentication timeout'));
+           }
+        }, 3000);
       });
 
       ws.on('error', (err) => {
@@ -77,67 +87,83 @@ export class P2PTransport {
     });
   }
 
-  private setupSocket(ws: WebSocket, connectionId: string) {
-    this.peers.set(connectionId, ws);
-
-    ws.on('message', (data) => {
-      try {
-        const msg: NetworkMessage = JSON.parse(data.toString());
-        logger.debug(this.component, 'message_received', { type: msg.type, sender: msg.senderId });
-        // Event emitter or router would go here in a full implementation
-      } catch (err) {
-        logger.warn(this.component, 'malformed_message_dropped');
-      }
-    });
-
-    ws.on('close', () => {
-      logger.info(this.component, 'peer_disconnected', { connectionId });
-      this.peers.delete(connectionId);
-    });
+  private setupPeer(ws: WebSocket, isInitiator: boolean): Peer {
+    const peer = new Peer(
+      ws, 
+      this.localNodeId,
+      this.privateKey,
+      this.publicKey,
+      isInitiator,
+      (p) => this.onPeerAuthenticated(p),
+      (msg, p) => this.onMessageReceived(msg, p),
+      (p) => this.onPeerDisconnected(p)
+    );
+    
+    // We store the peer using a temporary UUID until it authenticates
+    const tempId = randomUUID();
+    this.peers.set(tempId, peer);
+    return peer;
   }
 
-  private sendToSocket(ws: WebSocket, msg: Partial<NetworkMessage>) {
-    if (ws.readyState === WebSocket.OPEN) {
-      const fullMsg: NetworkMessage = {
-        id: randomUUID(),
-        senderId: this.localNodeId,
-        type: msg.type || 'UNKNOWN',
-        payload: msg.payload || {},
-        timestamp: Date.now(),
-        ...msg
-      };
-      ws.send(JSON.stringify(fullMsg));
+  private onPeerAuthenticated(peer: Peer) {
+    if (peer.remoteNodeId) {
+       // Promote to actual node ID mapping
+       this.peers.set(peer.remoteNodeId, peer);
+       for (const [id, p] of this.peers.entries()) { if (p === peer && id !== peer.remoteNodeId) this.peers.delete(id); }
+       logger.info(this.component, 'peer_registered', { nodeId: peer.remoteNodeId });
+    }
+  }
+  
+  private onPeerDisconnected(peer: Peer) {
+    if (peer.remoteNodeId) {
+      this.peers.delete(peer.remoteNodeId);
+    }
+    // Also sweep temp IDs
+    for (const [id, p] of this.peers.entries()) {
+      if (p === peer) {
+         this.peers.delete(id);
+      }
     }
   }
 
-  broadcast(msg: Partial<NetworkMessage>) {
-    if (this.peers.size === 0) {
-      logger.debug(this.component, 'broadcast_skipped_no_peers');
+  private onMessageReceived(msg: NetworkMessage, peer: Peer) {
+    if (this.replayCache.isDuplicateOrExpired(msg)) {
+      logger.warn(this.component, 'replay_or_expired_message_dropped', { msgId: msg.messageId });
       return;
     }
     
-    const fullMsg = JSON.stringify({
-      id: randomUUID(),
-      senderId: this.localNodeId,
-      type: msg.type || 'UNKNOWN',
-      payload: msg.payload || {},
-      timestamp: Date.now()
-    });
+    // Dispatch to registered listeners
+    for (const listener of this.messageListeners) {
+      listener(msg);
+    }
+  }
+  
+  public onMessage(listener: (msg: NetworkMessage) => void) {
+    this.messageListeners.push(listener);
+  }
 
-    let sent = 0;
-    for (const [id, ws] of this.peers.entries()) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(fullMsg);
-        sent++;
+  broadcast(msgType: MessageType, payload: any) {
+    if (this.peers.size === 0) return;
+    
+    for (const peer of this.peers.values()) {
+      if (peer.getState() === PeerState.AUTHENTICATED) {
+        peer.send(msgType, payload);
       }
     }
-    logger.debug(this.component, 'broadcast_sent', { type: msg.type, peerCount: sent });
+  }
+
+  sendTo(targetNodeId: string, msgType: MessageType, payload: any) {
+    const peer = this.peers.get(targetNodeId);
+    if (peer && peer.getState() === PeerState.AUTHENTICATED) {
+       peer.send(msgType, payload);
+    }
   }
 
   stop() {
-    for (const ws of this.peers.values()) {
-      ws.close();
+    for (const peer of this.peers.values()) {
+      peer.disconnect();
     }
+    this.peers.clear();
     if (this.wss) {
       this.wss.close();
     }
@@ -146,8 +172,8 @@ export class P2PTransport {
 
   getActivePeerCount(): number {
     let count = 0;
-    for (const ws of this.peers.values()) {
-      if (ws.readyState === WebSocket.OPEN) count++;
+    for (const peer of this.peers.values()) {
+      if (peer.getState() === PeerState.AUTHENTICATED) count++;
     }
     return count;
   }
