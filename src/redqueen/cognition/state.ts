@@ -42,9 +42,11 @@ export class CognitiveStateManager {
       cellId: this.cellId,
       lifecycleState: CellState.CREATED,
       specialization: initialSpecialization,
-      activeGoals: [...initialGoals],
+      activeGoals: initialGoals.map(g => g.trim()).filter(Boolean),
       knowledgeReferences: [],
-      operationalConfidence: Math.max(0, Math.min(1, initialConfidence)),
+      operationalConfidence: typeof initialConfidence === 'number' && !Number.isNaN(initialConfidence) && Number.isFinite(initialConfidence)
+        ? Math.max(0, Math.min(1, initialConfidence))
+        : 1.0,
       lastCognitiveUpdate: new Date().toISOString(),
       memoryStats: {
         total: 0,
@@ -76,28 +78,37 @@ export class CognitiveStateManager {
   }
 
   public addGoal(goal: string): void {
-    if (!goal || this.state.activeGoals.includes(goal)) return;
-    this.state.activeGoals.push(goal);
+    if (!goal || typeof goal !== 'string') return;
+    const trimmed = goal.trim();
+    if (!trimmed || this.state.activeGoals.includes(trimmed)) return;
+    this.state.activeGoals.push(trimmed);
     this.state.lastCognitiveUpdate = new Date().toISOString();
-    logger.debug(this.component, 'goal_added', { cellId: this.cellId, goal });
+    logger.debug(this.component, 'goal_added', { cellId: this.cellId, goal: trimmed });
   }
 
   public completeGoal(goal: string): void {
-    const idx = this.state.activeGoals.indexOf(goal);
+    if (!goal || typeof goal !== 'string') return;
+    const trimmed = goal.trim();
+    const idx = this.state.activeGoals.indexOf(trimmed);
     if (idx !== -1) {
       this.state.activeGoals.splice(idx, 1);
       this.state.lastCognitiveUpdate = new Date().toISOString();
-      logger.debug(this.component, 'goal_completed', { cellId: this.cellId, goal });
+      logger.debug(this.component, 'goal_completed', { cellId: this.cellId, goal: trimmed });
     }
   }
 
   public addKnowledgeReference(ref: string): void {
-    if (!ref || this.state.knowledgeReferences.includes(ref)) return;
-    this.state.knowledgeReferences.push(ref);
+    if (!ref || typeof ref !== 'string') return;
+    const trimmed = ref.trim();
+    if (!trimmed || this.state.knowledgeReferences.includes(trimmed)) return;
+    this.state.knowledgeReferences.push(trimmed);
     this.state.lastCognitiveUpdate = new Date().toISOString();
   }
 
   public updateConfidence(confidence: number): void {
+    if (typeof confidence !== 'number' || Number.isNaN(confidence) || !Number.isFinite(confidence)) {
+      throw new Error(`Invalid confidence value: must be a valid finite number, received ${confidence}`);
+    }
     this.state.operationalConfidence = Math.max(0, Math.min(1, confidence));
     this.state.lastCognitiveUpdate = new Date().toISOString();
   }

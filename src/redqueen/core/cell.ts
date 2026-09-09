@@ -26,7 +26,8 @@ import {
   CellGenomeSchema,
   createGenesisGenome,
   constructLineage,
-  validateGenome
+  validateGenome,
+  deepFreeze
 } from '../genome';
 import { CognitiveStateManager } from '../cognition/state';
 
@@ -43,7 +44,7 @@ export interface CellOptions {
 export class Cell {
   private readonly component = 'cell';
   
-  public readonly privateKey: string;
+  public readonly privateKey!: string;
   public readonly publicKey: string;
   public readonly nodeId: string;
   
@@ -57,9 +58,17 @@ export class Cell {
   public readonly osint: OsintScanner;
   public readonly swarm: SwarmMembershipManager;
 
-  public readonly genome: CellGenome;
-  public readonly lineage: CellLineage;
+  private _genome: CellGenome;
+  private _lineage: CellLineage;
   public readonly cognitiveState: CognitiveStateManager;
+
+  public get genome(): Readonly<CellGenome> {
+    return this._genome;
+  }
+
+  public get lineage(): Readonly<CellLineage> {
+    return this._lineage;
+  }
 
   private syncIntervalTimer: NodeJS.Timeout | null = null;
 
@@ -71,14 +80,23 @@ export class Cell {
     swarmOptions?: SwarmMembershipOptions,
     cellOptions?: CellOptions
   ) {
+    let rawPrivateKey: string;
     if (existingPrivateKey && existingPublicKey) {
-      this.privateKey = existingPrivateKey.trim();
+      rawPrivateKey = existingPrivateKey.trim();
       this.publicKey = existingPublicKey.trim();
     } else {
       const kp = identityCrypto.generateKeyPair();
-      this.privateKey = kp.privateKey.trim();
+      rawPrivateKey = kp.privateKey.trim();
       this.publicKey = kp.publicKey.trim();
     }
+
+    // Mark privateKey non-enumerable to prevent accidental serialization leakage
+    Object.defineProperty(this, 'privateKey', {
+      value: rawPrivateKey,
+      writable: false,
+      enumerable: false,
+      configurable: false
+    });
     
     this.nodeId = identityCrypto.deriveNodeId(this.publicKey);
     this.lifecycle = new Lifecycle(this.nodeId);
@@ -90,9 +108,9 @@ export class Cell {
     
     // Initialize Genome
     if (cellOptions?.genome && validateGenome(cellOptions.genome).valid) {
-      this.genome = CellGenomeSchema.parse(cellOptions.genome);
+      this._genome = deepFreeze(CellGenomeSchema.parse(cellOptions.genome));
     } else {
-      this.genome = createGenesisGenome({
+      this._genome = createGenesisGenome({
         parentCellId: cellOptions?.parentCellId,
         generation: cellOptions?.generation,
         lineageId: cellOptions?.lineageId,
@@ -103,18 +121,18 @@ export class Cell {
     }
 
     // Initialize Lineage
-    this.lineage = constructLineage(this.genome);
+    this._lineage = constructLineage(this._genome);
 
     // Initialize Individual Cognitive State
     this.cognitiveState = new CognitiveStateManager(
       this.nodeId,
-      this.genome.specialization,
+      this._genome.specialization,
       [],
       1.0
     );
 
     this.routing = new RoutingTable(this.nodeId);
-    this.transport = new P2PTransport(this.nodeId, this.privateKey, this.publicKey);
+    this.transport = new P2PTransport(this.nodeId, rawPrivateKey, this.publicKey);
     this.osint = new OsintScanner();
 
     this.swarm = new SwarmMembershipManager(
@@ -137,6 +155,16 @@ export class Cell {
     this.setupHooks();
   }
 
+  public restoreGenome(candidate: unknown): void {
+    const check = validateGenome(candidate);
+    if (!check.valid || !check.genome) {
+      throw new Error(`Cannot restore invalid genome: ${check.errors?.join(', ') || 'Validation failed'}`);
+    }
+    const validated = check.genome;
+    this._genome = deepFreeze(validated);
+    this._lineage = constructLineage(validated);
+  }
+
   private setupHooks() {
     this.lifecycle.registerShutdownHook(async () => {
       logger.info(this.component, 'shutting_down_cell', { nodeId: this.nodeId });
@@ -152,6 +180,12 @@ export class Cell {
     });
     
     this.transport.onMessage((msg) => {
+      const state = this.lifecycle.getState();
+      if (state === CellState.RETIRED || state === CellState.SUSPENDED) {
+        logger.debug(this.component, 'message_ignored_inactive_cell', { state, type: msg.type });
+        return;
+      }
+
       // DHT Protocol handling
       if (msg.type === MessageType.FIND_NODE) {
         const parseResult = FindNodePayloadSchema.safeParse(msg.payload);
@@ -203,16 +237,16 @@ export class Cell {
     const key = `cell_genome_${this.nodeId}`;
     const existing = await this.memory.get(key);
     if (existing && existing.content) {
-      const check = validateGenome(existing.content);
-      if (check.valid && check.genome) {
-        (this as any).genome = check.genome;
-        (this as any).lineage = constructLineage(check.genome);
+      try {
+        this.restoreGenome(existing.content);
         logger.info(this.component, 'cell_genome_restored_from_storage', {
-          genomeId: this.genome.genomeId,
-          generation: this.genome.generation,
-          lineageId: this.lineage.lineageId
+          genomeId: this._genome.genomeId,
+          generation: this._genome.generation,
+          lineageId: this._lineage.lineageId
         });
         return;
+      } catch (err: any) {
+        logger.warn(this.component, 'persisted_genome_invalid_falling_back', { error: err.message });
       }
     }
 
@@ -220,7 +254,7 @@ export class Cell {
       id: key,
       cellId: this.nodeId,
       category: MemoryCategory.SEMANTIC,
-      content: this.genome,
+      content: this._genome,
       source: 'cell_initialization',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -267,6 +301,13 @@ export class Cell {
   }
   
   async connectToPeer(url: string) {
+    const state = this.lifecycle.getState();
+    if (state === CellState.RETIRED) {
+      throw new Error('Cell is retired and cannot initiate connections');
+    }
+    if (state === CellState.SUSPENDED) {
+      throw new Error('Cell is suspended and cannot initiate connections');
+    }
     return this.transport.connectToPeer(url);
   }
 
@@ -276,6 +317,14 @@ export class Cell {
    * Connection concurrency bound: MAX_CONCURRENT_PEER_CONNECTIONS = 3
    */
   async findNode(targetNodeId: string): Promise<PeerInfo[]> {
+    const state = this.lifecycle.getState();
+    if (state === CellState.RETIRED) {
+      throw new Error('Cell is retired and cannot perform lookups');
+    }
+    if (state === CellState.SUSPENDED) {
+      throw new Error('Cell is suspended and cannot perform lookups');
+    }
+
     if (!isValidNodeId(targetNodeId)) {
       throw new Error(`Invalid targetNodeId: ${targetNodeId}`);
     }
@@ -463,5 +512,9 @@ export class Cell {
       },
       cognitiveState: this.cognitiveState.getState()
     };
+  }
+
+  toJSON() {
+    return this.getStatus();
   }
 }

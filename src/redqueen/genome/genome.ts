@@ -14,6 +14,23 @@ import { logger } from '../core/logger';
 const COMPONENT = 'genome';
 
 /**
+ * Recursively freezes an object and its nested properties to guarantee runtime immutability.
+ */
+export function deepFreeze<T>(obj: T): T {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+  Object.freeze(obj);
+  for (const key of Object.keys(obj)) {
+    const val = (obj as any)[key];
+    if (val !== null && typeof val === 'object' && !Object.isFrozen(val)) {
+      deepFreeze(val);
+    }
+  }
+  return obj;
+}
+
+/**
  * Creates a Genesis (Generation 0) Genome for a new Cell lineage.
  */
 export function createGenesisGenome(params?: CreateGenomeParams): CellGenome {
@@ -38,6 +55,7 @@ export function createGenesisGenome(params?: CreateGenomeParams): CellGenome {
     },
     capabilities: params?.capabilities || [
       'OSINT_SCAN',
+      'INFO_PROCESSING',
       'KNOWLEDGE_QUERY',
       'COGNITIVE_REASONING',
       'SWARM_COORDINATION'
@@ -50,7 +68,7 @@ export function createGenesisGenome(params?: CreateGenomeParams): CellGenome {
 
   const parsed = CellGenomeSchema.parse(raw);
   logger.info(COMPONENT, 'genesis_genome_created', { genomeId: parsed.genomeId, lineageId: parsed.lineageId });
-  return parsed;
+  return deepFreeze(parsed);
 }
 
 /**
@@ -65,8 +83,18 @@ export function deriveProgenyGenome(
   const now = new Date().toISOString();
   const progenyGenomeId = options?.genomeId || randomUUID().replace(/-/g, '');
 
+  // Lineage Invariant 1: Progeny cannot equal parent or any ancestor genome ID (prevents cycle)
+  if (progenyGenomeId === parentGenome.genomeId || (parentGenome.ancestorGenomeIds && parentGenome.ancestorGenomeIds.includes(progenyGenomeId))) {
+    throw new Error(`Cyclic lineage detected: progeny genomeId '${progenyGenomeId}' is already an ancestor`);
+  }
+
+  // Lineage Invariant 2: Cannot self-derive in a loop if parentCellId already exists in ancestor chains
+  if (parentGenome.ancestorCellIds && parentGenome.ancestorCellIds.includes(parentCellId)) {
+    throw new Error(`Cyclic lineage detected: parentCellId '${parentCellId}' is already in ancestor cell chain`);
+  }
+
   // Inherit or selectively restrict capabilities
-  const capabilities = options?.capabilities || [...parentGenome.capabilities];
+  const capabilities = options?.capabilities ? [...options.capabilities] : [...parentGenome.capabilities];
   for (const cap of capabilities) {
     if (!ALLOWED_CELL_CAPABILITIES.includes(cap)) {
       throw new Error(`Invalid capability: ${cap}`);
@@ -98,7 +126,7 @@ export function deriveProgenyGenome(
     progenyGenomeId: parsed.genomeId,
     generation: parsed.generation
   });
-  return parsed;
+  return deepFreeze(parsed);
 }
 
 /**
@@ -114,7 +142,7 @@ export function constructLineage(genome: CellGenome): CellLineage {
     ancestorCellIds: genome.ancestorCellIds || []
   };
 
-  return CellLineageSchema.parse(raw);
+  return deepFreeze(CellLineageSchema.parse(raw));
 }
 
 /**
