@@ -10,6 +10,7 @@ import { P2PTransport } from '../network/transport';
 import { MessageType } from '../network/protocol';
 import { PeerState } from '../network/peer';
 import { OsintScanner } from '../osint/scanner';
+import { SwarmMembershipManager, SwarmMembershipOptions } from '../swarm/membership';
 import {
   isValidNodeId,
   validateEndpoint,
@@ -33,6 +34,7 @@ export class Cell {
   public readonly election: ElectionManager;
   public readonly transport: P2PTransport;
   public readonly osint: OsintScanner;
+  public readonly swarm: SwarmMembershipManager;
 
   private syncIntervalTimer: NodeJS.Timeout | null = null;
 
@@ -40,15 +42,16 @@ export class Cell {
     storagePath: string, 
     openRouterApiKey: string, 
     existingPrivateKey?: string, 
-    existingPublicKey?: string
+    existingPublicKey?: string,
+    swarmOptions?: SwarmMembershipOptions
   ) {
     if (existingPrivateKey && existingPublicKey) {
-      this.privateKey = existingPrivateKey;
-      this.publicKey = existingPublicKey;
+      this.privateKey = existingPrivateKey.trim();
+      this.publicKey = existingPublicKey.trim();
     } else {
       const kp = identityCrypto.generateKeyPair();
-      this.privateKey = kp.privateKey;
-      this.publicKey = kp.publicKey;
+      this.privateKey = kp.privateKey.trim();
+      this.publicKey = kp.publicKey.trim();
     }
     
     this.nodeId = identityCrypto.deriveNodeId(this.publicKey);
@@ -61,6 +64,16 @@ export class Cell {
     this.routing = new RoutingTable(this.nodeId);
     this.transport = new P2PTransport(this.nodeId, this.privateKey, this.publicKey);
     this.osint = new OsintScanner();
+
+    this.swarm = new SwarmMembershipManager(
+      this.nodeId,
+      this.publicKey,
+      this.transport,
+      {
+        ...swarmOptions,
+        memoryStore: this.memory
+      }
+    );
     
     this.election = new ElectionManager(
       this.nodeId,
@@ -79,6 +92,7 @@ export class Cell {
         clearInterval(this.syncIntervalTimer);
         this.syncIntervalTimer = null;
       }
+      this.swarm.stop();
       this.election.stop();
       this.transport.stop();
     });
@@ -135,6 +149,7 @@ export class Cell {
     await this.lifecycle.initialize(async () => {
       logger.info(this.component, 'starting_cell', { nodeId: this.nodeId });
       await this.memory.initialize();
+      await this.swarm.restoreFromStorage();
       
       if (p2pPort > 0) {
         await this.transport.startServer(p2pPort);
@@ -335,7 +350,9 @@ export class Cell {
       nodeId: this.nodeId,
       state: this.lifecycle.getState(),
       peers: this.transport.getActivePeerCount(),
-      dhtBucketsActive: this.routing.getActiveBucketCount()
+      dhtBucketsActive: this.routing.getActiveBucketCount(),
+      swarmState: this.swarm.getMembershipState(this.nodeId),
+      swarmId: this.swarm.swarmId
     };
   }
 }

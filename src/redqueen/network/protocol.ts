@@ -15,7 +15,10 @@ export enum MessageType {
   HEARTBEAT = 'HEARTBEAT',
   TASK = 'TASK',
   TASK_RESULT = 'TASK_RESULT',
-  APPLICATION = 'APPLICATION' // General application messages
+  APPLICATION = 'APPLICATION', // General application messages
+  SWARM_JOIN_REQUEST = 'SWARM_JOIN_REQUEST',
+  SWARM_JOIN_RESPONSE = 'SWARM_JOIN_RESPONSE',
+  SWARM_CERT_ANNOUNCE = 'SWARM_CERT_ANNOUNCE'
 }
 
 export const MessageSchema = z.object({
