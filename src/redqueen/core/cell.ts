@@ -100,7 +100,7 @@ export class Cell {
       nodeId: this.nodeId,
       state: this.lifecycle.getState(),
       peers: this.transport.getActivePeerCount(),
-      dhtBucketsActive: 0
+      dhtBucketsActive: this.routing.getActiveBucketCount()
     };
   }
 }

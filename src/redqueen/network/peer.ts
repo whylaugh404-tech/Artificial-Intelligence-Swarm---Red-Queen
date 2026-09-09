@@ -45,7 +45,8 @@ export class Peer {
         this.lastSeen = Date.now();
         this.handleMessage(msg);
       } catch (err: any) {
-        logger.warn(this.component, 'invalid_message_dropped', { error: err.message }); this.disconnect();
+        logger.warn(this.component, 'invalid_message_dropped', { error: err.message });
+        this.disconnect();
       }
     });
 
@@ -57,7 +58,7 @@ export class Peer {
     
     this.socket.on('error', (err) => {
       logger.error(this.component, 'peer_socket_error', err, { remoteId: this.remoteNodeId });
-      logger.warn(this.component, "disconnecting", { reason: new Error().stack }); this.disconnect();
+      this.disconnect();
     });
   }
 
@@ -83,7 +84,8 @@ export class Peer {
   }
 
   private initiateHandshake() {
-    this.send(MessageType.HELLO, { publicKey: this.localPublicKey }); this.state = PeerState.CHALLENGING;
+    this.send(MessageType.HELLO, { publicKey: this.localPublicKey });
+    this.state = PeerState.CHALLENGING;
   }
 
   private handleMessage(msg: NetworkMessage) {
@@ -93,21 +95,22 @@ export class Peer {
       case PeerState.NEW:
         if (msg.type === MessageType.HELLO) {
           this.remotePublicKey = msg.payload.publicKey;
-          if (!this.remotePublicKey) {
-            logger.warn(this.component, "disconnecting", { reason: new Error().stack }); this.disconnect();
+          if (!this.remotePublicKey || !identityCrypto.isValidPublicKey(this.remotePublicKey)) {
+            logger.warn(this.component, 'invalid_public_key');
+            this.disconnect();
             return;
           }
           const expectedNodeId = identityCrypto.deriveNodeId(this.remotePublicKey);
           
           if (expectedNodeId !== msg.senderId) {
             logger.warn(this.component, 'nodeid_mismatch', { expected: expectedNodeId, actual: msg.senderId });
-            logger.warn(this.component, "disconnecting", { reason: new Error().stack }); this.disconnect();
+            this.disconnect();
             return;
           }
 
           if (!verifyMessageSignature(msg, this.remotePublicKey)) {
             logger.warn(this.component, 'signature_invalid_on_hello', { senderId: msg.senderId });
-            logger.warn(this.component, "disconnecting", { reason: new Error().stack }); this.disconnect();
+            this.disconnect();
             return;
           }
 
@@ -120,47 +123,50 @@ export class Peer {
             publicKey: this.localPublicKey 
           });
         } else {
-           // Not a hello, drop
-           logger.warn(this.component, "disconnecting", { reason: new Error().stack }); this.disconnect();
+           this.disconnect();
         }
         break;
 
       case PeerState.CHALLENGING:
         if (msg.type === MessageType.CHALLENGE && this.isInitiator) {
            this.remotePublicKey = msg.payload.publicKey;
-           if (!this.remotePublicKey) { 
-               logger.warn(this.component, "disconnecting", { reason: new Error().stack }); this.disconnect(); 
+           if (!this.remotePublicKey || !identityCrypto.isValidPublicKey(this.remotePublicKey)) { 
+               logger.warn(this.component, 'invalid_public_key_on_challenge');
+               this.disconnect(); 
                return; 
            }
+
+           const expectedNodeId = identityCrypto.deriveNodeId(this.remotePublicKey);
+           if (expectedNodeId !== msg.senderId) {
+             logger.warn(this.component, 'nodeid_mismatch', { expected: expectedNodeId, actual: msg.senderId });
+             this.disconnect();
+             return;
+           }
+
            this.remoteNodeId = msg.senderId;
            
            if (!verifyMessageSignature(msg, this.remotePublicKey)) { 
-               logger.warn(this.component, "disconnecting", { reason: new Error().stack }); this.disconnect(); 
+               logger.warn(this.component, 'signature_invalid_on_challenge');
+               this.disconnect(); 
                return; 
            }
            
            this.send(MessageType.AUTH, { response: msg.payload.challenge });
            
-           // Initiator considers itself authenticated after sending AUTH
            this.state = PeerState.AUTHENTICATED;
            this.onAuthenticated(this);
            logger.info(this.component, 'peer_authenticated_initiator', { remoteId: this.remoteNodeId });
         }
         else if (msg.type === MessageType.AUTH && !this.isInitiator) {
           if (!this.remotePublicKey || !verifyMessageSignature(msg, this.remotePublicKey)) {
-            logger.warn(this.component, "disconnecting", { reason: new Error().stack }); this.disconnect();
+            logger.warn(this.component, 'signature_invalid_on_auth');
+            this.disconnect();
             return;
           }
           
-           const expectedNodeId = identityCrypto.deriveNodeId(this.remotePublicKey);
-           if (expectedNodeId !== msg.senderId) {
-             logger.warn(this.component, "nodeid_mismatch", { expected: expectedNodeId, actual: msg.senderId });
-             logger.warn(this.component, "disconnecting", { reason: new Error().stack }); this.disconnect();
-             return;
-           }
           if (msg.payload.response !== this.pendingChallenge) {
             logger.warn(this.component, 'challenge_failed');
-            logger.warn(this.component, "disconnecting", { reason: new Error().stack }); this.disconnect();
+            this.disconnect();
             return;
           }
           
@@ -168,7 +174,7 @@ export class Peer {
           logger.info(this.component, 'peer_authenticated_receiver', { remoteId: this.remoteNodeId });
           this.onAuthenticated(this);
         } else {
-            logger.warn(this.component, "disconnecting", { reason: new Error().stack }); this.disconnect();
+            this.disconnect();
         }
         break;
 
@@ -188,7 +194,6 @@ export class Peer {
         } else if (msg.type === MessageType.PONG) {
           // Handled, lastSeen updated
         } else {
-          // Deliver to transport layer
           this.onMessage(msg, this);
         }
         break;

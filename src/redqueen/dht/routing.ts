@@ -36,6 +36,10 @@ export class RoutingTable {
       .slice(0, limit);
   }
 
+  getActiveBucketCount(): number {
+    return this.buckets.size;
+  }
+
   private xorDistance(id1: string, id2: string): string {
     // Hex XOR implementation
     const b1 = Buffer.from(id1, 'hex');

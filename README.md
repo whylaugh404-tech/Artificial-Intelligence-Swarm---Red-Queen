@@ -18,13 +18,13 @@ A modular, observable, testable distributed autonomous cyber-research agent fram
 - **AI / OpenRouter**: Real integration with OpenRouter API, structured schema enforcement via Zod, and full Cognition Pipeline.
 - **API & Dashboard**: Express.js server providing real-time data to a React dashboard.
 - **Authenticated P2P Transport**: Fully functional two-cell WebSocket communication.
-- **Peer Authentication**: Handshake (HELLO -> CHALLENGE -> AUTH) with cryptographic verification.
+- **Peer Authentication**: Handshake (HELLO -> CHALLENGE -> AUTH) with strict cryptographic verification and Node-ID bounds checking.
 - **Replay Protection**: Strict cache window checking nonces, message IDs, and timestamps.
 - **OSINT**: Basic scanner modules (TCP Port scanning, DNS evaluation).
 
 ### PARTIAL
 - **Kademlia**: Basic routing table bucket logic created, but iterative lookups over the network are not fully active yet.
-- **Leader Election**: Logic for terms, voting, and candidate promotion implemented (`election.ts`), currently bound to the P2P transport.
+- **Leader Election**: Logic for terms, voting, and candidate promotion implemented (`election.ts`), currently bound to the P2P transport but marked as explicitly partial for this milestone.
 
 ### NOT IMPLEMENTED
 - **Distributed Memory**
@@ -34,7 +34,7 @@ A modular, observable, testable distributed autonomous cyber-research agent fram
 
 ---
 
-## Final Audit
+## Technical Audit
 
 | Subsystem | Status | Evidence |
 | :--- | :--- | :--- |
@@ -53,7 +53,7 @@ A modular, observable, testable distributed autonomous cyber-research agent fram
 | Lifecycle | PASS | `src/redqueen/core/lifecycle.ts` |
 | Telemetry | PASS | Metrics derived from real `cell.getStatus()` in `server.ts` |
 | API | PASS | Full Express routing in `server.ts` |
-| Tests | PASS | Integration tests for real multi-cell networking passing |
+| Tests | PASS | Integration tests (including 5-scenario security suite) passing |
 
 ## Setup Instructions
 1. Run `npm install`

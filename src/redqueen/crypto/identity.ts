@@ -28,6 +28,19 @@ export class IdentityCrypto {
   }
 
   /**
+   * Validates if the provided string is a valid Ed25519 public key in PEM format.
+   */
+  isValidPublicKey(publicKeyPem: string): boolean {
+    if (!publicKeyPem || typeof publicKeyPem !== 'string') return false;
+    try {
+      const key = crypto.createPublicKey(publicKeyPem);
+      return key.asymmetricKeyType === 'ed25519';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
    * Derives a stable Node ID from a public key.
    * Uses SHA-256 hash of the PEM formatted public key.
    */
