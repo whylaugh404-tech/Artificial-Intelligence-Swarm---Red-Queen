@@ -40,14 +40,64 @@ export interface MemoryStore {
   getOwningCellId?(): string | undefined;
 }
 
+/**
+ * Validates a memory entry ID to prevent path traversal and arbitrary key injection.
+ */
+export function validateMemoryId(id: string): string {
+  if (!id || typeof id !== 'string') {
+    throw new Error('Invalid memory ID: must be a non-empty string');
+  }
+  const trimmed = id.trim();
+  if (trimmed.length === 0 || trimmed.length > 256) {
+    throw new Error('Invalid memory ID: length must be between 1 and 256 characters');
+  }
+  if (
+    trimmed.includes('..') ||
+    trimmed.includes('/') ||
+    trimmed.includes('\\') ||
+    trimmed.includes('\0') ||
+    /%2e|%2f|%5c/i.test(trimmed) ||
+    trimmed.startsWith('.')
+  ) {
+    throw new Error(`Path traversal or invalid characters detected in memory ID: '${id}'`);
+  }
+  return trimmed;
+}
+
+/**
+ * Validates and normalizes a cell ID to prevent path traversal, separator tricks, and case-casing mismatches.
+ */
+export function validateCellId(cellId: string): string {
+  if (!cellId || typeof cellId !== 'string') {
+    throw new Error('Invalid cellId: must be a non-empty string');
+  }
+  const normalized = cellId.trim().toLowerCase();
+  if (
+    normalized.includes('..') ||
+    normalized.includes('/') ||
+    normalized.includes('\\') ||
+    normalized.includes('\0') ||
+    /%2e|%2f|%5c/i.test(normalized) ||
+    normalized.startsWith('.')
+  ) {
+    throw new Error(`Path traversal or invalid characters detected in cellId: '${cellId}'`);
+  }
+  return normalized;
+}
+
 export class JsonFileMemoryStore implements MemoryStore {
   private memoryMap: Map<string, MemoryEntry> = new Map();
   private readonly component = 'memory_store';
+  private readonly normalizedOwningCellId?: string;
 
   constructor(
     private readonly storagePath: string,
     private readonly owningCellId?: string
-  ) {}
+  ) {
+    if (this.owningCellId) {
+      this.normalizedOwningCellId = validateCellId(this.owningCellId);
+    }
+  }
 
   public getOwningCellId(): string | undefined {
     return this.owningCellId;
@@ -61,14 +111,28 @@ export class JsonFileMemoryStore implements MemoryStore {
         const parsed = JSON.parse(data);
         if (Array.isArray(parsed)) {
           for (const entry of parsed) {
-            // If store is scoped to a specific cell, enforce isolation
-            if (this.owningCellId && entry.cellId && entry.cellId !== this.owningCellId) {
-              logger.warn(this.component, 'foreign_cell_memory_skipped', {
-                expectedCell: this.owningCellId,
-                foundCell: entry.cellId,
-                memoryId: entry.id
-              });
+            // Validate memory ID
+            try {
+              validateMemoryId(entry.id);
+            } catch {
               continue;
+            }
+
+            // If store is scoped to a specific cell, enforce isolation
+            if (this.normalizedOwningCellId && entry.cellId) {
+              try {
+                const normalizedEntryCell = validateCellId(entry.cellId);
+                if (normalizedEntryCell !== this.normalizedOwningCellId) {
+                  logger.warn(this.component, 'foreign_cell_memory_skipped', {
+                    expectedCell: this.owningCellId,
+                    foundCell: entry.cellId,
+                    memoryId: entry.id
+                  });
+                  continue;
+                }
+              } catch {
+                continue;
+              }
             }
             this.memoryMap.set(entry.id, entry);
           }
@@ -96,14 +160,20 @@ export class JsonFileMemoryStore implements MemoryStore {
   }
 
   async put(entry: MemoryEntry): Promise<void> {
+    const validId = validateMemoryId(entry.id);
+    entry.id = validId;
+
     // Enforce Cell Ownership: A cell cannot store entries belonging to another cell
-    if (this.owningCellId) {
-      if (entry.cellId && entry.cellId !== this.owningCellId) {
-        throw new Error(
-          `Memory ownership violation: Cell ${this.owningCellId} cannot store entry owned by Cell ${entry.cellId}`
-        );
-      }
-      if (!entry.cellId) {
+    if (this.normalizedOwningCellId) {
+      if (entry.cellId) {
+        const normalizedEntryCell = validateCellId(entry.cellId);
+        if (normalizedEntryCell !== this.normalizedOwningCellId) {
+          throw new Error(
+            `Memory ownership violation: Cell ${this.owningCellId} cannot store entry owned by Cell ${entry.cellId}`
+          );
+        }
+        entry.cellId = this.owningCellId;
+      } else {
         entry.cellId = this.owningCellId;
       }
     }
@@ -124,23 +194,44 @@ export class JsonFileMemoryStore implements MemoryStore {
   }
 
   async get(id: string): Promise<MemoryEntry | null> {
-    const entry = this.memoryMap.get(id);
+    const validId = validateMemoryId(id);
+    const entry = this.memoryMap.get(validId);
     if (!entry) return null;
-    if (this.owningCellId && entry.cellId && entry.cellId !== this.owningCellId) {
-      return null;
+    if (this.normalizedOwningCellId && entry.cellId) {
+      const normalizedEntryCell = validateCellId(entry.cellId);
+      if (normalizedEntryCell !== this.normalizedOwningCellId) {
+        return null;
+      }
     }
     return entry;
   }
 
   async search(query: Partial<MemoryEntry>): Promise<MemoryEntry[]> {
+    if (query.cellId) {
+      const normalizedQueryCell = validateCellId(query.cellId);
+      if (this.normalizedOwningCellId && normalizedQueryCell !== this.normalizedOwningCellId) {
+        throw new Error('Memory ownership violation: Cannot enumerate or search memory belonging to another cell');
+      }
+    }
+
     const results: MemoryEntry[] = [];
     for (const entry of this.memoryMap.values()) {
-      if (this.owningCellId && entry.cellId && entry.cellId !== this.owningCellId) {
-        continue;
+      if (this.normalizedOwningCellId && entry.cellId) {
+        const normalizedEntryCell = validateCellId(entry.cellId);
+        if (normalizedEntryCell !== this.normalizedOwningCellId) {
+          continue;
+        }
       }
 
       let match = true;
       for (const [key, value] of Object.entries(query)) {
+        if (key === 'cellId' && typeof value === 'string') {
+          if (!entry.cellId || validateCellId(entry.cellId) !== validateCellId(value)) {
+            match = false;
+            break;
+          }
+          continue;
+        }
         if ((entry as any)[key] !== value) {
           match = false;
           break;
@@ -152,16 +243,20 @@ export class JsonFileMemoryStore implements MemoryStore {
   }
 
   async delete(id: string): Promise<boolean> {
-    const entry = this.memoryMap.get(id);
+    const validId = validateMemoryId(id);
+    const entry = this.memoryMap.get(validId);
     if (!entry) return false;
-    if (this.owningCellId && entry.cellId && entry.cellId !== this.owningCellId) {
-      throw new Error(`Memory ownership violation: Cannot delete memory belonging to another cell`);
+    if (this.normalizedOwningCellId && entry.cellId) {
+      const normalizedEntryCell = validateCellId(entry.cellId);
+      if (normalizedEntryCell !== this.normalizedOwningCellId) {
+        throw new Error(`Memory ownership violation: Cannot delete memory belonging to another cell`);
+      }
     }
 
-    const deleted = this.memoryMap.delete(id);
+    const deleted = this.memoryMap.delete(validId);
     if (deleted) {
       await this.persist();
-      logger.debug(this.component, 'memory_deleted', { id });
+      logger.debug(this.component, 'memory_deleted', { id: validId });
     }
     return deleted;
   }
@@ -172,8 +267,11 @@ export class JsonFileMemoryStore implements MemoryStore {
     let procedural = 0;
 
     for (const entry of this.memoryMap.values()) {
-      if (this.owningCellId && entry.cellId && entry.cellId !== this.owningCellId) {
-        continue;
+      if (this.normalizedOwningCellId && entry.cellId) {
+        const normalizedEntryCell = validateCellId(entry.cellId);
+        if (normalizedEntryCell !== this.normalizedOwningCellId) {
+          continue;
+        }
       }
       if (entry.category === MemoryCategory.EPISODIC) episodic++;
       else if (entry.category === MemoryCategory.PROCEDURAL) procedural++;

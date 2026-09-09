@@ -85,6 +85,11 @@ describe('Phase 3.1 Hardening & Security Invariant Audits', () => {
       expect(retrieved).not.toBeNull();
       expect(retrieved?.content.secret).toBe('alpha_data');
 
+      // Search with uppercase cell ID finds entry
+      const searched = await store.search({ cellId: 'CELL_ALPHA' });
+      expect(searched.length).toBe(1);
+      expect(searched[0].id).toBe('entry1');
+
       // Attempting to put with a different cell ID must be strictly rejected
       await expect(
         store.put({
