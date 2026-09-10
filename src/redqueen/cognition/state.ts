@@ -11,6 +11,7 @@ export const CognitiveStateSchema = z.object({
   specialization: z.string().nullable(),
   activeGoals: z.array(z.string()),
   knowledgeReferences: z.array(z.string()),
+  conceptReferences: z.array(z.string()).default([]),
   knowledgeGaps: z.array(KnowledgeGapSchema).default([]),
   operationalConfidence: z.number().min(0).max(1),
   lastCognitiveUpdate: z.string().datetime(),
@@ -47,6 +48,7 @@ export class CognitiveStateManager {
       specialization: initialSpecialization,
       activeGoals: initialGoals.map(g => g.trim()).filter(Boolean),
       knowledgeReferences: [],
+      conceptReferences: [],
       knowledgeGaps: [],
       operationalConfidence: typeof initialConfidence === 'number' && !Number.isNaN(initialConfidence) && Number.isFinite(initialConfidence)
         ? Math.max(0, Math.min(1, initialConfidence))
@@ -106,6 +108,14 @@ export class CognitiveStateManager {
     const trimmed = ref.trim();
     if (!trimmed || this.state.knowledgeReferences.includes(trimmed)) return;
     this.state.knowledgeReferences.push(trimmed);
+    this.state.lastCognitiveUpdate = new Date().toISOString();
+  }
+
+  public addConceptReference(ref: string): void {
+    if (!ref || typeof ref !== 'string') return;
+    const trimmed = ref.trim();
+    if (!trimmed || this.state.conceptReferences.includes(trimmed)) return;
+    this.state.conceptReferences.push(trimmed);
     this.state.lastCognitiveUpdate = new Date().toISOString();
   }
 

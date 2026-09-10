@@ -37,6 +37,11 @@ import {
   MetabolismBudget
 } from '../metabolism';
 import { ExchangeManager, ExchangeConfig } from '../exchange/manager';
+import {
+  CognitiveGraph,
+  CognitiveRepresentationEngine,
+  CognitiveRepresentationBudget
+} from '../cognition/representation';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -48,6 +53,7 @@ export interface CellOptions {
   lineageId?: string;
   metabolismBudget?: Partial<MetabolismBudget>;
   exchangeConfig?: Partial<ExchangeConfig>;
+  representationBudget?: Partial<CognitiveRepresentationBudget>;
 }
 
 export class Cell {
@@ -68,6 +74,8 @@ export class Cell {
   public readonly swarm: SwarmMembershipManager;
   public readonly metabolism: MetabolismEngine;
   public readonly exchange: ExchangeManager;
+  public readonly cognitiveGraph: CognitiveGraph;
+  public readonly representation: CognitiveRepresentationEngine;
 
   private _genome: CellGenome;
   private _lineage: CellLineage;
@@ -142,12 +150,28 @@ export class Cell {
       1.0
     );
 
+    // Initialize Cognitive Graph & Representation Subsystems
+    this.cognitiveGraph = new CognitiveGraph(
+      this.nodeId,
+      this.memory,
+      cellOptions?.representationBudget
+    );
+
+    this.representation = new CognitiveRepresentationEngine(
+      this.nodeId,
+      cellOptions?.representationBudget
+    );
+
     // Initialize Information Metabolism Subsystem
     this.metabolism = new MetabolismEngine(
       this.nodeId,
       this.memory,
       this.cognitiveState,
-      { budget: cellOptions?.metabolismBudget }
+      {
+        budget: cellOptions?.metabolismBudget,
+        graph: this.cognitiveGraph,
+        representationEngine: this.representation
+      }
     );
 
     this.routing = new RoutingTable(this.nodeId);
@@ -177,6 +201,7 @@ export class Cell {
       this.routing,
       this.memory,
       this.metabolism,
+      this.cognitiveGraph,
       cellOptions?.exchangeConfig
     );
 
@@ -300,6 +325,7 @@ export class Cell {
       await this.memory.initialize();
       await this.restoreOrPersistGenome();
       await this.cognitiveState.restore(this.memory);
+      await this.cognitiveGraph.load();
       this.cognitiveState.syncLifecycleState(CellState.ACTIVE);
       if (this.memory.getStats) {
         this.cognitiveState.updateMemoryStats(this.memory.getStats());
@@ -527,6 +553,7 @@ export class Cell {
       clearInterval(this.syncIntervalTimer);
       this.syncIntervalTimer = null;
     }
+    this.exchange.stop();
     this.cognitiveState.syncLifecycleState(CellState.STOPPED);
     await this.cognitiveState.persist(this.memory);
     await this.lifecycle.shutdown();
@@ -554,7 +581,15 @@ export class Cell {
         generation: this.lineage.generation,
         parentCellId: this.lineage.parentCellId
       },
-      cognitiveState: this.cognitiveState.getState()
+      cognitiveState: this.cognitiveState.getState(),
+      cognitiveGraph: {
+        conceptsCount: this.cognitiveGraph.getAllConcepts().length,
+        relationsCount: this.cognitiveGraph.getAllRelations().length,
+        abstractionsCount: this.cognitiveGraph.getAllAbstractions().length,
+        generalizationsCount: this.cognitiveGraph.getAllGeneralizations().length,
+        analogiesCount: this.cognitiveGraph.getAllAnalogies().length,
+        conflictsCount: this.cognitiveGraph.getAllConflicts().length
+      }
     };
   }
 

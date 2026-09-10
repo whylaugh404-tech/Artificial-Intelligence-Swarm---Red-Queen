@@ -19,12 +19,15 @@ import { MemoryStore, MemoryCategory, MemoryEntry } from '../memory/store';
 import { CognitiveStateManager } from '../cognition/state';
 import { logger } from '../core/logger';
 import { v4 as uuidv4 } from 'uuid';
+import { CognitiveGraph, CognitiveRepresentationEngine } from '../cognition/representation';
 
 export interface MetabolismEngineOptions {
   readonly budget?: Partial<MetabolismBudget>;
   readonly classifier?: InformationClassifier;
   readonly evaluator?: InformationEvaluator;
   readonly extractor?: KnowledgeExtractor;
+  readonly graph?: CognitiveGraph;
+  readonly representationEngine?: CognitiveRepresentationEngine;
 }
 
 export class MetabolismEngine {
@@ -35,6 +38,8 @@ export class MetabolismEngine {
   public readonly extractor: KnowledgeExtractor;
   public readonly deduplicator: NoveltyEvaluator;
   public readonly audit: MetabolismAuditTrail;
+  public readonly graph?: CognitiveGraph;
+  public readonly representationEngine?: CognitiveRepresentationEngine;
 
   constructor(
     public readonly cellId: string,
@@ -51,6 +56,8 @@ export class MetabolismEngine {
     this.extractor = options?.extractor || new KnowledgeExtractor();
     this.deduplicator = new NoveltyEvaluator(this.cellId);
     this.audit = new MetabolismAuditTrail(this.cellId, this.budget);
+    this.graph = options?.graph;
+    this.representationEngine = options?.representationEngine;
   }
 
   /**
@@ -284,6 +291,7 @@ export class MetabolismEngine {
       let storedKnowledgeId: string | undefined = undefined;
       let storedExperienceId: string | undefined = undefined;
       let registeredHash: string | undefined = undefined;
+      const storedRepresentationIds: string[] = [];
 
       try {
         // Stage 10: Persist Knowledge to Memory Store
@@ -371,6 +379,55 @@ export class MetabolismEngine {
 
         // Stage 12: Cognitive State Integration
         this.cognitiveState.addKnowledgeReference(knowledge.knowledgeId);
+
+        // Stage 12.1: Cognitive Representation Derivation (if representationEngine and graph are enabled)
+        if (this.representationEngine && this.graph) {
+          try {
+            const rep = await this.representationEngine.extractRepresentations(knowledge, experience, this.graph);
+            this.audit.recordEvent(MetabolismEventType.REPRESENTATION_EXTRACTED, record.informationId, {
+              conceptsCount: rep.concepts.length,
+              relationsCount: rep.relations.length,
+              abstractionsCount: rep.abstractions.length,
+              generalizationsCount: rep.generalizations.length,
+              analogiesCount: rep.analogies.length,
+              transactionId
+            }, knowledge.knowledgeId);
+
+            for (const c of rep.concepts) {
+              await this.graph.insertConcept(c);
+              storedRepresentationIds.push(c.conceptId);
+              this.cognitiveState.addConceptReference(c.conceptId);
+            }
+            for (const r of rep.relations) {
+              await this.graph.insertRelation(r);
+              storedRepresentationIds.push(r.relationId);
+            }
+            for (const a of rep.abstractions) {
+              await this.graph.insertAbstraction(a);
+              storedRepresentationIds.push(a.abstractionId);
+            }
+            for (const g of rep.generalizations) {
+              await this.graph.insertGeneralization(g);
+              storedRepresentationIds.push(g.generalizationId);
+            }
+            for (const an of rep.analogies) {
+              await this.graph.insertAnalogy(an);
+              storedRepresentationIds.push(an.analogyId);
+            }
+
+            this.audit.recordEvent(MetabolismEventType.REPRESENTATION_STORED, record.informationId, {
+              storedCount: storedRepresentationIds.length,
+              transactionId
+            }, knowledge.knowledgeId);
+          } catch (repErr: any) {
+            logger.warn(this.component, 'representation_derivation_failed', {
+              error: repErr.message,
+              transactionId
+            });
+            throw repErr;
+          }
+        }
+
         if (this.memoryStore.getStats) {
           this.cognitiveState.updateMemoryStats(this.memoryStore.getStats());
         }
@@ -427,6 +484,11 @@ export class MetabolismEngine {
         if (storedExperienceId) {
           await this.memoryStore.delete(storedExperienceId).catch(err => {
             logger.error(this.component, 'compensation_failed_experience', err);
+          });
+        }
+        for (const repId of storedRepresentationIds) {
+          await this.memoryStore.delete(repId).catch(err => {
+            logger.error(this.component, 'compensation_failed_representation', err);
           });
         }
         if (registeredHash) {
@@ -556,6 +618,35 @@ export class MetabolismEngine {
       }
 
       this.cognitiveState.addKnowledgeReference(assimilatedKnowledge.knowledgeId);
+
+      // P5.1: Derive and assimilate cognitive representations
+      if (this.representationEngine && this.graph) {
+        try {
+          const rep = await this.representationEngine.extractRepresentations(assimilatedKnowledge, incomingExperience, this.graph);
+          for (const c of rep.concepts) {
+            await this.graph.insertConcept(c);
+            this.cognitiveState.addConceptReference(c.conceptId);
+          }
+          for (const r of rep.relations) {
+            await this.graph.insertRelation(r);
+          }
+          for (const a of rep.abstractions) {
+            await this.graph.insertAbstraction(a);
+          }
+          for (const g of rep.generalizations) {
+            await this.graph.insertGeneralization(g);
+          }
+          for (const an of rep.analogies) {
+            await this.graph.insertAnalogy(an);
+          }
+        } catch (repErr: any) {
+          logger.warn(this.component, 'assimilate_representation_derivation_failed', {
+            error: repErr.message,
+            knowledgeId: assimilatedKnowledge.knowledgeId
+          });
+        }
+      }
+
       if (this.memoryStore.getStats) {
         this.cognitiveState.updateMemoryStats(this.memoryStore.getStats());
       }
