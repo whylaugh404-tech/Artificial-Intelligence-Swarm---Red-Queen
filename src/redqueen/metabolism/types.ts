@@ -32,6 +32,16 @@ export enum InformationCategory {
 
 export const InformationCategorySchema = z.nativeEnum(InformationCategory);
 
+export enum NoveltyClassification {
+  EXACT_DUPLICATE = 'EXACT_DUPLICATE',
+  SEMANTIC_OVERLAP = 'SEMANTIC_OVERLAP',
+  NOVEL = 'NOVEL',
+  REINFORCEMENT = 'REINFORCEMENT',
+  CONTRADICTION = 'CONTRADICTION'
+}
+
+export const NoveltyClassificationSchema = z.nativeEnum(NoveltyClassification);
+
 /**
  * Supported Content Types
  */
@@ -132,6 +142,35 @@ export interface SourceProvenance {
   readonly metabolizedAt: string;
 }
 
+export const SourceProvenanceSchema = z.object({
+  informationId: z.string(),
+  sourceIdentifier: z.string(),
+  sourceUri: z.string().optional(),
+  contentHash: z.string(),
+  acquiredAt: z.string(),
+  originatingCellId: z.string().optional(),
+  metabolizedAt: z.string()
+});
+
+/**
+ * Concept Relationship
+ */
+export interface ConceptRelation {
+  readonly subject: string;
+  readonly predicate: string;
+  readonly object: string;
+  readonly confidence: number;
+  readonly provenance: string;
+}
+
+export const ConceptRelationSchema = z.object({
+  subject: z.string().min(1),
+  predicate: z.string().min(1),
+  object: z.string().min(1),
+  confidence: z.number().min(0).max(1),
+  provenance: z.string()
+});
+
 /**
  * Structured Knowledge Record formed through metabolism and stored in memory.
  */
@@ -142,10 +181,13 @@ export interface KnowledgeRecord {
   readonly title: string;
   readonly summary: string;
   readonly facts: readonly string[];
+  readonly relationships: readonly ConceptRelation[];
+  readonly contradictions: readonly string[];
   readonly structuredContent: Readonly<Record<string, any>>;
   readonly sourceInformationIds: readonly string[];
   readonly sourceContentHashes: readonly string[];
   readonly sourceProvenance: readonly SourceProvenance[];
+  readonly reinforcementCount: number;
   readonly confidence: number; // [0.0, 1.0]
   readonly relevance: number; // [0.0, 1.0]
   readonly createdAt: string;
@@ -160,23 +202,41 @@ export const KnowledgeRecordSchema = z.object({
   title: z.string().min(1).max(512),
   summary: z.string().min(1).max(4096),
   facts: z.array(z.string().min(1)),
+  relationships: z.array(ConceptRelationSchema).default([]),
+  contradictions: z.array(z.string()).default([]),
   structuredContent: z.record(z.string(), z.any()),
   sourceInformationIds: z.array(z.string().min(1)),
   sourceContentHashes: z.array(z.string().regex(/^[a-f0-9]{64}$/)),
-  sourceProvenance: z.array(z.object({
-    informationId: z.string(),
-    sourceIdentifier: z.string(),
-    sourceUri: z.string().optional(),
-    contentHash: z.string(),
-    acquiredAt: z.string(),
-    originatingCellId: z.string().optional(),
-    metabolizedAt: z.string()
-  })),
+  sourceProvenance: z.array(SourceProvenanceSchema),
+  reinforcementCount: z.number().int().min(0).default(0),
   confidence: z.number().min(0).max(1),
   relevance: z.number().min(0).max(1),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   knowledgeVersion: z.number().int().min(1)
+});
+
+/**
+ * Lightweight Cell-Scoped Knowledge Gap
+ */
+export interface KnowledgeGap {
+  readonly gapId: string;
+  readonly cellId: string;
+  readonly topic: string;
+  readonly category: InformationCategory;
+  readonly reason: string;
+  readonly priority: number; // [0.0, 1.0]
+  readonly createdAt: string;
+}
+
+export const KnowledgeGapSchema = z.object({
+  gapId: z.string().min(1),
+  cellId: z.string().min(1),
+  topic: z.string().min(1),
+  category: InformationCategorySchema,
+  reason: z.string().min(1),
+  priority: z.number().min(0).max(1),
+  createdAt: z.string().datetime()
 });
 
 /**
@@ -190,6 +250,39 @@ export enum MetabolismStatus {
   INVALID = 'INVALID',
   FAILED = 'FAILED'
 }
+
+export const MetabolismStatusSchema = z.nativeEnum(MetabolismStatus);
+
+/**
+ * Lightweight Cell-Scoped Experience Record
+ */
+export interface Experience {
+  readonly experienceId: string;
+  readonly cellId: string;
+  readonly timestamp: string;
+  readonly informationId: string;
+  readonly knowledgeIds: readonly string[];
+  readonly category: InformationCategory;
+  readonly outcome: MetabolismStatus;
+  readonly noveltyClassification: NoveltyClassification;
+  readonly noveltyScore: number;
+  readonly source: string;
+  readonly confidence: number;
+}
+
+export const ExperienceSchema = z.object({
+  experienceId: z.string().min(1),
+  cellId: z.string().min(1),
+  timestamp: z.string().datetime(),
+  informationId: z.string().min(1),
+  knowledgeIds: z.array(z.string()),
+  category: InformationCategorySchema,
+  outcome: MetabolismStatusSchema,
+  noveltyClassification: NoveltyClassificationSchema,
+  noveltyScore: z.number().min(0).max(1),
+  source: z.string().min(1),
+  confidence: z.number().min(0).max(1)
+});
 
 /**
  * Structured Metabolism Result
@@ -220,7 +313,11 @@ export enum MetabolismEventType {
   DUPLICATE_DETECTED = 'DUPLICATE_DETECTED',
   LOW_RELEVANCE_DROPPED = 'LOW_RELEVANCE_DROPPED',
   KNOWLEDGE_CREATED = 'KNOWLEDGE_CREATED',
+  KNOWLEDGE_REINFORCED = 'KNOWLEDGE_REINFORCED',
+  KNOWLEDGE_CONFLICT_DETECTED = 'KNOWLEDGE_CONFLICT_DETECTED',
   KNOWLEDGE_STORED = 'KNOWLEDGE_STORED',
+  EXPERIENCE_CREATED = 'EXPERIENCE_CREATED',
+  KNOWLEDGE_GAP_CREATED = 'KNOWLEDGE_GAP_CREATED',
   COGNITIVE_STATE_UPDATED = 'COGNITIVE_STATE_UPDATED',
   METABOLISM_FAILED = 'METABOLISM_FAILED'
 }

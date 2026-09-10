@@ -166,4 +166,33 @@ describe('P3: Cognitive State & Lifecycle Abstraction', () => {
     expect((serialized as any).credentials).toBeUndefined();
     expect(JSON.stringify(serialized)).not.toContain('privateKey');
   });
+
+  it('24. P4.1 maintains separated operational confidence and allows recording knowledge gaps', () => {
+    const manager = new CognitiveStateManager(CELL_ID, 'SECURITY', [], 0.8);
+    
+    // Confidence is explicit, not automatically bumped by merely adding knowledge references
+    expect(manager.getState().operationalConfidence).toBe(0.8);
+    
+    manager.addKnowledgeReference('know_xyz');
+    expect(manager.getState().operationalConfidence).toBe(0.8); // No change from referencing
+    
+    // Explicit update
+    manager.updateConfidence(0.9);
+    expect(manager.getState().operationalConfidence).toBe(0.9);
+
+    // Knowledge gaps
+    // Using an arbitrary category from metabolism/types. 
+    // We'll just cast the string so we don't need to import the enum here.
+    const gap = manager.recordKnowledgeGap('QUIC Protocol', 'NETWORKING' as any, 'missing knowledge', 0.95);
+    const state = manager.getState();
+    
+    expect(state.knowledgeGaps).toHaveLength(1);
+    expect(state.knowledgeGaps[0].topic).toBe('QUIC Protocol');
+    expect(state.knowledgeGaps[0].cellId).toBe(CELL_ID);
+    expect(state.knowledgeGaps[0].gapId).toBeDefined();
+    
+    // Check serialization
+    const serialized = manager.toJSON();
+    expect(serialized.knowledgeGaps).toHaveLength(1);
+  });
 });

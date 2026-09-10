@@ -1,13 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { KnowledgeExtractor } from '../src/redqueen/metabolism/extractor';
-import { DuplicateDetector } from '../src/redqueen/metabolism/deduplicator';
+import { NoveltyEvaluator } from '../src/redqueen/metabolism/deduplicator';
 import {
   InformationCategory,
   InformationSourceType,
-  KnowledgeRecordSchema
+  KnowledgeRecordSchema,
+  NoveltyClassification
 } from '../src/redqueen/metabolism/types';
 import { normalizeInformation } from '../src/redqueen/metabolism/normalizer';
-import { JsonFileMemoryStore } from '../src/redqueen/memory/store';
+import { JsonFileMemoryStore, MemoryCategory } from '../src/redqueen/memory/store';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -77,16 +78,16 @@ A critical buffer overflow was found in perimeter routers.
   });
 });
 
-describe('P4 Metabolism: Duplicate Detection', () => {
+describe('P4 Metabolism: Novelty Evaluation', () => {
   const cellId = 'cell_dup_test';
   const testStoragePath = path.join(process.cwd(), 'data', 'test_dup_memory.json');
 
-  it('detects duplicates in in-memory cache and persistent store', async () => {
+  it('detects duplicates and assesses novelty', async () => {
     await fs.rm(testStoragePath, { force: true });
     const memory = new JsonFileMemoryStore(testStoragePath, cellId);
     await memory.initialize();
 
-    const detector = new DuplicateDetector(cellId);
+    const evaluator = new NoveltyEvaluator(cellId);
 
     const { normalized } = normalizeInformation({
       sourceType: InformationSourceType.DOCUMENT,
@@ -94,15 +95,32 @@ describe('P4 Metabolism: Duplicate Detection', () => {
     });
 
     // Check before registering
-    const check1 = await detector.checkDuplicate(normalized, memory);
-    expect(check1.isDuplicate).toBe(false);
+    const check1 = await evaluator.evaluateNovelty(normalized, memory, []);
+    expect(check1.classification).toBe(NoveltyClassification.NOVEL);
+    expect(check1.score).toBe(1.0);
 
-    // Register in memory store and detector
-    detector.registerHash(normalized.contentHash, 'know_123');
+    // Register in detector cache
+    evaluator.registerHash(normalized.contentHash, 'know_123');
+    
+    // Create dummy memory entry so that evaluating exact duplicate doesn't fail on retrieval
+    await memory.put({
+      id: 'know_123',
+      cellId,
+      category: MemoryCategory.SEMANTIC,
+      type: 'KNOWLEDGE_RECORD',
+      content: { knowledgeId: 'know_123' },
+      source: 'test',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      confidence: 1.0,
+      hash: normalized.contentHash,
+      provenance: [],
+      version: 1
+    });
 
     // Check after registering in cache
-    const check2 = await detector.checkDuplicate(normalized, memory);
-    expect(check2.isDuplicate).toBe(true);
+    const check2 = await evaluator.evaluateNovelty(normalized, memory, []);
+    expect(check2.classification).toBe(NoveltyClassification.EXACT_DUPLICATE);
     expect(check2.existingKnowledgeId).toBe('know_123');
 
     // Clean up

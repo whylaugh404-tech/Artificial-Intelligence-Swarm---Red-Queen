@@ -14,10 +14,15 @@ async function startServer() {
   app.use(express.json());
 
   // Instantiate the RedQueen Cell
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || '';
   if (!apiKey) {
-    logger.error('server', 'missing_api_key', new Error('OPENROUTER_API_KEY environment variable is required.'));
-    throw new Error('OPENROUTER_API_KEY environment variable is required. Start the application with a valid key.');
+    logger.warn('server', 'no_api_key_set', {
+      message: 'Neither OPENROUTER_API_KEY nor GEMINI_API_KEY is configured. AI chat will return helpful configuration notices.'
+    });
+  } else {
+    logger.info('server', 'api_key_configured', {
+      provider: process.env.GEMINI_API_KEY ? 'gemini' : 'openrouter'
+    });
   }
 
   const cell = new Cell('./data/memory.json', apiKey);
@@ -112,7 +117,7 @@ async function startServer() {
       const aiResult = await cell.aiProvider.generate({
         systemPrompt: 'You are Red Queen, an advanced, autonomous cyber-research AI. You analyze threats, manage distributed nodes, and speak with a precise, analytical, and slightly cold professional tone. Be concise and highly technical. Do not break character.',
         userPrompt: message,
-        model: model || 'google/gemini-2.5-flash',
+        model: model || 'gemini-3.8-flash',
       });
       if (!aiResult.success) {
         return res.status(500).json({ error: aiResult.error });

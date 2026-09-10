@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { CellState } from '../core/lifecycle';
 import { MemoryStore, MemoryStats, MemoryCategory } from '../memory/store';
 import { logger } from '../core/logger';
+import { KnowledgeGapSchema, KnowledgeGap, InformationCategory } from '../metabolism/types';
+import { v4 as uuidv4 } from 'uuid';
 
 export const CognitiveStateSchema = z.object({
   cellId: z.string().min(1),
@@ -9,6 +11,7 @@ export const CognitiveStateSchema = z.object({
   specialization: z.string().nullable(),
   activeGoals: z.array(z.string()),
   knowledgeReferences: z.array(z.string()),
+  knowledgeGaps: z.array(KnowledgeGapSchema).default([]),
   operationalConfidence: z.number().min(0).max(1),
   lastCognitiveUpdate: z.string().datetime(),
   memoryStats: z.object({
@@ -44,6 +47,7 @@ export class CognitiveStateManager {
       specialization: initialSpecialization,
       activeGoals: initialGoals.map(g => g.trim()).filter(Boolean),
       knowledgeReferences: [],
+      knowledgeGaps: [],
       operationalConfidence: typeof initialConfidence === 'number' && !Number.isNaN(initialConfidence) && Number.isFinite(initialConfidence)
         ? Math.max(0, Math.min(1, initialConfidence))
         : 1.0,
@@ -103,6 +107,23 @@ export class CognitiveStateManager {
     if (!trimmed || this.state.knowledgeReferences.includes(trimmed)) return;
     this.state.knowledgeReferences.push(trimmed);
     this.state.lastCognitiveUpdate = new Date().toISOString();
+  }
+
+  public recordKnowledgeGap(topic: string, category: InformationCategory, reason: string, priority: number): KnowledgeGap {
+    const gap: KnowledgeGap = {
+      gapId: `gap_${uuidv4()}`,
+      cellId: this.cellId,
+      topic,
+      category,
+      reason,
+      priority: Math.max(0, Math.min(1, priority)),
+      createdAt: new Date().toISOString()
+    };
+    
+    this.state.knowledgeGaps.push(gap);
+    this.state.lastCognitiveUpdate = new Date().toISOString();
+    logger.debug(this.component, 'knowledge_gap_recorded', { cellId: this.cellId, gapId: gap.gapId, topic });
+    return gap;
   }
 
   public updateConfidence(confidence: number): void {

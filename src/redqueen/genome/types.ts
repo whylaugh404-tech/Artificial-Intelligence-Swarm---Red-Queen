@@ -2,15 +2,17 @@ import { z } from 'zod';
 
 /**
  * Allowed, strongly typed and security-bounded capabilities for a Red Queen Cell.
+ * Note: Offensive exploitation capabilities (VULN_EXPLOIT) are strictly forbidden and excluded.
  */
 export const ALLOWED_CELL_CAPABILITIES = [
   'OSINT_SCAN',
+  'INFO_PROCESSING',
   'KNOWLEDGE_QUERY',
-  'PEER_REPLICATION',
   'CODE_ANALYSIS',
-  'VULN_EXPLOIT',
   'COGNITIVE_REASONING',
   'SWARM_COORDINATION',
+  'AUTHORIZED_MEMORY_OPS',
+  'PEER_REPLICATION',
   'MEMORY_MUTATION'
 ] as const;
 
@@ -18,14 +20,53 @@ export type CellCapability = (typeof ALLOWED_CELL_CAPABILITIES)[number];
 
 export const CellCapability = {
   OSINT_SCAN: 'OSINT_SCAN',
+  INFO_PROCESSING: 'INFO_PROCESSING',
   KNOWLEDGE_QUERY: 'KNOWLEDGE_QUERY',
-  PEER_REPLICATION: 'PEER_REPLICATION',
   CODE_ANALYSIS: 'CODE_ANALYSIS',
-  VULN_EXPLOIT: 'VULN_EXPLOIT',
   COGNITIVE_REASONING: 'COGNITIVE_REASONING',
   SWARM_COORDINATION: 'SWARM_COORDINATION',
-  MEMORY_MUTATION: 'MEMORY_MUTATION'
+  AUTHORIZED_MEMORY_OPS: 'AUTHORIZED_MEMORY_OPS',
+  PEER_REPLICATION: 'PEER_REPLICATION', // Reserved metadata for P6 Mitosis (non-executable in P3/P4)
+  MEMORY_MUTATION: 'MEMORY_MUTATION'   // Reserved metadata for P4 Information Metabolism (non-executable in P3)
 } as const;
+
+/**
+ * Milestone-gated capabilities that exist as lineage metadata only and are
+ * explicitly forbidden from autonomous execution in current architecture.
+ */
+export const MILESTONE_RESERVED_CAPABILITIES = [
+  'PEER_REPLICATION', // P6 Mitosis milestone
+  'MEMORY_MUTATION'   // P4 Information Metabolism milestone
+] as const;
+
+/**
+ * Verifies if a given capability is authorized and executable in the current Cell architecture.
+ */
+export function isCapabilityExecutable(capability: string): boolean {
+  if (capability === 'VULN_EXPLOIT') return false;
+  if (MILESTONE_RESERVED_CAPABILITIES.includes(capability as any)) {
+    return false;
+  }
+  return ALLOWED_CELL_CAPABILITIES.includes(capability as any);
+}
+
+/**
+ * Asserts that a capability is active and executable, throwing a security error if attempted prematurely.
+ */
+export function assertCapabilityExecutable(capability: string): void {
+  if (capability === 'VULN_EXPLOIT') {
+    throw new Error('Security Violation: Offensive exploitation capabilities (VULN_EXPLOIT) are strictly forbidden.');
+  }
+  if (capability === 'PEER_REPLICATION') {
+    throw new Error('Execution Gate: PEER_REPLICATION is reserved for P6 Mitosis and cannot be autonomously executed.');
+  }
+  if (capability === 'MEMORY_MUTATION') {
+    throw new Error('Execution Gate: MEMORY_MUTATION is reserved for P4 Information Metabolism and cannot be autonomously executed.');
+  }
+  if (!ALLOWED_CELL_CAPABILITIES.includes(capability as any)) {
+    throw new Error(`Security Violation: Unauthorized capability '${capability}'.`);
+  }
+}
 
 /**
  * Structured, bounded behavioral traits of a Cell's cognitive lineage.
