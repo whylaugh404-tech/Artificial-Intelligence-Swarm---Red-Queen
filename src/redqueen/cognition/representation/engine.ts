@@ -381,17 +381,19 @@ export class CognitiveRepresentationEngine {
 
     if (graph) {
       const existingConcepts = graph.getAllConcepts();
-      const currentSig = graph.computeStructuralSignature(concept.conceptId);
+      const inFlightContext = { concept, relations: extractedRelations || [] };
+      const currentSig = graph.computeStructuralSignature(concept.conceptId, 1, inFlightContext);
 
       for (const other of existingConcepts) {
         if (other.conceptId === concept.conceptId) continue;
 
-        // Check structural signature similarity if available
+        // 1. Check structural signature similarity if available
         if (currentSig) {
           const otherSig = graph.computeStructuralSignature(other.conceptId);
           if (otherSig) {
             const sharedOut = currentSig.outgoingPredicates.filter(p => otherSig.outgoingPredicates.includes(p));
             const sharedIn = currentSig.incomingPredicates.filter(p => otherSig.incomingPredicates.includes(p));
+            // Must have actual shared relational structure / predicate invariants
             if (sharedOut.length > 0 || sharedIn.length > 0) {
               supportingEvidence.push(other.conceptId);
               sourceConceptIds.push(other.conceptId);
@@ -400,8 +402,13 @@ export class CognitiveRepresentationEngine {
           }
         }
 
-        // Match category & pattern compatibility
-        if (other.category === concept.category) {
+        // 2. Check if other concept participates in a shared abstraction with identical structural pattern
+        const abstractions = graph.getAllAbstractions();
+        const sharedAbs = abstractions.find(a => 
+          a.sourceConceptIds.includes(other.conceptId) && 
+          a.generalizedPattern === patternInfo.pattern
+        );
+        if (sharedAbs) {
           supportingEvidence.push(other.conceptId);
           sourceConceptIds.push(other.conceptId);
         }
@@ -444,19 +451,11 @@ export class CognitiveRepresentationEngine {
     const analogies: CognitiveAnalogy[] = [];
 
     // Filter candidate targets using structural signatures
-    const candidates = graph.findAnalogyCandidates(concept.conceptId, {
+    const candidateTargets = graph.findAnalogyCandidates(concept.conceptId, {
       maxCandidates: this.budget.maxAnalogyCandidates,
-      minSimilarityThreshold: 0.2
+      minSimilarityThreshold: 0.2,
+      inFlightContext: { concept, relations: extractedRelations }
     });
-
-    const candidateTargets: Array<{ targetConceptId: string; signatureSimilarity: number }> = [...candidates];
-    if (candidateTargets.length === 0) {
-      for (const other of graph.getAllConcepts()) {
-        if (other.conceptId !== concept.conceptId && other.category !== concept.category) {
-          candidateTargets.push({ targetConceptId: other.conceptId, signatureSimilarity: 0.3 });
-        }
-      }
-    }
 
     // Source relations for concept
     const sourceRels = [

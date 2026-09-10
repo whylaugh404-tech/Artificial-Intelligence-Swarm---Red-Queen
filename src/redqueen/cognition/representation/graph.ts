@@ -433,50 +433,84 @@ export class CognitiveGraph {
    * Computes a bounded structural topological signature for a concept.
    * Captures in/out predicates, degrees, neighbor categories, and local motifs.
    */
-  public computeStructuralSignature(conceptId: string, depth: number = 1): StructuralSignature | null {
-    const concept = this.concepts.get(conceptId);
+  public computeStructuralSignature(
+    conceptId: string, 
+    depth: number = 1,
+    inFlightContext?: { concept: CognitiveConcept; relations: CognitiveRelation[] }
+  ): StructuralSignature | null {
+    let concept = this.concepts.get(conceptId);
+    let inFlightRelations: CognitiveRelation[] = [];
+
+    if (!concept && inFlightContext && inFlightContext.concept.conceptId === conceptId) {
+      concept = inFlightContext.concept;
+      inFlightRelations = inFlightContext.relations;
+    }
+
     if (!concept) return null;
 
     const boundedDepth = Math.min(depth, this.budget.maxStructuralSignatureDepth || 2);
-    const outRelIds = this.outgoingRelations.get(conceptId) || new Set();
-    const inRelIds = this.incomingRelations.get(conceptId) || new Set();
-
     const outgoingPredicates: CognitiveRelationPredicate[] = [];
     const incomingPredicates: CognitiveRelationPredicate[] = [];
     const neighborCategoriesSet = new Set<InformationCategory>();
     const localMotifs: string[] = [];
 
-    for (const relId of outRelIds) {
-      const rel = this.relations.get(relId);
-      if (rel) {
-        outgoingPredicates.push(rel.predicate);
-        const target = this.concepts.get(rel.objectConceptId);
-        if (target) {
-          neighborCategoriesSet.add(target.category);
-          localMotifs.push(`OUT:${rel.predicate}->${target.category}`);
+    if (this.concepts.has(conceptId)) {
+      const outRelIds = this.outgoingRelations.get(conceptId) || new Set();
+      const inRelIds = this.incomingRelations.get(conceptId) || new Set();
 
-          // Depth 2 if requested
-          if (boundedDepth > 1) {
-            const nextOutRelIds = this.outgoingRelations.get(target.conceptId) || new Set();
-            for (const nRelId of nextOutRelIds) {
-              const nRel = this.relations.get(nRelId);
-              if (nRel) {
-                localMotifs.push(`CHAIN:${rel.predicate}->${nRel.predicate}`);
+      for (const relId of outRelIds) {
+        const rel = this.relations.get(relId);
+        if (rel) {
+          outgoingPredicates.push(rel.predicate);
+          const target = this.concepts.get(rel.objectConceptId);
+          if (target) {
+            neighborCategoriesSet.add(target.category);
+            localMotifs.push(`OUT:${rel.predicate}->${target.category}`);
+
+            // Depth 2 if requested
+            if (boundedDepth > 1) {
+              const nextOutRelIds = this.outgoingRelations.get(target.conceptId) || new Set();
+              for (const nRelId of nextOutRelIds) {
+                const nRel = this.relations.get(nRelId);
+                if (nRel) {
+                  localMotifs.push(`CHAIN:${rel.predicate}->${nRel.predicate}`);
+                }
               }
             }
           }
         }
       }
+
+      for (const relId of inRelIds) {
+        const rel = this.relations.get(relId);
+        if (rel) {
+          incomingPredicates.push(rel.predicate);
+          const source = this.concepts.get(rel.subjectConceptId);
+          if (source) {
+            neighborCategoriesSet.add(source.category);
+            localMotifs.push(`IN:${rel.predicate}<-${source.category}`);
+          }
+        }
+      }
     }
 
-    for (const relId of inRelIds) {
-      const rel = this.relations.get(relId);
-      if (rel) {
-        incomingPredicates.push(rel.predicate);
-        const source = this.concepts.get(rel.subjectConceptId);
-        if (source) {
-          neighborCategoriesSet.add(source.category);
-          localMotifs.push(`IN:${rel.predicate}<-${source.category}`);
+    if (inFlightRelations.length > 0) {
+      for (const rel of inFlightRelations) {
+        if (rel.subjectConceptId === conceptId) {
+          outgoingPredicates.push(rel.predicate);
+          const target = this.concepts.get(rel.objectConceptId);
+          if (target) {
+            neighborCategoriesSet.add(target.category);
+            localMotifs.push(`OUT:${rel.predicate}->${target.category}`);
+          }
+        }
+        if (rel.objectConceptId === conceptId) {
+          incomingPredicates.push(rel.predicate);
+          const source = this.concepts.get(rel.subjectConceptId);
+          if (source) {
+            neighborCategoriesSet.add(source.category);
+            localMotifs.push(`IN:${rel.predicate}<-${source.category}`);
+          }
         }
       }
     }
@@ -490,8 +524,8 @@ export class CognitiveGraph {
     // Canonical structural representation
     const rawFingerprint = JSON.stringify({
       category: concept.category,
-      inDeg: inRelIds.size,
-      outDeg: outRelIds.size,
+      inDeg: incomingPredicates.length,
+      outDeg: outgoingPredicates.length,
       inPreds: incomingPredicates,
       outPreds: outgoingPredicates,
       motifs: localMotifs
@@ -502,8 +536,8 @@ export class CognitiveGraph {
     return {
       conceptId,
       category: concept.category,
-      inDegree: inRelIds.size,
-      outDegree: outRelIds.size,
+      inDegree: incomingPredicates.length,
+      outDegree: outgoingPredicates.length,
       incomingPredicates,
       outgoingPredicates,
       neighborCategories,
@@ -520,9 +554,13 @@ export class CognitiveGraph {
    */
   public findAnalogyCandidates(
     sourceConceptId: string,
-    options?: { maxCandidates?: number; minSimilarityThreshold?: number }
+    options?: { 
+      maxCandidates?: number; 
+      minSimilarityThreshold?: number;
+      inFlightContext?: { concept: CognitiveConcept; relations: CognitiveRelation[] };
+    }
   ): Array<{ targetConceptId: string; signatureSimilarity: number; targetSignature: StructuralSignature }> {
-    const sourceSig = this.computeStructuralSignature(sourceConceptId);
+    const sourceSig = this.computeStructuralSignature(sourceConceptId, 1, options?.inFlightContext);
     if (!sourceSig) return [];
 
     const maxCandidates = options?.maxCandidates ?? this.budget.maxAnalogyCandidates;

@@ -602,4 +602,144 @@ describe('RED QUEEN — P5.1 Cognitive Representation Hardening Verification', (
     expect(conflicts.length).toBe(1);
     expect(conflicts[0].metadata?.reason).toContain('Mutually exclusive');
   });
+
+  it('Negative Test 1: same category alone does NOT create multi-evidence generalization', async () => {
+    const memory = new JsonFileMemoryStore(memoryFile);
+    await memory.initialize();
+
+    const graph = new CognitiveGraph('cell-cat-neg', memory);
+    const engine = new CognitiveRepresentationEngine('cell-cat-neg');
+    const now = new Date().toISOString();
+
+    // Insert Concept A in CYBERSECURITY, with no overlapping structural pattern or relations
+    await graph.insertConcept({
+      conceptId: 'sec-concept-1',
+      canonicalName: 'Firewall Packet Filter',
+      category: InformationCategory.CYBERSECURITY,
+      description: 'Network packet filtering ruleset',
+      confidence: 0.9,
+      sourceKnowledgeIds: ['k-sec-1'],
+      sourceExperienceIds: [],
+      originatingCellId: 'cell-cat-neg',
+      provenance: ['cell-cat-neg'],
+      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+      metadata: {}
+    });
+
+    // Extract representations for a second CYBERSECURITY concept that has NO structural overlap
+    const k2 = {
+      knowledgeId: 'k-sec-2',
+      title: 'Password Hash Salting Scheme',
+      category: InformationCategory.CYBERSECURITY,
+      confidence: 0.85,
+      provenance: ['cell-cat-neg'],
+      facts: ['Salting prevents rainbow table attacks on stored password hashes.'],
+      relationships: []
+    };
+
+    const result = await engine.extractRepresentations(k2 as any, undefined, graph);
+
+    // If a generalization is formed, it must ONLY be supported by itself (single evidence -> PENDING),
+    // NOT reinforced by sec-concept-1 merely because both are in CYBERSECURITY category!
+    for (const gen of result.generalizations) {
+      expect(gen.supportingEvidence).not.toContain('sec-concept-1');
+      expect(gen.verificationStatus).toBe(RepresentationVerificationStatus.PENDING);
+    }
+  });
+
+  it('Negative Test 5: isolated concepts with no relation structure produce NO analogy', async () => {
+    const memory = new JsonFileMemoryStore(memoryFile);
+    await memory.initialize();
+
+    const graph = new CognitiveGraph('cell-no-rel', memory);
+    const engine = new CognitiveRepresentationEngine('cell-no-rel');
+    const now = new Date().toISOString();
+
+    // Isolated concept in Domain A without relations
+    await graph.insertConcept({
+      conceptId: 'isolated-a',
+      canonicalName: 'Quantum Entangled Particle',
+      category: InformationCategory.GENERAL_TECHNOLOGY,
+      description: 'Isolated physical particle with no recorded graph relations',
+      confidence: 0.9,
+      sourceKnowledgeIds: ['k-q-1'],
+      sourceExperienceIds: [],
+      originatingCellId: 'cell-no-rel',
+      provenance: ['cell-no-rel'],
+      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+      metadata: {}
+    });
+
+    // Isolated concept in Domain B without relations
+    const kIsoB = {
+      knowledgeId: 'k-iso-b',
+      title: 'Monolithic Mainframe System',
+      category: InformationCategory.HARDWARE,
+      confidence: 0.9,
+      provenance: ['cell-no-rel'],
+      facts: ['Isolated hardware entity with no relational dependencies.'],
+      relationships: []
+    };
+
+    const result = await engine.extractRepresentations(kIsoB as any, undefined, graph);
+
+    // Without relational structure, no analogy must be formed
+    expect(result.analogies.length).toBe(0);
+  });
+
+  it('Positive Test 6: enforces representation budget limits and resource safety', async () => {
+    const memory = new JsonFileMemoryStore(memoryFile);
+    await memory.initialize();
+
+    // Graph with strict budget cap of 3 concepts
+    const boundedGraph = new CognitiveGraph('cell-budget', memory, {
+      maxRepresentationsPerCell: 3
+    });
+    const now = new Date().toISOString();
+
+    for (let i = 1; i <= 3; i++) {
+      await boundedGraph.insertConcept({
+        conceptId: `budget-concept-${i}`,
+        canonicalName: `Bounded Concept ${i}`,
+        category: InformationCategory.SOFTWARE,
+        description: `Concept item ${i}`,
+        confidence: 0.8,
+        sourceKnowledgeIds: [`k-${i}`],
+        sourceExperienceIds: [],
+        originatingCellId: 'cell-budget',
+        provenance: ['cell-budget'],
+        verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+        createdAt: now,
+        updatedAt: now,
+        version: 1,
+        metadata: {}
+      });
+    }
+
+    // 4th insertion must fail with budget exceeded error
+    await expect(
+      boundedGraph.insertConcept({
+        conceptId: 'budget-concept-4',
+        canonicalName: 'Bounded Concept 4',
+        category: InformationCategory.SOFTWARE,
+        description: 'Concept item 4',
+        confidence: 0.8,
+        sourceKnowledgeIds: ['k-4'],
+        sourceExperienceIds: [],
+        originatingCellId: 'cell-budget',
+        provenance: ['cell-budget'],
+        verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+        createdAt: now,
+        updatedAt: now,
+        version: 1,
+        metadata: {}
+      })
+    ).rejects.toThrow(/budget exceeded/);
+  });
 });
