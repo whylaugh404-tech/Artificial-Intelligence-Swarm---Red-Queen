@@ -1,15 +1,15 @@
 [
   {
-    "id": "cell_genome_1cf3f5ae8db9d4d19c95daa7e4e9c657cf33cd7492d0281efdfa42f2be230617",
-    "cellId": "1cf3f5ae8db9d4d19c95daa7e4e9c657cf33cd7492d0281efdfa42f2be230617",
+    "id": "cell_genome_afb26ed5a0ab61650ecebdda412702fc8b236bedb344b8ef76c0a7cf677e22be",
+    "cellId": "afb26ed5a0ab61650ecebdda412702fc8b236bedb344b8ef76c0a7cf677e22be",
     "category": "SEMANTIC",
     "content": {
-      "genomeId": "1073fd6c091349adaefca85fc8791143",
+      "genomeId": "e57182da060e4b5c865be679beaedb3e",
       "parentGenomeId": null,
       "parentCellId": null,
       "generation": 0,
-      "lineageId": "77ebbfe7748b4e70833305fa83c2ccb1",
-      "createdAt": "2026-09-10T13:48:57.787Z",
+      "lineageId": "f71f4804be0e461e8191d89db82a1957",
+      "createdAt": "2026-09-10T14:30:31.206Z",
       "logicVersion": "1.0.0",
       "traits": {
         "mutationRate": 0.05,
@@ -30,28 +30,28 @@
       "ancestorCellIds": []
     },
     "source": "cell_initialization",
-    "createdAt": "2026-09-10T13:48:57.806Z",
-    "updatedAt": "2026-09-10T13:48:57.806Z",
+    "createdAt": "2026-09-10T14:30:31.219Z",
+    "updatedAt": "2026-09-10T14:30:31.219Z",
     "confidence": 1,
     "hash": "",
     "provenance": [
-      "1cf3f5ae8db9d4d19c95daa7e4e9c657cf33cd7492d0281efdfa42f2be230617"
+      "afb26ed5a0ab61650ecebdda412702fc8b236bedb344b8ef76c0a7cf677e22be"
     ],
     "version": 1
   },
   {
-    "id": "cognitive_state_1cf3f5ae8db9d4d19c95daa7e4e9c657cf33cd7492d0281efdfa42f2be230617",
-    "cellId": "1cf3f5ae8db9d4d19c95daa7e4e9c657cf33cd7492d0281efdfa42f2be230617",
+    "id": "cognitive_state_afb26ed5a0ab61650ecebdda412702fc8b236bedb344b8ef76c0a7cf677e22be",
+    "cellId": "afb26ed5a0ab61650ecebdda412702fc8b236bedb344b8ef76c0a7cf677e22be",
     "category": "SEMANTIC",
     "content": {
-      "cellId": "1cf3f5ae8db9d4d19c95daa7e4e9c657cf33cd7492d0281efdfa42f2be230617",
+      "cellId": "afb26ed5a0ab61650ecebdda412702fc8b236bedb344b8ef76c0a7cf677e22be",
       "lifecycleState": "STOPPED",
       "specialization": null,
       "activeGoals": [],
       "knowledgeReferences": [],
       "knowledgeGaps": [],
       "operationalConfidence": 1,
-      "lastCognitiveUpdate": "2026-09-10T13:49:01.079Z",
+      "lastCognitiveUpdate": "2026-09-10T14:30:34.511Z",
       "memoryStats": {
         "total": 1,
         "episodic": 0,
@@ -61,12 +61,12 @@
       "metadata": {}
     },
     "source": "cognitive_state_manager",
-    "createdAt": "2026-09-10T13:49:01.079Z",
-    "updatedAt": "2026-09-10T13:49:01.079Z",
+    "createdAt": "2026-09-10T14:30:34.511Z",
+    "updatedAt": "2026-09-10T14:30:34.511Z",
     "confidence": 1,
     "hash": "",
     "provenance": [
-      "1cf3f5ae8db9d4d19c95daa7e4e9c657cf33cd7492d0281efdfa42f2be230617"
+      "afb26ed5a0ab61650ecebdda412702fc8b236bedb344b8ef76c0a7cf677e22be"
     ],
     "version": 1
   }

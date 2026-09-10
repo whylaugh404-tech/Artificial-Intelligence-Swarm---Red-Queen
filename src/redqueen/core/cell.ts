@@ -36,6 +36,7 @@ import {
   InformationRecordInput,
   MetabolismBudget
 } from '../metabolism';
+import { ExchangeManager, ExchangeConfig } from '../exchange/manager';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -46,6 +47,7 @@ export interface CellOptions {
   generation?: number;
   lineageId?: string;
   metabolismBudget?: Partial<MetabolismBudget>;
+  exchangeConfig?: Partial<ExchangeConfig>;
 }
 
 export class Cell {
@@ -65,6 +67,7 @@ export class Cell {
   public readonly osint: OsintScanner;
   public readonly swarm: SwarmMembershipManager;
   public readonly metabolism: MetabolismEngine;
+  public readonly exchange: ExchangeManager;
 
   private _genome: CellGenome;
   private _lineage: CellLineage;
@@ -168,6 +171,15 @@ export class Cell {
       (term) => this.transport.broadcast(MessageType.HEARTBEAT, { term, leaderId: this.nodeId })
     );
 
+    this.exchange = new ExchangeManager(
+      this.nodeId,
+      this.transport,
+      this.routing,
+      this.memory,
+      this.metabolism,
+      cellOptions?.exchangeConfig
+    );
+
     this.setupHooks();
   }
 
@@ -192,6 +204,7 @@ export class Cell {
       await this.cognitiveState.persist(this.memory);
       this.swarm.stop();
       this.election.stop();
+      this.exchange.stop();
       this.transport.stop();
     });
     

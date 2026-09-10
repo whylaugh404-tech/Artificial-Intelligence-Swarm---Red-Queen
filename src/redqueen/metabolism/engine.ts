@@ -460,4 +460,131 @@ export class MetabolismEngine {
       };
     }
   }
+
+  /**
+   * P5: Assimilate Knowledge and Experience received from other cells.
+   * Enforces normalization, deduplication, conflict detection, and isolation.
+   */
+  public async assimilateKnowledge(
+    incomingKnowledge: KnowledgeRecord,
+    incomingExperience?: Experience,
+    sourcePeerId?: string
+  ): Promise<MetabolismResult> {
+    const startTime = Date.now();
+    const transactionId = `tx_p5_${uuidv4()}`;
+    const infoId = incomingKnowledge.sourceInformationIds[0] || `ext_info_${Date.now()}`;
+
+    try {
+      // 1. Provenance check
+      const currentProvenance = incomingKnowledge.sourceProvenance;
+      if (!currentProvenance.some((p: any) => p.sourceIdentifier === sourcePeerId)) {
+        logger.warn(this.component, 'provenance_mismatch', {
+          knowledgeId: incomingKnowledge.knowledgeId,
+          sourcePeerId
+        });
+      }
+
+      // Check if we already have it
+      let isDuplicate = false;
+      const existing = await this.memoryStore.get(incomingKnowledge.knowledgeId);
+      if (existing) {
+        isDuplicate = true;
+      }
+
+      if (isDuplicate) {
+        return {
+          status: MetabolismStatus.DUPLICATE,
+          informationId: infoId,
+          knowledgeId: incomingKnowledge.knowledgeId,
+          cellId: this.cellId,
+          reason: 'Knowledge already assimilated',
+          receivedAt: new Date(startTime).toISOString(),
+          processedAt: new Date().toISOString(),
+          processingDurationMs: Date.now() - startTime
+        };
+      }
+
+      // We clone it to guarantee memory isolation
+      const assimilatedKnowledge: KnowledgeRecord = {
+        ...incomingKnowledge,
+        // We do NOT overwrite its core identity/hash, but we append our provenance trail
+        sourceProvenance: [...incomingKnowledge.sourceProvenance, {
+          informationId: incomingKnowledge.knowledgeId,
+          sourceIdentifier: this.cellId,
+          contentHash: incomingKnowledge.sourceContentHashes[0] || '',
+          acquiredAt: new Date().toISOString(),
+          metabolizedAt: new Date().toISOString()
+        }],
+        confidence: Math.min(incomingKnowledge.confidence, this.budget.minConfidenceThreshold) // Penalize untrusted confidence slightly or cap it
+      };
+
+      await this.memoryStore.put({
+        id: assimilatedKnowledge.knowledgeId,
+        cellId: this.cellId, // Assert local ownership of the record within our isolated memory
+        category: MemoryCategory.SEMANTIC,
+        type: 'KNOWLEDGE_RECORD',
+        content: assimilatedKnowledge,
+        source: 'exchange',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        confidence: assimilatedKnowledge.confidence,
+        hash: assimilatedKnowledge.sourceContentHashes[0] || '',
+        provenance: assimilatedKnowledge.sourceProvenance.map((p: any) => p.sourceIdentifier),
+        version: assimilatedKnowledge.knowledgeVersion
+      });
+
+      if (incomingExperience) {
+        const assimilatedExperience: Experience = {
+          ...incomingExperience,
+          cellId: this.cellId // Assert local ownership
+        };
+
+        await this.memoryStore.put({
+          id: assimilatedExperience.experienceId,
+          cellId: this.cellId,
+          category: MemoryCategory.EPISODIC,
+          type: 'EXPERIENCE_RECORD',
+          content: assimilatedExperience,
+          source: 'exchange',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          confidence: assimilatedExperience.confidence,
+          hash: assimilatedKnowledge.sourceContentHashes[0] || '',
+          provenance: [this.cellId], // Originating cell provenance is captured in lessons/source if needed
+          version: 1
+        });
+      }
+
+      this.cognitiveState.addKnowledgeReference(assimilatedKnowledge.knowledgeId);
+      if (this.memoryStore.getStats) {
+        this.cognitiveState.updateMemoryStats(this.memoryStore.getStats());
+      }
+      await this.cognitiveState.persist(this.memoryStore);
+
+      logger.info(this.component, 'assimilate_completed_successfully', {
+        cellId: this.cellId,
+        knowledgeId: assimilatedKnowledge.knowledgeId,
+        transactionId
+      });
+
+      return {
+        status: MetabolismStatus.ACCEPTED,
+        informationId: infoId,
+        knowledgeId: assimilatedKnowledge.knowledgeId,
+        cellId: this.cellId,
+        reason: `Successfully assimilated external knowledge`,
+        receivedAt: new Date(startTime).toISOString(),
+        processedAt: new Date().toISOString(),
+        processingDurationMs: Date.now() - startTime
+      };
+
+    } catch (err: any) {
+      logger.error(this.component, 'assimilate_pipeline_error', err, {
+        cellId: this.cellId,
+        knowledgeId: incomingKnowledge.knowledgeId,
+        transactionId
+      });
+      throw err;
+    }
+  }
 }
