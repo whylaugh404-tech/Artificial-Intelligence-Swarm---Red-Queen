@@ -105,13 +105,8 @@ describe('P5 Distributed Knowledge & Experience Exchange', () => {
       maxResults: 1
     });
 
-    console.log('QUERY RESULTS:', JSON.stringify(results, null, 2));
-
     expect(results).toBeDefined();
     const bResponse = results.find(r => r.status === 'FOUND');
-    if (!bResponse) {
-      throw new Error("No FOUND response. Results were: " + JSON.stringify(results, null, 2));
-    }
     expect(bResponse).toBeDefined();
     expect(bResponse?.knowledge).toBeDefined();
     expect(bResponse?.knowledge![0].knowledgeId).toBe('k123');
@@ -155,11 +150,7 @@ describe('P5 Distributed Knowledge & Experience Exchange', () => {
     
     // Provenance must have cellA's ID appended
     const content = assimilated!.content as any;
-    console.log('ASSIMILATED PROVENANCE:', JSON.stringify(content.sourceProvenance, null, 2));
     expect(content.sourceProvenance.some((p: any) => p.sourceIdentifier === cellB.nodeId)).toBe(true);
-    if (!content.sourceProvenance.some((p: any) => p.sourceIdentifier === cellA.nodeId)) {
-      throw new Error("Missing cellA nodeId in provenance: " + JSON.stringify(content.sourceProvenance, null, 2));
-    }
     expect(content.sourceProvenance.some((p: any) => p.sourceIdentifier === cellA.nodeId)).toBe(true);
     
     // Original identity hash remains

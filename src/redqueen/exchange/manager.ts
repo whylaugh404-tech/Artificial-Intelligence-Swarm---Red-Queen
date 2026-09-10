@@ -1,10 +1,10 @@
 import * as crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { logger } from '../core/logger';
-import { Transport } from '../network/transport';
+import { P2PTransport } from '../network/transport';
 import { MessageType, NetworkMessage } from '../network/protocol';
 import { RoutingTable } from '../dht/routing';
-import { MemoryStore } from '../memory/store';
+import { MemoryStore, MemoryCategory } from '../memory/store';
 import { MetabolismEngine } from '../metabolism/engine';
 import { 
   ExchangeQuery, 
@@ -46,7 +46,7 @@ export class ExchangeManager extends EventEmitter {
 
   constructor(
     private readonly cellId: string,
-    private readonly transport: Transport,
+    private readonly transport: P2PTransport,
     private readonly routing: RoutingTable,
     private readonly memory: MemoryStore,
     private readonly metabolism: MetabolismEngine,
@@ -168,7 +168,7 @@ export class ExchangeManager extends EventEmitter {
       if (query.queryType === ExchangeType.enum.KNOWLEDGE) {
         // Search knowledge
         const results = await this.memory.search({
-          category: 'SEMANTIC',
+          category: MemoryCategory.SEMANTIC,
           type: 'KNOWLEDGE_RECORD'
         });
         
@@ -203,7 +203,7 @@ export class ExchangeManager extends EventEmitter {
       } else if (query.queryType === ExchangeType.enum.EXPERIENCE) {
         // Search experiences
         const results = await this.memory.search({
-          category: 'EPISODIC',
+          category: MemoryCategory.EPISODIC,
           type: 'EXPERIENCE_RECORD'
         });
 
@@ -245,11 +245,6 @@ export class ExchangeManager extends EventEmitter {
     const parseResult = ExchangeResponseSchema.safeParse(msg.payload);
     if (!parseResult.success) {
       logger.warn('exchange_manager', 'malformed_response', { error: parseResult.error });
-      const fs = require('fs');
-      fs.writeFileSync('/app/applet/test/malformed_response.log', JSON.stringify({
-        payload: msg.payload,
-        error: parseResult.error
-      }, null, 2));
       return;
     }
 
