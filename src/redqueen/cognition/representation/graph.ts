@@ -14,10 +14,12 @@ import {
   CognitiveAnalogySchema,
   RepresentationVerificationStatus,
   CognitiveRepresentationBudget,
-  DEFAULT_REPRESENTATION_BUDGET
+  DEFAULT_REPRESENTATION_BUDGET,
+  StructuralSignature
 } from './types';
 import { InformationCategory } from '../../metabolism/types';
 import { v4 as uuidv4 } from 'uuid';
+import * as crypto from 'crypto';
 
 /**
  * Concept Graph Foundation for an individual Cell.
@@ -106,6 +108,11 @@ export class CognitiveGraph {
   public async insertRelation(candidate: CognitiveRelation): Promise<CognitiveRelation> {
     const validated = CognitiveRelationSchema.parse(candidate);
 
+    // Self-loop prevention: A concept cannot relate to itself unless explicitly justified
+    if (validated.subjectConceptId === validated.objectConceptId) {
+      throw new Error(`Self-loop relation rejected: concept '${validated.subjectConceptId}' cannot relate to itself via '${validated.predicate}'`);
+    }
+
     // Duplicate relation check
     for (const rel of this.relations.values()) {
       if (
@@ -153,12 +160,13 @@ export class CognitiveGraph {
     const validated = CognitiveAbstractionSchema.parse(candidate);
     this.abstractions.set(validated.abstractionId, validated);
 
-    // Also link abstraction to source concepts via GENERALIZES relation if not present
+    // Also link abstraction to other source concepts via GENERALIZES relation if not present
+    const primarySourceId = validated.sourceConceptIds[0];
     for (const sourceId of validated.sourceConceptIds) {
-      if (this.concepts.has(sourceId)) {
+      if (sourceId !== primarySourceId && this.concepts.has(sourceId)) {
         await this.insertRelation({
           relationId: `rel_abs_${uuidv4()}`,
-          subjectConceptId: validated.sourceConceptIds[0],
+          subjectConceptId: primarySourceId,
           predicate: CognitiveRelationPredicate.GENERALIZES,
           objectConceptId: sourceId,
           confidence: validated.confidence,
@@ -313,6 +321,21 @@ export class CognitiveGraph {
     return results;
   }
 
+  public getRelationsForConcept(conceptId: string): CognitiveRelation[] {
+    const rels: CognitiveRelation[] = [];
+    const outIds = this.outgoingRelations.get(conceptId) || new Set();
+    for (const id of outIds) {
+      const rel = this.relations.get(id);
+      if (rel) rels.push(rel);
+    }
+    const inIds = this.incomingRelations.get(conceptId) || new Set();
+    for (const id of inIds) {
+      const rel = this.relations.get(id);
+      if (rel && !outIds.has(id)) rels.push(rel);
+    }
+    return rels;
+  }
+
   public getContradictions(conceptId: string): CognitiveRelation[] {
     return this.queryRelations({
       predicate: CognitiveRelationPredicate.CONTRADICTS
@@ -404,6 +427,165 @@ export class CognitiveGraph {
     const start = this.getConcept(startConceptId);
     const neighbors = this.getNeighbors(startConceptId, options);
     return start ? [start, ...neighbors] : neighbors;
+  }
+
+  /**
+   * Computes a bounded structural topological signature for a concept.
+   * Captures in/out predicates, degrees, neighbor categories, and local motifs.
+   */
+  public computeStructuralSignature(conceptId: string, depth: number = 1): StructuralSignature | null {
+    const concept = this.concepts.get(conceptId);
+    if (!concept) return null;
+
+    const boundedDepth = Math.min(depth, this.budget.maxStructuralSignatureDepth || 2);
+    const outRelIds = this.outgoingRelations.get(conceptId) || new Set();
+    const inRelIds = this.incomingRelations.get(conceptId) || new Set();
+
+    const outgoingPredicates: CognitiveRelationPredicate[] = [];
+    const incomingPredicates: CognitiveRelationPredicate[] = [];
+    const neighborCategoriesSet = new Set<InformationCategory>();
+    const localMotifs: string[] = [];
+
+    for (const relId of outRelIds) {
+      const rel = this.relations.get(relId);
+      if (rel) {
+        outgoingPredicates.push(rel.predicate);
+        const target = this.concepts.get(rel.objectConceptId);
+        if (target) {
+          neighborCategoriesSet.add(target.category);
+          localMotifs.push(`OUT:${rel.predicate}->${target.category}`);
+
+          // Depth 2 if requested
+          if (boundedDepth > 1) {
+            const nextOutRelIds = this.outgoingRelations.get(target.conceptId) || new Set();
+            for (const nRelId of nextOutRelIds) {
+              const nRel = this.relations.get(nRelId);
+              if (nRel) {
+                localMotifs.push(`CHAIN:${rel.predicate}->${nRel.predicate}`);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    for (const relId of inRelIds) {
+      const rel = this.relations.get(relId);
+      if (rel) {
+        incomingPredicates.push(rel.predicate);
+        const source = this.concepts.get(rel.subjectConceptId);
+        if (source) {
+          neighborCategoriesSet.add(source.category);
+          localMotifs.push(`IN:${rel.predicate}<-${source.category}`);
+        }
+      }
+    }
+
+    // Sort to make signature canonical and deterministic
+    outgoingPredicates.sort();
+    incomingPredicates.sort();
+    localMotifs.sort();
+    const neighborCategories = Array.from(neighborCategoriesSet).sort();
+
+    // Canonical structural representation
+    const rawFingerprint = JSON.stringify({
+      category: concept.category,
+      inDeg: inRelIds.size,
+      outDeg: outRelIds.size,
+      inPreds: incomingPredicates,
+      outPreds: outgoingPredicates,
+      motifs: localMotifs
+    });
+
+    const structuralHash = crypto.createHash('sha256').update(rawFingerprint).digest('hex').slice(0, 16);
+
+    return {
+      conceptId,
+      category: concept.category,
+      inDegree: inRelIds.size,
+      outDegree: outRelIds.size,
+      incomingPredicates,
+      outgoingPredicates,
+      neighborCategories,
+      localMotifs,
+      structuralHash,
+      depth: boundedDepth
+    };
+  }
+
+  /**
+   * Fast structural candidate pruning for cross-domain analogies.
+   * Compares structural signatures (predicate overlap, topological degree similarity, motif match)
+   * without O(N^2) exhaustive full-graph isomorphism.
+   */
+  public findAnalogyCandidates(
+    sourceConceptId: string,
+    options?: { maxCandidates?: number; minSimilarityThreshold?: number }
+  ): Array<{ targetConceptId: string; signatureSimilarity: number; targetSignature: StructuralSignature }> {
+    const sourceSig = this.computeStructuralSignature(sourceConceptId);
+    if (!sourceSig) return [];
+
+    const maxCandidates = options?.maxCandidates ?? this.budget.maxAnalogyCandidates;
+    const minThreshold = options?.minSimilarityThreshold ?? 0.2;
+    const candidates: Array<{ targetConceptId: string; signatureSimilarity: number; targetSignature: StructuralSignature }> = [];
+
+    for (const concept of this.concepts.values()) {
+      if (concept.conceptId === sourceConceptId) continue;
+
+      const targetSig = this.computeStructuralSignature(concept.conceptId);
+      if (!targetSig) continue;
+
+      // Must have some relational structure to form an analogy
+      if (sourceSig.outDegree === 0 && sourceSig.inDegree === 0) continue;
+      if (targetSig.outDegree === 0 && targetSig.inDegree === 0) continue;
+
+      // Calculate topological similarity based on predicates and degree compatibility
+      const sim = this.compareSignatures(sourceSig, targetSig);
+      if (sim >= minThreshold) {
+        candidates.push({
+          targetConceptId: concept.conceptId,
+          signatureSimilarity: sim,
+          targetSignature: targetSig
+        });
+      }
+    }
+
+    candidates.sort((a, b) => b.signatureSimilarity - a.signatureSimilarity);
+    return candidates.slice(0, maxCandidates);
+  }
+
+  private compareSignatures(a: StructuralSignature, b: StructuralSignature): number {
+    // Jaccard similarity of outgoing predicates
+    const setAOut = new Set(a.outgoingPredicates);
+    const setBOut = new Set(b.outgoingPredicates);
+    const unionOut = new Set([...setAOut, ...setBOut]);
+    let intersectOut = 0;
+    for (const p of setAOut) {
+      if (setBOut.has(p)) intersectOut++;
+    }
+    const outScore = unionOut.size > 0 ? intersectOut / unionOut.size : 0;
+
+    // Jaccard similarity of incoming predicates
+    const setAIn = new Set(a.incomingPredicates);
+    const setBIn = new Set(b.incomingPredicates);
+    const unionIn = new Set([...setAIn, ...setBIn]);
+    let intersectIn = 0;
+    for (const p of setAIn) {
+      if (setBIn.has(p)) intersectIn++;
+    }
+    const inScore = unionIn.size > 0 ? intersectIn / unionIn.size : 0;
+
+    // Degree ratio compatibility
+    const maxOut = Math.max(a.outDegree, b.outDegree);
+    const minOut = Math.min(a.outDegree, b.outDegree);
+    const degOutRatio = maxOut > 0 ? minOut / maxOut : 1.0;
+
+    const maxIn = Math.max(a.inDegree, b.inDegree);
+    const minIn = Math.min(a.inDegree, b.inDegree);
+    const degInRatio = maxIn > 0 ? minIn / maxIn : 1.0;
+
+    // Weighted structural score
+    return Number(((outScore * 0.4) + (inScore * 0.3) + (degOutRatio * 0.15) + (degInRatio * 0.15)).toFixed(3));
   }
 
   public getAllConcepts(): CognitiveConcept[] {

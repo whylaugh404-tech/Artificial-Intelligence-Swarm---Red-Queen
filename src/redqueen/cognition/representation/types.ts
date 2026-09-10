@@ -145,6 +145,28 @@ export const MappedRelationSchema = z.object({
 
 export type MappedRelation = z.infer<typeof MappedRelationSchema>;
 
+/**
+ * Structural Signature Model
+ * 
+ * Compact, bounded topological fingerprint of a concept within its local graph neighborhood.
+ * Used for fast candidate filtering in structural analogy and generalization discovery
+ * without requiring exhaustive O(N^2) graph isomorphism tests.
+ */
+export const StructuralSignatureSchema = z.object({
+  conceptId: z.string().min(1).max(256),
+  category: InformationCategorySchema,
+  inDegree: z.number().int().nonnegative(),
+  outDegree: z.number().int().nonnegative(),
+  incomingPredicates: z.array(CognitiveRelationPredicateSchema),
+  outgoingPredicates: z.array(CognitiveRelationPredicateSchema),
+  neighborCategories: z.array(InformationCategorySchema),
+  localMotifs: z.array(z.string()).default([]),
+  structuralHash: z.string().min(1),
+  depth: z.number().int().min(1).max(5)
+});
+
+export type StructuralSignature = z.infer<typeof StructuralSignatureSchema>;
+
 export const CognitiveAnalogySchema = z.object({
   analogyId: z.string().min(1).max(256),
   sourceConceptIds: z.array(z.string().min(1)).min(1),
@@ -174,6 +196,8 @@ export interface CognitiveRepresentationBudget {
   readonly maxGeneralizationsPerConcept: number;
   readonly maxVisitedNodesTraversal: number;
   readonly traversalTimeoutMs: number;
+  readonly maxStructuralSignatureDepth: number;
+  readonly maxAnalogyCandidates: number;
 }
 
 export const DEFAULT_REPRESENTATION_BUDGET: CognitiveRepresentationBudget = {
@@ -184,5 +208,7 @@ export const DEFAULT_REPRESENTATION_BUDGET: CognitiveRepresentationBudget = {
   maxAnalogiesPerConcept: 10,
   maxGeneralizationsPerConcept: 10,
   maxVisitedNodesTraversal: 100,
-  traversalTimeoutMs: 2000
+  traversalTimeoutMs: 2000,
+  maxStructuralSignatureDepth: 2,
+  maxAnalogyCandidates: 20
 };
