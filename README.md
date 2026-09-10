@@ -1,5 +1,6 @@
 # Red Queen
 A modular, observable, testable distributed autonomous cyber-research agent framework.
+<img width="640" height="427" alt="1000184119" src="https://github.com/user-attachments/assets/30ec4333-c21f-410a-af6b-2d2dd1eb20c6" />
 
 ## Project Principles
 - **No Simulation**: All telemetry, peer counts, health statuses, and metrics are derived from real runtime state.
