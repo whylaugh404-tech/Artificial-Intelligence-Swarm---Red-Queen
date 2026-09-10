@@ -137,6 +137,11 @@ async function startServer() {
     }
   });
 
+  // Guarantee all /api/* routes return JSON, never HTML fallback
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.path}` });
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

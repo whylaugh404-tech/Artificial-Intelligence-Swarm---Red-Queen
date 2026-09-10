@@ -11,13 +11,34 @@ export default function App() {
   const fetchState = async () => {
     try {
       const [healthRes, memRes] = await Promise.all([
-        fetch('/api/health').then(r => r.json()),
-        fetch('/api/memory').then(r => r.json())
+        fetch('/api/health').then(async r => {
+          if (!r.ok) return null;
+          const text = await r.text();
+          try {
+            return JSON.parse(text);
+          } catch {
+            return null;
+          }
+        }),
+        fetch('/api/memory').then(async r => {
+          if (!r.ok) return null;
+          const text = await r.text();
+          try {
+            return JSON.parse(text);
+          } catch {
+            return null;
+          }
+        })
       ]);
-      setHealth(healthRes);
-      setMemories(memRes.data || []);
+      if (healthRes) {
+        setHealth(healthRes);
+      }
+      if (memRes && Array.isArray(memRes.data)) {
+        setMemories(memRes.data);
+      }
     } catch (err) {
-      console.error('Failed to fetch state', err);
+      // Silently handle transient connection gaps during server initialization
+      console.warn('Network state synchronization waiting for server:', err);
     }
   };
 

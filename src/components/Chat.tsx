@@ -9,8 +9,8 @@ interface ChatMessage {
 }
 
 const MODELS = [
-  { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
-  { id: 'google/gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
+  { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Active)' },
+  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro' },
   { id: 'meta-llama/llama-3.1-8b-instruct', name: 'Llama 3.1 8B' },
   { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet' },
 ];
@@ -53,7 +53,13 @@ export function ChatInterface() {
         body: JSON.stringify({ message: userMsg.content, model: selectedModel })
       });
       
-      const data = await response.json();
+      let data: any = {};
+      const rawText = await response.text();
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        data = { error: `Server returned non-JSON response (${response.status})` };
+      }
       
       const agentMsg: ChatMessage = {
         id: crypto.randomUUID(),
