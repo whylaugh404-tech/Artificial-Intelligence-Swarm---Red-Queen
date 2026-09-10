@@ -109,4 +109,49 @@ This is a very specific new idea that should be rolled back if it fails.
     expect(result.status).toBe(MetabolismStatus.FAILED);
     expect(result.reason).toContain('Metabolism processing deadline exceeded');
   });
+
+  it('rolls back if Cognitive State persistence fails', async () => {
+    // We can simulate a failure in cognitive state put by patching the memory store temporarily
+    const originalPut = cell.memory.put.bind(cell.memory);
+    
+    cell.memory.put = async (entry: MemoryEntry) => {
+      // The cognitive state uses the ID pattern cognitive_state_<cellId>
+      if (entry.id.startsWith('cognitive_state_')) {
+        throw new Error('Simulated I/O failure during Cognitive State write');
+      }
+      return originalPut(entry);
+    };
+
+    const rawContent = `
+# Cognitive Idea
+This should be rolled back because cognitive state fails.
+`;
+    const result = await cell.metabolize({
+      sourceType: InformationSourceType.DOCUMENT,
+      content: rawContent,
+      contentType: 'text/markdown'
+    });
+
+    expect(result.status).toBe(MetabolismStatus.FAILED);
+    expect(result.reason).toContain('Transaction rolled back');
+
+    // Ensure knowledge was compensated
+    const allMemory = await cell.memory.search({});
+    const knowledgeRecords = allMemory.filter(m => m.type === 'KNOWLEDGE_RECORD');
+    expect(knowledgeRecords.length).toBe(0);
+
+    const experienceRecords = allMemory.filter(m => m.type === 'EXPERIENCE_RECORD');
+    expect(experienceRecords.length).toBe(0);
+
+    // Ensure deduplicator is compensated (we can test by metabolizing again with same content and success)
+    cell.memory.put = originalPut; // restore
+    const result2 = await cell.metabolize({
+      sourceType: InformationSourceType.DOCUMENT,
+      content: rawContent,
+      contentType: 'text/markdown'
+    });
+
+    // If dedup wasn't compensated, this would be a DUPLICATE
+    expect(result2.status).toBe(MetabolismStatus.ACCEPTED);
+  });
 });

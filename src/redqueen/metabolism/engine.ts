@@ -374,6 +374,7 @@ export class MetabolismEngine {
         if (this.memoryStore.getStats) {
           this.cognitiveState.updateMemoryStats(this.memoryStore.getStats());
         }
+        await this.cognitiveState.persist(this.memoryStore);
         
         this.audit.recordEvent(
           MetabolismEventType.COGNITIVE_STATE_UPDATED,

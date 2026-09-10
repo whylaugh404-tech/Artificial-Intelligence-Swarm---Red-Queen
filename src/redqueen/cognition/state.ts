@@ -169,8 +169,9 @@ export class CognitiveStateManager {
         version: 1
       });
       logger.debug(this.component, 'cognitive_state_persisted', { cellId: this.cellId });
-    } catch (err) {
+    } catch (err: any) {
       logger.error(this.component, 'cognitive_state_persist_failed', err, { cellId: this.cellId });
+      throw new Error(`Failed to persist cognitive state: ${err.message}`);
     }
   }
 

@@ -80,11 +80,11 @@ A modular, observable, testable distributed autonomous cyber-research agent fram
 | Cognitive State (P3) | PASS | `src/redqueen/cognition/state.ts` (Dynamic goals, confidence, stats) |
 | Lifecycle Transitions | PASS | `src/redqueen/core/lifecycle.ts` (CREATED, INITIALIZING, ACTIVE, SUSPENDED, RETIRED, STOPPED) |
 | AI Reasoning | PASS | `src/redqueen/cognition/pipeline.ts` |
-| Tests | PASS | 192 tests passing across 22 suites (100% pass rate) |
+| Tests | PASS | 193 tests passing across 22 suites (100% pass rate) |
 
 ## Setup Instructions
 1. Run `npm install`
 2. Add your OpenRouter API key to `.env`
 3. Optional: Add `P2P_PORT=4000` to your `.env` to enable inbound networking.
 4. Run `npm run dev` to start the Node server and the React UI.
-5. Run `npm test` to execute the full 192-test suite.
+5. Run `npm test` to execute the full 193-test suite.
