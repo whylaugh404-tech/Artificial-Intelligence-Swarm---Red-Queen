@@ -42,7 +42,7 @@ A modular, observable, testable distributed autonomous cyber-research agent fram
 - **Cell Genome & Lineage System (P3)**:
   - `CellGenome`: Explicit schema encapsulating `genomeId`, `parentGenomeId`, `parentCellId`, `generation`, `lineageId`, `createdAt`, `logicVersion`, `traits`, `capabilities`, `specialization`, and `ancestorGenomeIds`.
   - Bounded behavioral traits: `mutationRate` [0, 1], `riskTolerance` [0, 1], `explorationVsExploitation` [0, 1], and `maxCognitiveCycleDepth` (int >= 1).
-  - Strict capability bounding to `ALLOWED_CELL_CAPABILITIES` (`OSINT_SCAN`, `KNOWLEDGE_QUERY`, `PEER_REPLICATION`, `CODE_ANALYSIS`, `VULN_EXPLOIT`, `COGNITIVE_REASONING`, `SWARM_COORDINATION`, `MEMORY_MUTATION`).
+  - Strict capability bounding to `ALLOWED_CELL_CAPABILITIES` (`OSINT_SCAN`, `KNOWLEDGE_QUERY`, `PEER_REPLICATION`, `CODE_ANALYSIS`, `COGNITIVE_REASONING`, `SWARM_COORDINATION`, `MEMORY_MUTATION`).
   - Progeny derivation (`deriveProgenyGenome`): advancing generation counter, recording immutable ancestral lineage chains, and preventing multi-generational corruption.
   - Lineage tracking (`CellLineage`): recording genealogical trees without mutating parent states.
 - **Cell Individual Cognitive State (P3)**:
@@ -80,11 +80,11 @@ A modular, observable, testable distributed autonomous cyber-research agent fram
 | Cognitive State (P3) | PASS | `src/redqueen/cognition/state.ts` (Dynamic goals, confidence, stats) |
 | Lifecycle Transitions | PASS | `src/redqueen/core/lifecycle.ts` (CREATED, INITIALIZING, ACTIVE, SUSPENDED, RETIRED, STOPPED) |
 | AI Reasoning | PASS | `src/redqueen/cognition/pipeline.ts` |
-| Tests | PASS | 143 tests passing across 15 suites (100% pass rate) |
+| Tests | PASS | 192 tests passing across 22 suites (100% pass rate) |
 
 ## Setup Instructions
 1. Run `npm install`
 2. Add your OpenRouter API key to `.env`
 3. Optional: Add `P2P_PORT=4000` to your `.env` to enable inbound networking.
 4. Run `npm run dev` to start the Node server and the React UI.
-5. Run `npm test` to execute the full 143-test suite.
+5. Run `npm test` to execute the full 192-test suite.

@@ -258,6 +258,7 @@ export const MetabolismStatusSchema = z.nativeEnum(MetabolismStatus);
  */
 export interface Experience {
   readonly experienceId: string;
+  readonly transactionId: string;
   readonly cellId: string;
   readonly timestamp: string;
   readonly informationId: string;
@@ -268,10 +269,13 @@ export interface Experience {
   readonly noveltyScore: number;
   readonly source: string;
   readonly confidence: number;
+  readonly verificationStatus?: string;
+  readonly lessonsDerived?: readonly string[];
 }
 
 export const ExperienceSchema = z.object({
   experienceId: z.string().min(1),
+  transactionId: z.string().min(1),
   cellId: z.string().min(1),
   timestamp: z.string().datetime(),
   informationId: z.string().min(1),
@@ -281,7 +285,9 @@ export const ExperienceSchema = z.object({
   noveltyClassification: NoveltyClassificationSchema,
   noveltyScore: z.number().min(0).max(1),
   source: z.string().min(1),
-  confidence: z.number().min(0).max(1)
+  confidence: z.number().min(0).max(1),
+  verificationStatus: z.string().optional(),
+  lessonsDerived: z.array(z.string()).optional()
 });
 
 /**
@@ -319,7 +325,8 @@ export enum MetabolismEventType {
   EXPERIENCE_CREATED = 'EXPERIENCE_CREATED',
   KNOWLEDGE_GAP_CREATED = 'KNOWLEDGE_GAP_CREATED',
   COGNITIVE_STATE_UPDATED = 'COGNITIVE_STATE_UPDATED',
-  METABOLISM_FAILED = 'METABOLISM_FAILED'
+  METABOLISM_FAILED = 'METABOLISM_FAILED',
+  METABOLISM_FAILED_ROLLED_BACK = 'METABOLISM_FAILED_ROLLED_BACK'
 }
 
 /**

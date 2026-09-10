@@ -210,4 +210,20 @@ export class CognitiveStateManager {
   public toJSON(): CognitiveState {
     return { ...this.state };
   }
+
+  /**
+   * Restores cognitive state from an exact snapshot, used for transaction rollbacks.
+   */
+  public restoreFromSnapshot(snapshot: CognitiveState): void {
+    const parsed = CognitiveStateSchema.safeParse(snapshot);
+    if (parsed.success) {
+      this.state = {
+        ...parsed.data,
+        cellId: this.cellId
+      };
+      logger.debug(this.component, 'cognitive_state_restored_from_snapshot', { cellId: this.cellId });
+    } else {
+      logger.warn(this.component, 'failed_to_restore_snapshot', { errors: parsed.error });
+    }
+  }
 }

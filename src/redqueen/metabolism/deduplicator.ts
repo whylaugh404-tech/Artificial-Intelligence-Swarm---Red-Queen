@@ -22,6 +22,12 @@ export class NoveltyEvaluator {
     }
   }
 
+  public unregisterHash(contentHash: string): void {
+    if (contentHash) {
+      this.knownContentHashes.delete(contentHash);
+    }
+  }
+
   private calculateFactOverlap(newFacts: string[], existingFacts: readonly string[]): number {
     if (newFacts.length === 0 || existingFacts.length === 0) return 0.0;
     
