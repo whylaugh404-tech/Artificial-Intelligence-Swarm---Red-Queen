@@ -33,7 +33,27 @@ export class OpenRouterAIProvider implements AIProvider {
   private geminiClient: GoogleGenAI | null = null;
   
   constructor(apiKey?: string) {
-    this.apiKey = (apiKey || process.env.OPENROUTER_API_KEY || '').trim();
+    const rawKey = (apiKey || process.env.OPENROUTER_API_KEY || '').trim();
+    // Validate that the key is not a placeholder
+    if (
+      !rawKey ||
+      rawKey === 'your_api_key_here' ||
+      rawKey === 'dummy-key' ||
+      rawKey.includes('placeholder')
+    ) {
+      this.apiKey = '';
+    } else {
+      this.apiKey = rawKey;
+    }
+  }
+
+  private isOpenRouterValid(): boolean {
+    return Boolean(
+      this.apiKey &&
+      this.apiKey !== 'your_api_key_here' &&
+      !this.apiKey.startsWith('AIza') &&
+      this.apiKey.length > 10
+    );
   }
 
   private getGeminiClient(): GoogleGenAI | null {
@@ -51,67 +71,109 @@ export class OpenRouterAIProvider implements AIProvider {
     // 1. Prefer Gemini API if GEMINI_API_KEY or Google key is present
     const gemini = this.getGeminiClient();
     if (gemini) {
-      try {
-        let modelName = 'gemini-3.8-flash';
-        if (request.model && !request.model.includes('2.5')) {
-          modelName = request.model.replace('google/', '');
-        }
-        logger.debug(this.component, 'gemini_ai_request_started', { model: modelName });
-        
-        const response = await gemini.models.generateContent({
-          model: modelName,
-          contents: request.userPrompt,
-          config: {
-            systemInstruction: request.systemPrompt,
-            temperature,
-          }
-        });
+      let requestedModel = 'gemini-3.8-flash';
+      if (request.model && !request.model.includes('2.5') && !request.model.includes('2.0')) {
+        requestedModel = request.model.replace('google/', '');
+      }
 
-        const content = response.text || '';
-        if (!content) {
-          return { success: false, error: 'EMPTY_RESPONSE' };
-        }
+      // Candidate models for graceful fallback if one model is under high demand (503/429)
+      const candidateModels = Array.from(new Set([
+        requestedModel,
+        'gemini-3.1-flash-lite',
+        'gemini-flash-latest'
+      ]));
 
-        let parsedData: any = undefined;
-        if (request.schema) {
-          try {
-            let jsonString = content;
-            const jsonMatch = content.match(/```(?:json)?\n([\s\S]*?)\n```/);
-            if (jsonMatch) {
-              jsonString = jsonMatch[1];
+      let lastGeminiError: any = null;
+
+      for (let i = 0; i < candidateModels.length; i++) {
+        const modelName = candidateModels[i];
+        try {
+          logger.debug(this.component, 'gemini_ai_attempt', { model: modelName, attempt: i + 1 });
+          
+          const response = await gemini.models.generateContent({
+            model: modelName,
+            contents: request.userPrompt,
+            config: {
+              systemInstruction: request.systemPrompt,
+              temperature,
             }
-            const rawParsed = JSON.parse(jsonString);
-            parsedData = request.schema.parse(rawParsed);
-          } catch (err: any) {
-            logger.warn(this.component, 'schema_validation_failed', { error: err.message, content });
-            return { success: false, error: 'VALIDATION_FAILED', rawText: content };
-          }
-        }
+          });
 
-        return {
-          success: true,
-          data: parsedData as T,
-          rawText: content
-        };
-      } catch (err: any) {
-        logger.error(this.component, 'gemini_error', err);
-        // If quota exceeded or network issue, format a clean message
-        const errMsg = err?.message || String(err);
-        if (errMsg.includes('resource_exhausted') || errMsg.includes('quota') || errMsg.includes('429')) {
+          const content = response.text || '';
+          if (!content) {
+            return { success: false, error: 'EMPTY_RESPONSE' };
+          }
+
+          let parsedData: any = undefined;
+          if (request.schema) {
+            try {
+              let jsonString = content;
+              const jsonMatch = content.match(/```(?:json)?\n([\s\S]*?)\n```/);
+              if (jsonMatch) {
+                jsonString = jsonMatch[1];
+              }
+              const rawParsed = JSON.parse(jsonString);
+              parsedData = request.schema.parse(rawParsed);
+            } catch (err: any) {
+              logger.warn(this.component, 'schema_validation_failed', { error: err.message, content });
+              return { success: false, error: 'VALIDATION_FAILED', rawText: content };
+            }
+          }
+
           return {
-            success: false,
-            error: 'Gemini API quota exceeded for current key. Please try again shortly or configure an alternate key in Settings.'
+            success: true,
+            data: parsedData as T,
+            rawText: content
           };
+        } catch (err: any) {
+          lastGeminiError = err;
+          const errMsg = err?.message || String(err);
+          const isDemandSpike = errMsg.includes('503') || errMsg.includes('demand') || errMsg.includes('UNAVAILABLE');
+          const isRateLimit = errMsg.includes('429') || errMsg.includes('resource_exhausted') || errMsg.includes('quota');
+
+          logger.warn(this.component, 'gemini_attempt_failed', {
+            model: modelName,
+            error: errMsg,
+            willRetryFallback: isDemandSpike && i < candidateModels.length - 1
+          });
+
+          // If it's a 503 demand spike, try the next candidate model after a slight pause
+          if (isDemandSpike && i < candidateModels.length - 1) {
+            await new Promise(r => setTimeout(r, 400));
+            continue;
+          }
+
+          if (isRateLimit && i < candidateModels.length - 1) {
+            await new Promise(r => setTimeout(r, 400));
+            continue;
+          }
+
+          break;
         }
-        // Fall back to OpenRouter if configured, otherwise return error
-        if (!this.apiKey || this.apiKey === 'dummy-key' || this.apiKey.startsWith('AIza')) {
-          return { success: false, error: `Gemini API error: ${errMsg}` };
-        }
+      }
+
+      const finalErrMsg = lastGeminiError?.message || String(lastGeminiError || 'Unknown Gemini error');
+      if (finalErrMsg.includes('503') || finalErrMsg.includes('demand') || finalErrMsg.includes('UNAVAILABLE')) {
+        return {
+          success: false,
+          error: 'The AI model is experiencing temporary high demand. Spikes are usually brief, please retry in a few moments.'
+        };
+      }
+      if (finalErrMsg.includes('resource_exhausted') || finalErrMsg.includes('quota') || finalErrMsg.includes('429')) {
+        return {
+          success: false,
+          error: 'AI service rate limit reached. Please wait a moment before sending another request.'
+        };
+      }
+
+      // If OpenRouter is NOT valid, return the Gemini error directly
+      if (!this.isOpenRouterValid()) {
+        return { success: false, error: `Gemini service notice: ${finalErrMsg}` };
       }
     }
 
-    // 2. Use OpenRouter if API key is provided and not a dummy
-    if (this.apiKey && this.apiKey !== 'dummy-key' && !this.apiKey.startsWith('AIza')) {
+    // 2. Use OpenRouter ONLY if valid API key is explicitly configured
+    if (this.isOpenRouterValid()) {
       const model = request.model || 'google/gemini-flash-1.5';
       logger.debug(this.component, 'openrouter_request_started', { model });
 
@@ -140,7 +202,7 @@ export class OpenRouterAIProvider implements AIProvider {
         if (!response.ok) {
           const errText = await response.text();
           logger.error(this.component, 'openrouter_api_error', new Error(errText), { status: response.status });
-          return { success: false, error: 'AI_UNAVAILABLE' };
+          return { success: false, error: 'OpenRouter AI service unavailable.' };
         }
 
         const data = await response.json();
@@ -174,13 +236,13 @@ export class OpenRouterAIProvider implements AIProvider {
         };
       } catch (err: any) {
         logger.error(this.component, 'openrouter_network_error', err);
-        return { success: false, error: 'AI_UNAVAILABLE' };
+        return { success: false, error: 'AI service network error.' };
       }
     }
 
     return {
       success: false,
-      error: 'AI Provider not configured. Please supply GEMINI_API_KEY or OPENROUTER_API_KEY.'
+      error: 'No active AI key found. Please configure GEMINI_API_KEY in the environment.'
     };
   }
 }
