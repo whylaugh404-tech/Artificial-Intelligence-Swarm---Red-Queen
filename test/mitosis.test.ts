@@ -225,4 +225,83 @@ describe('P6 Cell Mitosis & Cell Reproduction', () => {
     expect(res2.result.success).toBe(false);
     expect(res2.result.errors![0]).toContain('cooldown');
   });
+
+  it('R1 & R2: Specialization-aware Memory Partition', async () => {
+    // Add domain-specific memories
+    await parentCell.memory.put({
+      id: 'network-sec-1', cellId: parentCell.nodeId, category: MemoryCategory.SEMANTIC, content: 'network security concepts',
+      confidence: 0.9, hash: 'h-net1', provenance: [], source: 'test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    });
+    await parentCell.memory.put({
+      id: 'cooking-1', cellId: parentCell.nodeId, category: MemoryCategory.SEMANTIC, content: 'how to cook pasta',
+      confidence: 0.9, hash: 'h-cook1', provenance: [], source: 'test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    });
+
+    const { result, child } = await mitosis.reproduce(parentCell, {
+      authorizationProof: 'test-auth',
+      storageBasePath: TEST_STORAGE_DIR,
+      currentPopulation: 1,
+      specializationBias: 'network security',
+      openRouterApiKey: 'dummy-api-key'
+    });
+
+    expect(result.success).toBe(true);
+    if (!child) return;
+    childCell = child;
+
+    const childMemories = await child.memory.search({});
+    const netMem = childMemories.find(m => m.id === 'network-sec-1');
+    const cookMem = childMemories.find(m => m.id === 'cooking-1');
+    
+    expect(netMem).toBeDefined();
+    // Low relevance, shouldn't be inherited unless core
+    expect(cookMem).toBeUndefined();
+  });
+
+  it('R4 & R5: Episodic Experience Inheritance', async () => {
+    await parentCell.memory.put({
+      id: 'epi-high', cellId: parentCell.nodeId, category: MemoryCategory.EPISODIC, content: 'highly relevant cyber attack event',
+      confidence: 0.9, hash: 'h-epi1', provenance: [], source: 'test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    });
+    await parentCell.memory.put({
+      id: 'epi-low', cellId: parentCell.nodeId, category: MemoryCategory.EPISODIC, content: 'some random thought',
+      confidence: 0.4, hash: 'h-epi2', provenance: [], source: 'test', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    });
+
+    const { child } = await mitosis.reproduce(parentCell, {
+      authorizationProof: 'test-auth',
+      storageBasePath: TEST_STORAGE_DIR,
+      currentPopulation: 1,
+      specializationBias: 'cyber',
+      openRouterApiKey: 'dummy-api-key'
+    });
+
+    childCell = child;
+    const childMemories = await child!.memory.search({});
+    
+    expect(childMemories.find(m => m.id === 'epi-high')).toBeDefined();
+    expect(childMemories.find(m => m.id === 'epi-low')).toBeUndefined();
+  });
+
+  it('R8: Deterministic Bounded Mutation', async () => {
+    const seed = 'test-seed-123';
+    
+    const res1 = await mitosis.reproduce(parentCell, {
+      authorizationProof: 'test-auth', storageBasePath: TEST_STORAGE_DIR, currentPopulation: 1, openRouterApiKey: 'dummy', reproductionSeed: seed
+    });
+    const child1Traits = res1.child!.genome.traits;
+    await res1.child!.stop();
+
+    // Reset cooldown to allow second reproduction
+    parentCell.cognitiveState.setMetadata('lastReproductionTimestamp', '0');
+
+    const res2 = await mitosis.reproduce(parentCell, {
+      authorizationProof: 'test-auth', storageBasePath: TEST_STORAGE_DIR, currentPopulation: 1, openRouterApiKey: 'dummy', reproductionSeed: seed
+    });
+    const child2Traits = res2.child!.genome.traits;
+    childCell = res2.child;
+
+    expect(child1Traits.mutationRate).toEqual(child2Traits.mutationRate);
+    expect(child1Traits.riskTolerance).toEqual(child2Traits.riskTolerance);
+  });
 });

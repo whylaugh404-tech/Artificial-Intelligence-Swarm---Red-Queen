@@ -4,7 +4,6 @@ import { logger } from '../core/logger';
 
 export class GovernanceEnforcer {
   private policy: ReproductionPolicy;
-  private lastReproductionTimestamp: number = 0;
   
   constructor(policyConfig?: Partial<ReproductionPolicy>) {
     this.policy = ReproductionPolicySchema.parse(policyConfig || {});
@@ -12,6 +11,7 @@ export class GovernanceEnforcer {
 
   public validateReproduction(
     parentState: CellState,
+    parentMetadata: Record<string, string>,
     currentPopulation: number,
     memoryPressure: number,
     isAuthorized: boolean
@@ -29,8 +29,12 @@ export class GovernanceEnforcer {
     }
 
     const now = Date.now();
-    if (now - this.lastReproductionTimestamp < this.policy.cooldownMs) {
-      return { allowed: false, reason: 'Reproduction cooldown active' };
+    const lastReproStr = parentMetadata['lastReproductionTimestamp'];
+    if (lastReproStr) {
+      const lastRepro = parseInt(lastReproStr, 10);
+      if (!isNaN(lastRepro) && (now - lastRepro < this.policy.cooldownMs)) {
+        return { allowed: false, reason: 'Reproduction cooldown active' };
+      }
     }
 
     if (memoryPressure < this.policy.minMemoryPressure) {
@@ -38,9 +42,5 @@ export class GovernanceEnforcer {
     }
 
     return { allowed: true };
-  }
-
-  public recordReproduction(): void {
-    this.lastReproductionTimestamp = Date.now();
   }
 }

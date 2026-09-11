@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import * as path from 'path';
+import * as fs from 'fs/promises';
 import { Cell } from '../core/cell';
 import { deriveProgenyGenome } from '../genome/genome';
 import { CellCapability } from '../genome/types';
@@ -16,6 +17,36 @@ export interface MitosisOptions {
   memoryPressure?: number;
   specializationBias?: string;
   openRouterApiKey: string;
+  // Deterministic seed for reproducible mutations
+  reproductionSeed?: string; 
+}
+
+function deterministicRandom(seed: string, sequence: number): number {
+  let hash = 0;
+  const input = `${seed}_${sequence}`;
+  for (let i = 0; i < input.length; i++) {
+    hash = Math.imul(31, hash) + input.charCodeAt(i) | 0;
+  }
+  const x = Math.sin(hash++) * 10000;
+  return x - Math.floor(x);
+}
+
+function computeRelevance(entry: MemoryEntry, specialization: string): number {
+  let score = 0;
+  const contentStr = typeof entry.content === 'string' ? entry.content : JSON.stringify(entry.content || '');
+  const contentLower = contentStr.toLowerCase();
+  const specLower = specialization.toLowerCase();
+  
+  if (contentLower.includes(specLower)) score += 0.5;
+  if (entry.id.toLowerCase().includes(specLower)) score += 0.3;
+  if (entry.provenance?.some(p => p.toLowerCase().includes(specLower))) score += 0.2;
+  
+  // High score if it has a core tag
+  if (contentLower.includes('[core]') || entry.id.includes('core')) {
+    score += 1.0;
+  }
+
+  return score;
 }
 
 export class MitosisEngine {
@@ -27,13 +58,16 @@ export class MitosisEngine {
     parent: Cell,
     options: MitosisOptions
   ): Promise<{ result: MitosisResult; child?: Cell }> {
-    const eventId = `mitosis_${randomUUID()}`;
+    const eventId = options.reproductionSeed || `mitosis_${randomUUID()}`;
     const pressure = options.memoryPressure ?? 0.8;
     const isAuthorized = !!options.authorizationProof;
+
+    const parentMetadata = parent.cognitiveState.getState().metadata || {};
 
     // 1. Governance Validation
     const validation = this.governance.validateReproduction(
       parent.lifecycle.getState(),
+      parentMetadata,
       options.currentPopulation,
       pressure,
       isAuthorized
@@ -54,10 +88,13 @@ export class MitosisEngine {
 
     logger.info(this.component, 'mitosis_started', { parentCellId: parent.nodeId, eventId });
 
+    let childStoragePath = '';
+    let childNodeId = '';
+
     try {
       // 2. Identity Generation
       const keypair = identityCrypto.generateKeyPair();
-      const childNodeId = identityCrypto.deriveNodeId(keypair.publicKey);
+      childNodeId = identityCrypto.deriveNodeId(keypair.publicKey);
       
       if (childNodeId === parent.nodeId) {
         throw new Error('Identity collision: Child cannot have same ID as parent');
@@ -67,10 +104,13 @@ export class MitosisEngine {
       const childSpecialization = options.specializationBias || 
         (parent.genome.specialization ? `${parent.genome.specialization}_evolved` : 'specialized');
 
-      // Add bounded mutation to traits
+      // Deterministic bounded mutation based on eventId
+      const r1 = deterministicRandom(eventId, 1) * 0.2 - 0.1; // -0.1 to 0.1
+      const r2 = deterministicRandom(eventId, 2) * 0.2 - 0.1;
+
       const mutatedTraits = {
-        mutationRate: Math.min(1.0, parent.genome.traits.mutationRate * (1 + (Math.random() * 0.2 - 0.1))),
-        riskTolerance: Math.min(1.0, parent.genome.traits.riskTolerance * (1 + (Math.random() * 0.2 - 0.1))),
+        mutationRate: Math.max(0, Math.min(1.0, parent.genome.traits.mutationRate * (1 + r1))),
+        riskTolerance: Math.max(0, Math.min(1.0, parent.genome.traits.riskTolerance * (1 + r2))),
       };
 
       const childGenome = deriveProgenyGenome(parent.genome, parent.nodeId, {
@@ -87,21 +127,31 @@ export class MitosisEngine {
       let episodicCount = 0;
       let proceduralCount = 0;
 
+      // Deduplication map
+      const seenHashes = new Set<string>();
+
       for (const entry of parentMemories) {
+        if (entry.hash && seenHashes.has(entry.hash)) {
+          continue; // Deduplicate
+        }
+        if (entry.hash) seenHashes.add(entry.hash);
+
         let shouldInherit = false;
+        const relevance = computeRelevance(entry, childSpecialization);
+        const isCore = relevance >= 1.0;
         
-        if (entry.category === MemoryCategory.SEMANTIC && entry.confidence >= 0.7) {
-          // Differentiate based on specialization if provided, or randomly drop some to partition
-          // Simplified deterministic-like partition based on string length hash or just a simple split for now
-          // We will use a predictable hash to ensure tests pass reliably without pure randomness
-          const stableHash = entry.id.charCodeAt(0) % 2;
-          // In a real environment, we would use vector embeddings to match specialization.
-          // For now, we inherit ~70% of core knowledge
-          if (stableHash > -1) { // Accept all core semantic logic for now
-             shouldInherit = true;
+        if (entry.category === MemoryCategory.SEMANTIC) {
+          if (isCore || (entry.confidence >= 0.7 && relevance >= 0.3)) {
+            shouldInherit = true;
           }
         } else if (entry.category === MemoryCategory.PROCEDURAL) {
+          // Procedural memories are structural, usually inherited
           shouldInherit = true;
+        } else if (entry.category === MemoryCategory.EPISODIC) {
+          // Episodic memories are conditionally inherited if highly relevant or core
+          if (isCore || (entry.confidence >= 0.8 && relevance >= 0.5)) {
+            shouldInherit = true;
+          }
         }
 
         // We MUST preserve provenance. We copy the entry but update its ownership to the child.
@@ -119,7 +169,7 @@ export class MitosisEngine {
       }
 
       // 5. Child Instantiation
-      const childStoragePath = path.join(options.storageBasePath, `cell_${childNodeId}.json`);
+      childStoragePath = path.join(options.storageBasePath, `cell_${childNodeId}.json`);
       
       const child = new Cell(
         childStoragePath,
@@ -145,13 +195,13 @@ export class MitosisEngine {
       }
 
       // 6. Finalize & Record
-      this.governance.recordReproduction();
       
       // Update parent cognitive state to reflect it reproduced
       const currentState = parent.cognitiveState.getState();
       const currentDescendants = parseInt(currentState.metadata?.descendantsCount || '0', 10);
       
       parent.cognitiveState.setMetadata('lastReproductionEvent', eventId);
+      parent.cognitiveState.setMetadata('lastReproductionTimestamp', Date.now().toString());
       parent.cognitiveState.setMetadata('descendantsCount', (currentDescendants + 1).toString());
 
       logger.info(this.component, 'mitosis_completed', { 
@@ -182,6 +232,16 @@ export class MitosisEngine {
 
     } catch (error: any) {
       console.error("MITOSIS CATCH ERROR", error);
+      
+      // Compensating action: remove partially created child storage if it exists
+      if (childStoragePath) {
+        try {
+           await fs.rm(childStoragePath, { force: true });
+        } catch (rmErr) {
+           logger.warn(this.component, 'mitosis_rollback_failed', { path: childStoragePath, error: String(rmErr) });
+        }
+      }
+
       const errorMsg = error instanceof Error ? error.stack || error.message : JSON.stringify(error);
       logger.error(this.component, 'mitosis_failed', { parentCellId: parent.nodeId, error: errorMsg });
       return {
