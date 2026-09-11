@@ -219,7 +219,7 @@ export class CognitiveStateManager {
    * Safe serialization without secrets.
    */
   public toJSON(): CognitiveState {
-    return { ...this.state };
+    return JSON.parse(JSON.stringify(this.state));
   }
 
   /**

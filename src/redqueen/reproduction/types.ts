@@ -1,6 +1,70 @@
 import { z } from 'zod';
 import { CellLineage, CellGenome } from '../genome/types';
 
+export enum AuthorizationVerificationState {
+  MISSING = 'MISSING',
+  INVALID_FORMAT = 'INVALID_FORMAT',
+  INVALID_SIGNATURE = 'INVALID_SIGNATURE',
+  UNTRUSTED_ISSUER = 'UNTRUSTED_ISSUER',
+  EXPIRED = 'EXPIRED',
+  WRONG_SUBJECT = 'WRONG_SUBJECT',
+  WRONG_ACTION = 'WRONG_ACTION',
+  WRONG_EVENT = 'WRONG_EVENT',
+  VALID = 'VALID'
+}
+
+export interface AuthorizationTrustAnchor {
+  isTrustedIssuer(publicKey: string, issuer: string): boolean;
+}
+
+export class StaticTrustAnchor implements AuthorizationTrustAnchor {
+  private trustedMap = new Map<string, string>(); // publicKey -> issuer
+
+  constructor(trustedIssuers?: Array<{ issuer: string; publicKey: string }>) {
+    if (trustedIssuers) {
+      for (const item of trustedIssuers) {
+        this.addTrustedIssuer(item.issuer, item.publicKey);
+      }
+    }
+  }
+
+  public addTrustedIssuer(issuer: string, publicKey: string): void {
+    this.trustedMap.set(publicKey.trim(), issuer.trim());
+  }
+
+  public isTrustedIssuer(publicKey: string, issuer: string): boolean {
+    const expectedIssuer = this.trustedMap.get(publicKey.trim());
+    return expectedIssuer !== undefined && expectedIssuer === issuer.trim();
+  }
+}
+
+export interface ReproductionCooldownRecord {
+  parentCellId: string;
+  lastSuccessfulReproductionAt: number;
+  cooldownMs: number;
+}
+
+export interface ReproductionEventRecord {
+  eventId: string;
+  parentCellId: string;
+  status: 'PENDING' | 'COMMITTED' | 'FAILED';
+  childCellId?: string;
+  childStoragePath?: string;
+  createdAt: number;
+  committedAt?: number;
+  mutationSummary?: Record<string, any>;
+  differentiationSummary?: Record<string, any>;
+  inheritedMemorySummary?: {
+    total: number;
+    semantic: number;
+    episodic: number;
+    procedural: number;
+  };
+  lineageRecord?: any;
+  generation: number;
+  error?: string;
+}
+
 export const MitosisResultSchema = z.object({
   success: z.boolean(),
   parentCellId: z.string(),
@@ -27,7 +91,9 @@ export const AuthorizationProofSchema = z.object({
     subject: z.string(),
     eventId: z.string(),
     exp: z.number(),
-    issuer: z.string()
+    issuer: z.string(),
+    timestamp: z.number().optional(),
+    issuedAt: z.number().optional()
   }),
   signature: z.string(),
   issuerPublicKey: z.string()
@@ -41,7 +107,11 @@ export const ReproductionPolicySchema = z.object({
   minMemoryPressure: z.number().min(0.0).max(1.0).default(0.7),
   requireAuthorization: z.boolean().default(true),
   allowDifferentiation: z.boolean().default(true),
-  memoryCapacity: z.number().int().min(1).default(100) // Logical capacity for pressure calculation
+  memoryCapacity: z.number().int().min(1).default(100), // Logical capacity for pressure calculation
+  trustedIssuers: z.array(z.object({
+    issuer: z.string(),
+    publicKey: z.string()
+  })).optional()
 });
 
 export type ReproductionPolicy = z.infer<typeof ReproductionPolicySchema>;
