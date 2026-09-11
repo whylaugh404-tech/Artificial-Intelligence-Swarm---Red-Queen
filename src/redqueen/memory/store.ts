@@ -106,6 +106,12 @@ export class JsonFileMemoryStore implements MemoryStore {
   async initialize(): Promise<void> {
     try {
       await fs.mkdir(path.dirname(this.storagePath), { recursive: true });
+      
+      // Clean up orphaned .tmp file if present from a previous abrupt crash
+      try {
+        await fs.rm(`${this.storagePath}.tmp`, { force: true });
+      } catch {}
+
       try {
         const data = await fs.readFile(this.storagePath, 'utf8');
         const parsed = JSON.parse(data);
@@ -152,6 +158,15 @@ export class JsonFileMemoryStore implements MemoryStore {
     }
   }
 
+  /**
+   * Durably persists in-memory entries to disk.
+   * Persistence Semantics:
+   * 1. Serialization: In-memory map entries are serialized to JSON.
+   * 2. Staging Write: Serialized data is written to a temporary sibling file (${storagePath}.tmp).
+   * 3. Atomic Directory Swap: fs.rename performs an atomic POSIX rename(2) replacement.
+   *    Concurrent readers see either the old full file or the new full file; never partial state.
+   *    In the event of a power crash during writeFile, original storagePath is untouched.
+   */
   private async persist(): Promise<void> {
     const data = Array.from(this.memoryMap.values());
     const tempPath = `${this.storagePath}.tmp`;

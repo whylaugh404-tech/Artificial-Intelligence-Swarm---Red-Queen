@@ -8,13 +8,16 @@ import {
   MitosisResult,
   AuthorizationProof,
   ReproductionEventRecord,
-  ReproductionCooldownRecord
+  ReproductionCooldownRecord,
+  ReproductionStage,
+  FailureInjectionHook
 } from './types';
 import { GovernanceEnforcer } from './policy';
 import { logger } from '../core/logger';
 import { MemoryEntry, MemoryCategory } from '../memory/store';
 import { identityCrypto } from '../crypto/identity';
 import { CellState } from '../core/lifecycle';
+import { validateChildIntegrity } from './consistency';
 
 export interface MitosisOptions {
   authorizationProof?: AuthorizationProof | any;
@@ -24,7 +27,9 @@ export interface MitosisOptions {
   specializationBias?: string;
   openRouterApiKey: string;
   // Deterministic seed for reproducible mutations
-  reproductionSeed?: string; 
+  reproductionSeed?: string;
+  failureInjectionHook?: FailureInjectionHook;
+  simulateAbruptCrash?: boolean;
 }
 
 function deterministicRandom(seed: string, sequence: number): number {
@@ -111,21 +116,61 @@ export class MitosisEngine {
     const eventKey = `reproduction_event_${eventId}`;
 
     try {
-      // 1. Idempotency Check: check if event has already been COMMITTED
+      // 1. Idempotency Check & Phase 2 Deterministic Recovery
       const existingEventEntry = await parent.memory.get(eventKey);
       if (existingEventEntry && existingEventEntry.content) {
         const record = existingEventEntry.content as ReproductionEventRecord;
+
+        // R23: Malformed persisted event record
+        if (typeof record !== 'object' || !record.status) {
+          logger.warn(this.component, 'malformed_persisted_event_record', { eventId, parentCellId: parent.nodeId });
+          return {
+            result: {
+              success: false,
+              parentCellId: parent.nodeId,
+              eventId,
+              generation: parent.genome.generation,
+              errors: [`Malformed reproduction event record in parent memory for event '${eventId}'`]
+            }
+          };
+        }
+
+        // Case D / Case E: Event is COMMITTED
         if (record.status === 'COMMITTED') {
-          logger.info(this.component, 'reproduction_idempotent_replay', { parentCellId: parent.nodeId, eventId });
+          logger.info(this.component, 'reproduction_committed_replay', { parentCellId: parent.nodeId, eventId });
+
+          const childPath = record.childStoragePath || (record.childCellId ? path.join(options.storageBasePath, `cell_${record.childCellId}.json`) : '');
           
-          let child = this.committedChildrenByEvent.get(eventId);
-          if (!child && record.childStoragePath) {
+          let childFileExists = false;
+          if (childPath) {
             try {
-              child = new Cell(
-                record.childStoragePath,
+              await fs.access(childPath);
+              childFileExists = true;
+            } catch {}
+          }
+
+          // Case E: COMMITTED + child missing
+          // Report an explicit consistency failure. Do NOT silently create an unrelated replacement child.
+          if (!childFileExists) {
+            return {
+              result: {
+                success: false,
+                parentCellId: parent.nodeId,
+                childCellId: record.childCellId,
+                eventId,
+                generation: record.generation,
+                errors: [`Population consistency failure: Committed child storage missing at '${childPath}'`]
+              }
+            };
+          }
+
+          // Case D: COMMITTED + child exists
+          let child = this.committedChildrenByEvent.get(eventId);
+          if (!child && childPath) {
+            try {
+              child = await Cell.loadFromStorage(
+                childPath,
                 options.openRouterApiKey,
-                undefined,
-                undefined,
                 undefined,
                 {
                   parentCellId: parent.nodeId,
@@ -133,10 +178,9 @@ export class MitosisEngine {
                   specialization: record.differentiationSummary?.specialization
                 }
               );
-              await child.memory.initialize();
               this.committedChildrenByEvent.set(eventId, child);
-            } catch {
-              // If child instance cannot be reloaded, still return success result
+            } catch (loadErr: any) {
+              logger.warn(this.component, 'failed_to_load_committed_child', { error: loadErr.message });
             }
           }
 
@@ -154,6 +198,162 @@ export class MitosisEngine {
               lineageRecord: record.lineageRecord
             }
           };
+        }
+
+        // Case A / B / C: Event is PENDING
+        if (record.status === 'PENDING') {
+          logger.info(this.component, 'reproduction_pending_recovery', { parentCellId: parent.nodeId, eventId });
+
+          const targetChildPath = record.childStoragePath || (record.childCellId ? path.join(options.storageBasePath, `cell_${record.childCellId}.json`) : '');
+
+          let childFileExists = false;
+          if (targetChildPath) {
+            try {
+              await fs.access(targetChildPath);
+              childFileExists = true;
+            } catch {}
+          }
+
+          if (childFileExists && targetChildPath) {
+            // Case B & C: Child file exists on disk
+            const integrity = await validateChildIntegrity(targetChildPath, parent.nodeId, record.generation || (parent.genome.generation + 1));
+            
+            if (!integrity.valid) {
+              // Case C: PENDING + malformed/inconsistent child
+              // Quarantine or rollback inconsistent child state, mark event FAILED
+              try {
+                const quarantinePath = `${targetChildPath}.quarantine.${Date.now()}`;
+                await fs.rename(targetChildPath, quarantinePath);
+                logger.warn(this.component, 'quarantined_malformed_child', { targetChildPath, quarantinePath, reason: integrity.reason });
+              } catch {
+                try {
+                  await fs.rm(targetChildPath, { force: true });
+                } catch {}
+              }
+
+              record.status = 'FAILED';
+              record.error = `Inconsistent child storage quarantined: ${integrity.reason}`;
+              await parent.memory.put({
+                id: eventKey,
+                cellId: parent.nodeId,
+                category: MemoryCategory.PROCEDURAL,
+                content: record,
+                source: 'mitosis_engine',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                confidence: 1.0,
+                hash: '',
+                provenance: [parent.nodeId],
+                version: 1
+              });
+
+              return {
+                result: {
+                  success: false,
+                  parentCellId: parent.nodeId,
+                  eventId,
+                  generation: parent.genome.generation,
+                  errors: [record.error]
+                }
+              };
+            }
+
+            // Case B: PENDING + valid child exists on disk, finalize COMMITTED
+            logger.info(this.component, 'recovering_valid_child_and_finalizing_commit', { eventId, childCellId: record.childCellId });
+            let child = this.committedChildrenByEvent.get(eventId);
+            if (!child) {
+              try {
+                child = await Cell.loadFromStorage(
+                  targetChildPath,
+                  options.openRouterApiKey,
+                  undefined,
+                  {
+                    parentCellId: parent.nodeId,
+                    generation: record.generation || (parent.genome.generation + 1),
+                    specialization: record.differentiationSummary?.specialization
+                  }
+                );
+              } catch (loadErr: any) {
+                logger.warn(this.component, 'failed_to_load_child_for_commit_finalization', { error: loadErr.message });
+              }
+            }
+
+            const now = Date.now();
+            const childId = record.childCellId || (child ? child.nodeId : integrity.childNodeId || '');
+            parent.cognitiveState.setMetadata('lastReproductionEvent', eventId);
+            parent.cognitiveState.setMetadata('lastReproductionTimestamp', now.toString());
+            parent.cognitiveState.setMetadata(`reproduction_event_${eventId}`, childId);
+            const parentMeta = parent.cognitiveState.getState().metadata || {};
+            const curDesc = parseInt(parentMeta.descendantsCount || '0', 10);
+            parent.cognitiveState.setMetadata('descendantsCount', (curDesc + 1).toString());
+            await parent.cognitiveState.persist(parent.memory);
+
+            // Persist cooldown
+            const cooldownRecord: ReproductionCooldownRecord = {
+              parentCellId: parent.nodeId,
+              lastSuccessfulReproductionAt: now,
+              cooldownMs: this.governance.cooldownMs
+            };
+            await parent.memory.put({
+              id: `reproduction_cooldown_${parent.nodeId}`,
+              cellId: parent.nodeId,
+              category: MemoryCategory.PROCEDURAL,
+              content: cooldownRecord,
+              source: 'mitosis_engine',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              confidence: 1.0,
+              hash: '',
+              provenance: [parent.nodeId],
+              version: 1
+            });
+
+            // Persist COMMITTED record
+            record.status = 'COMMITTED';
+            record.committedAt = now;
+            record.childCellId = childId;
+            record.childStoragePath = targetChildPath;
+            if (child) {
+              record.lineageRecord = child.lineage;
+            }
+
+            await parent.memory.put({
+              id: eventKey,
+              cellId: parent.nodeId,
+              category: MemoryCategory.PROCEDURAL,
+              content: record,
+              source: 'mitosis_engine',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              confidence: 1.0,
+              hash: '',
+              provenance: [parent.nodeId],
+              version: 1
+            });
+
+            if (child) {
+              this.committedChildrenByEvent.set(eventId, child);
+            }
+
+            return {
+              child,
+              result: {
+                success: true,
+                parentCellId: parent.nodeId,
+                childCellId: childId,
+                eventId,
+                generation: record.generation || (parent.genome.generation + 1),
+                mutationSummary: record.mutationSummary,
+                differentiationSummary: record.differentiationSummary,
+                inheritedMemorySummary: record.inheritedMemorySummary,
+                lineageRecord: record.lineageRecord
+              }
+            };
+          } else {
+            // Case A: PENDING + child does not exist on disk
+            // Safely resume reproduction or fail if policy rejects
+            logger.info(this.component, 'resuming_pending_event_no_child', { eventId });
+          }
         }
       }
 
@@ -193,6 +393,26 @@ export class MitosisEngine {
 
       if (!validation.allowed) {
         logger.warn(this.component, 'reproduction_denied', { parentCellId: parent.nodeId, reason: validation.reason });
+        // If event was previously PENDING and cannot be resumed, mark FAILED
+        if (existingEventEntry && (existingEventEntry.content as any).status === 'PENDING') {
+          const failRecord = existingEventEntry.content as ReproductionEventRecord;
+          failRecord.status = 'FAILED';
+          failRecord.error = validation.reason || 'Denied by policy';
+          await parent.memory.put({
+            id: eventKey,
+            cellId: parent.nodeId,
+            category: MemoryCategory.PROCEDURAL,
+            content: failRecord,
+            source: 'mitosis_engine',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            confidence: 1.0,
+            hash: '',
+            provenance: [parent.nodeId],
+            version: 1
+          });
+        }
+
         return {
           result: {
             success: false,
@@ -204,7 +424,7 @@ export class MitosisEngine {
         };
       }
 
-      // 3. Event Reservation: Mark PENDING before irreversible child creation
+      // 3. Durable Reservation: Mark PENDING before irreversible child creation
       const eventRecord: ReproductionEventRecord = {
         eventId,
         parentCellId: parent.nodeId,
@@ -229,12 +449,42 @@ export class MitosisEngine {
 
       logger.info(this.component, 'mitosis_started', { parentCellId: parent.nodeId, eventId });
 
+      // Failure Hook 1: AFTER_PENDING_PERSISTENCE
+      if (options.failureInjectionHook) {
+        await options.failureInjectionHook(ReproductionStage.AFTER_PENDING_PERSISTENCE);
+      }
+
       // 4. Identity Generation
       const keypair = identityCrypto.generateKeyPair();
       childNodeId = identityCrypto.deriveNodeId(keypair.publicKey);
       
       if (childNodeId === parent.nodeId) {
         throw new Error('Identity collision: Child cannot have same ID as parent');
+      }
+
+      childStoragePath = path.join(options.storageBasePath, `cell_${childNodeId}.json`);
+      eventRecord.childCellId = childNodeId;
+      eventRecord.childStoragePath = childStoragePath;
+      eventRecord.childPublicKey = keypair.publicKey;
+
+      // Persist child identity info in PENDING record before physical write
+      await parent.memory.put({
+        id: eventKey,
+        cellId: parent.nodeId,
+        category: MemoryCategory.PROCEDURAL,
+        content: eventRecord,
+        source: 'mitosis_engine',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        confidence: 1.0,
+        hash: '',
+        provenance: [parent.nodeId],
+        version: 1
+      });
+
+      // Failure Hook 2: AFTER_CHILD_IDENTITY
+      if (options.failureInjectionHook) {
+        await options.failureInjectionHook(ReproductionStage.AFTER_CHILD_IDENTITY);
       }
 
       // 5. Genome Derivation & Mutation (Bounded)
@@ -302,8 +552,6 @@ export class MitosisEngine {
       }
 
       // 7. Child Instantiation
-      childStoragePath = path.join(options.storageBasePath, `cell_${childNodeId}.json`);
-      
       const child = new Cell(
         childStoragePath,
         options.openRouterApiKey,
@@ -319,15 +567,27 @@ export class MitosisEngine {
         }
       );
 
-      // Initialize child memory store
+      // Initialize child memory store and persist its identity and genome
       await child.memory.initialize();
+      await child.restoreOrPersistIdentity();
+      await child.restoreOrPersistGenome();
+
+      // Failure Hook 3: AFTER_CHILD_STORAGE
+      if (options.failureInjectionHook) {
+        await options.failureInjectionHook(ReproductionStage.AFTER_CHILD_STORAGE);
+      }
 
       // Write inherited memories
       for (const entry of childMemories) {
         await child.memory.put(entry);
       }
 
-      // 8. Atomic Commit: Update parent state, cooldown, and event record
+      // Failure Hook 4: AFTER_MEMORY_INHERITANCE
+      if (options.failureInjectionHook) {
+        await options.failureInjectionHook(ReproductionStage.AFTER_MEMORY_INHERITANCE);
+      }
+
+      // 8. Commit Protocol: Update parent state, cooldown, and event record
       const cognitiveSnapshot = parent.cognitiveState.toJSON();
 
       try {
@@ -341,6 +601,11 @@ export class MitosisEngine {
 
         // Durably persist parent cognitive state (survives restart)
         await parent.cognitiveState.persist(parent.memory);
+
+        // Failure Hook 5: AFTER_PARENT_STATE_UPDATE
+        if (options.failureInjectionHook) {
+          await options.failureInjectionHook(ReproductionStage.AFTER_PARENT_STATE_UPDATE);
+        }
 
         // Durably persist parent cooldown record
         const cooldownRecord: ReproductionCooldownRecord = {
@@ -362,6 +627,16 @@ export class MitosisEngine {
           version: 1
         });
 
+        // Failure Hook 6: AFTER_COOLDOWN_PERSISTENCE
+        if (options.failureInjectionHook) {
+          await options.failureInjectionHook(ReproductionStage.AFTER_COOLDOWN_PERSISTENCE);
+        }
+
+        // Failure Hook 7: BEFORE_COMMITTED_PERSISTENCE
+        if (options.failureInjectionHook) {
+          await options.failureInjectionHook(ReproductionStage.BEFORE_COMMITTED_PERSISTENCE);
+        }
+
         // Durably persist COMMITTED event record
         eventRecord.status = 'COMMITTED';
         eventRecord.committedAt = now;
@@ -377,6 +652,11 @@ export class MitosisEngine {
         };
         eventRecord.lineageRecord = child.lineage;
 
+        // Failure Hook 8: DURING_COMMITTED_PERSISTENCE
+        if (options.failureInjectionHook) {
+          await options.failureInjectionHook(ReproductionStage.DURING_COMMITTED_PERSISTENCE);
+        }
+
         await parent.memory.put({
           id: eventKey,
           cellId: parent.nodeId,
@@ -391,27 +671,34 @@ export class MitosisEngine {
           version: 1
         });
 
+        // Failure Hook 9: AFTER_COMMITTED_PERSISTENCE
+        if (options.failureInjectionHook) {
+          await options.failureInjectionHook(ReproductionStage.AFTER_COMMITTED_PERSISTENCE);
+        }
+
         this.committedChildrenByEvent.set(eventId, child);
       } catch (persistError: any) {
         // Cooldown or event persistence failed: rollback parent cognitive state and re-throw
         parent.cognitiveState.restoreFromSnapshot(cognitiveSnapshot);
-        try {
-          eventRecord.status = 'FAILED';
-          eventRecord.error = persistError.message;
-          await parent.memory.put({
-            id: eventKey,
-            cellId: parent.nodeId,
-            category: MemoryCategory.PROCEDURAL,
-            content: eventRecord,
-            source: 'mitosis_engine',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            confidence: 1.0,
-            hash: '',
-            provenance: [parent.nodeId],
-            version: 1
-          });
-        } catch {}
+        if (!options.simulateAbruptCrash) {
+          try {
+            eventRecord.status = 'FAILED';
+            eventRecord.error = persistError.message;
+            await parent.memory.put({
+              id: eventKey,
+              cellId: parent.nodeId,
+              category: MemoryCategory.PROCEDURAL,
+              content: eventRecord,
+              source: 'mitosis_engine',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              confidence: 1.0,
+              hash: '',
+              provenance: [parent.nodeId],
+              version: 1
+            });
+          } catch {}
+        }
         throw persistError;
       }
 
@@ -441,10 +728,9 @@ export class MitosisEngine {
         }
       };
     } catch (error: any) {
-      console.error("MITOSIS CATCH ERROR", error);
-      
-      // Compensating action: remove partially created child storage if it exists
-      if (childStoragePath) {
+      // Compensating action: remove partially created child storage if it exists,
+      // unless simulating an abrupt crash where uncommitted files are left behind
+      if (childStoragePath && !options.simulateAbruptCrash) {
         try {
           await fs.rm(childStoragePath, { force: true });
         } catch (rmErr) {
@@ -452,8 +738,33 @@ export class MitosisEngine {
         }
       }
 
-      const errorMsg = error instanceof Error ? error.stack || error.message : JSON.stringify(error);
+      const errorMsg = error instanceof Error ? error.message : JSON.stringify(error);
       logger.error(this.component, 'mitosis_failed', { parentCellId: parent.nodeId, error: errorMsg });
+
+      // If not simulating abrupt crash and event is currently PENDING, mark FAILED
+      if (!options.simulateAbruptCrash) {
+        try {
+          const rec = await parent.memory.get(eventKey);
+          if (rec && rec.content && (rec.content as any).status === 'PENDING') {
+            const updatedRec = rec.content as ReproductionEventRecord;
+            updatedRec.status = 'FAILED';
+            updatedRec.error = errorMsg;
+            await parent.memory.put({
+              id: eventKey,
+              cellId: parent.nodeId,
+              category: MemoryCategory.PROCEDURAL,
+              content: updatedRec,
+              source: 'mitosis_engine',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              confidence: 1.0,
+              hash: '',
+              provenance: [parent.nodeId],
+              version: 1
+            });
+          }
+        } catch {}
+      }
 
       return {
         result: {

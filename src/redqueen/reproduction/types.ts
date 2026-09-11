@@ -38,6 +38,45 @@ export class StaticTrustAnchor implements AuthorizationTrustAnchor {
   }
 }
 
+export enum ReproductionStage {
+  AFTER_PENDING_PERSISTENCE = 'AFTER_PENDING_PERSISTENCE',
+  AFTER_CHILD_IDENTITY = 'AFTER_CHILD_IDENTITY',
+  AFTER_CHILD_STORAGE = 'AFTER_CHILD_STORAGE',
+  AFTER_MEMORY_INHERITANCE = 'AFTER_MEMORY_INHERITANCE',
+  AFTER_PARENT_STATE_UPDATE = 'AFTER_PARENT_STATE_UPDATE',
+  AFTER_COOLDOWN_PERSISTENCE = 'AFTER_COOLDOWN_PERSISTENCE',
+  BEFORE_COMMITTED_PERSISTENCE = 'BEFORE_COMMITTED_PERSISTENCE',
+  DURING_COMMITTED_PERSISTENCE = 'DURING_COMMITTED_PERSISTENCE',
+  AFTER_COMMITTED_PERSISTENCE = 'AFTER_COMMITTED_PERSISTENCE'
+}
+
+export type FailureInjectionHook = (stage: ReproductionStage) => Promise<void> | void;
+
+export type PopulationAnomalyCode =
+  | 'MISSING_CHILD_STORAGE'
+  | 'ORPHAN_CHILD_STORAGE'
+  | 'MALFORMED_CHILD_STORAGE'
+  | 'DUPLICATE_CHILD_ID'
+  | 'DUPLICATE_EVENT_MAPPING'
+  | 'INVALID_LINEAGE'
+  | 'INCONSISTENT_GENERATION'
+  | 'MALFORMED_REPRODUCTION_RECORD';
+
+export interface PopulationAnomaly {
+  code: PopulationAnomalyCode;
+  message: string;
+  cellId?: string;
+  eventId?: string;
+  details?: any;
+}
+
+export interface PopulationConsistencyReport {
+  consistent: boolean;
+  anomalies: PopulationAnomaly[];
+  scannedEvents: number;
+  scannedChildren: number;
+}
+
 export interface ReproductionCooldownRecord {
   parentCellId: string;
   lastSuccessfulReproductionAt: number;
@@ -50,6 +89,8 @@ export interface ReproductionEventRecord {
   status: 'PENDING' | 'COMMITTED' | 'FAILED';
   childCellId?: string;
   childStoragePath?: string;
+  childPublicKey?: string;
+  childPrivateKey?: string;
   createdAt: number;
   committedAt?: number;
   mutationSummary?: Record<string, any>;

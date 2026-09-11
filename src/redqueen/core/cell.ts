@@ -1,3 +1,4 @@
+import * as fs from 'fs/promises';
 import { identityCrypto } from '../crypto/identity';
 import { CellState, Lifecycle } from './lifecycle';
 import { JsonFileMemoryStore, MemoryStore, MemoryCategory } from '../memory/store';
@@ -287,7 +288,77 @@ export class Cell {
     });
   }
 
-  private async restoreOrPersistGenome(): Promise<void> {
+  public async restoreOrPersistIdentity(): Promise<void> {
+    const key = `cell_identity_${this.nodeId}`;
+    const existing = await this.memory.get(key);
+    if (!existing) {
+      await this.memory.put({
+        id: key,
+        cellId: this.nodeId,
+        category: MemoryCategory.PROCEDURAL,
+        content: {
+          nodeId: this.nodeId,
+          publicKey: this.publicKey,
+          privateKey: this.privateKey
+        },
+        source: 'cell_initialization',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        confidence: 1.0,
+        hash: '',
+        provenance: [this.nodeId],
+        version: 1
+      });
+    }
+  }
+
+  public static async loadFromStorage(
+    storagePath: string,
+    openRouterApiKey: string,
+    swarmOptions?: SwarmMembershipOptions,
+    cellOptions?: CellOptions
+  ): Promise<Cell> {
+    const rawData = await fs.readFile(storagePath, 'utf8');
+    const entries = JSON.parse(rawData);
+    if (!Array.isArray(entries)) {
+      throw new Error(`Malformed cell storage: expected array of memory entries at '${storagePath}'`);
+    }
+
+    let privateKey: string | undefined;
+    let publicKey: string | undefined;
+    let genome: any;
+
+    const identityEntry = entries.find((e: any) => e.id && typeof e.id === 'string' && e.id.startsWith('cell_identity_'));
+    if (identityEntry && identityEntry.content) {
+      privateKey = identityEntry.content.privateKey;
+      publicKey = identityEntry.content.publicKey;
+    }
+
+    const genomeEntry = entries.find((e: any) => e.id && typeof e.id === 'string' && e.id.startsWith('cell_genome_'));
+    if (genomeEntry && genomeEntry.content) {
+      genome = genomeEntry.content;
+    }
+
+    const mergedOptions: CellOptions = {
+      ...cellOptions,
+      genome: genome || cellOptions?.genome
+    };
+
+    const cell = new Cell(
+      storagePath,
+      openRouterApiKey,
+      privateKey,
+      publicKey,
+      swarmOptions,
+      mergedOptions
+    );
+
+    await cell.memory.initialize();
+    await cell.restoreOrPersistGenome();
+    return cell;
+  }
+
+  public async restoreOrPersistGenome(): Promise<void> {
     const key = `cell_genome_${this.nodeId}`;
     const existing = await this.memory.get(key);
     if (existing && existing.content) {
@@ -323,6 +394,7 @@ export class Cell {
     await this.lifecycle.initialize(async () => {
       logger.info(this.component, 'starting_cell', { nodeId: this.nodeId });
       await this.memory.initialize();
+      await this.restoreOrPersistIdentity();
       await this.restoreOrPersistGenome();
       await this.cognitiveState.restore(this.memory);
       await this.cognitiveGraph.load();
