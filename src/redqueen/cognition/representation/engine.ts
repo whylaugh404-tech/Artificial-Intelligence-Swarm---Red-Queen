@@ -127,8 +127,9 @@ export class CognitiveRepresentationEngine {
     if (Array.isArray(extConcepts)) {
       for (const coreName of extConcepts) {
         if (typeof coreName === 'string' && coreName.trim() && !concepts.some(c => c.canonicalName.toLowerCase() === coreName.toLowerCase())) {
+          const coreConceptId = `concept_${uuidv4()}`;
           concepts.push({
-            conceptId: `concept_${uuidv4()}`,
+            conceptId: coreConceptId,
             canonicalName: coreName.trim(),
             description: `Core concept derived from ${knowledge.title}`,
             category: knowledge.category,
@@ -142,6 +143,20 @@ export class CognitiveRepresentationEngine {
             version: 1,
             provenance: provenanceTrail,
             metadata: {}
+          });
+
+          // Form structural compositional relation linking core concept to primary concept
+          relations.push({
+            relationId: `rel_${uuidv4()}`,
+            subjectConceptId: coreConceptId,
+            predicate: CognitiveRelationPredicate.PART_OF,
+            objectConceptId: primaryConcept.conceptId,
+            confidence: Number((representationConfidence * 0.9).toFixed(3)),
+            provenance: provenanceTrail,
+            verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+            createdAt: now,
+            originatingCellId: this.cellId,
+            metadata: { derivedFrom: 'coreConcepts' }
           });
         }
       }
@@ -198,18 +213,47 @@ export class CognitiveRepresentationEngine {
     }
 
     // 3. Abstraction Derivation
+    // Strict requirement: abstractions represent shared invariants across structures.
+    // An isolated fact without relations produces NO abstraction.
+    // A single relational structure produces at most a PENDING candidate abstraction (confidence <= 0.45).
+    // Multiple concrete structures in the graph sharing the same relational invariant produce a SUPPORTED abstraction.
     const abstractionPattern = this.detectAbstractionPattern(knowledge, relations, graph);
-    if (abstractionPattern) {
+    if (abstractionPattern && relations.length > 0) {
+      const supportingConceptIds: string[] = [primaryConcept.conceptId];
+
+      if (graph) {
+        const existingConcepts = graph.getAllConcepts();
+        for (const other of existingConcepts) {
+          if (other.conceptId === primaryConcept.conceptId) continue;
+
+          // Check if other concept exhibits the same relational invariant
+          const otherRels = graph.getRelationsForConcept(other.conceptId);
+          const hasMatchingInvariant = otherRels.some(r =>
+            (r.subjectConceptId === other.conceptId || r.objectConceptId === other.conceptId) &&
+            r.predicate === abstractionPattern.retainedStructure.relationship
+          );
+
+          if (hasMatchingInvariant) {
+            supportingConceptIds.push(other.conceptId);
+          }
+        }
+      }
+
+      const isMultiEvidence = supportingConceptIds.length > 1;
       const abstraction: CognitiveAbstraction = {
         abstractionId: `abs_${uuidv4()}`,
-        sourceConceptIds: [primaryConcept.conceptId],
+        sourceConceptIds: Array.from(new Set(supportingConceptIds)),
         generalizedPattern: abstractionPattern.pattern,
         retainedStructure: abstractionPattern.retainedStructure,
         discardedDetails: abstractionPattern.discardedDetails,
-        confidence: Number((representationConfidence * 0.9).toFixed(3)),
+        confidence: isMultiEvidence
+          ? Math.min(0.92, Number((0.65 + (supportingConceptIds.length * 0.08)).toFixed(3)))
+          : 0.40,
         provenance: provenanceTrail,
         originatingCellId: this.cellId,
-        verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+        verificationStatus: isMultiEvidence
+          ? RepresentationVerificationStatus.SUPPORTED
+          : RepresentationVerificationStatus.PENDING,
         version: 1,
         createdAt: now
       };
@@ -249,8 +293,9 @@ export class CognitiveRepresentationEngine {
   }
 
   /**
-   * Detects general structural patterns and invariants across relations and facts.
-   * Prioritizes relational and topological invariants over lexical keywords.
+   * Detects general structural patterns and invariants across relations.
+   * Genuinely structural and evidence-based: keyword matches alone NEVER produce abstractions.
+   * Requires concrete relational structure.
    */
   private detectAbstractionPattern(
     knowledge: KnowledgeRecord,
@@ -261,101 +306,64 @@ export class CognitiveRepresentationEngine {
     retainedStructure: Record<string, any>;
     discardedDetails: string[];
   } | null {
-    // 1. Structural Predicate Invariants (Domain-independent)
-    if (extractedRelations && extractedRelations.length > 0) {
-      const predicates = extractedRelations.map(r => r.predicate);
-
-      if (predicates.includes(CognitiveRelationPredicate.PART_OF)) {
-        return {
-          pattern: 'Compositional hierarchy: subsystem components structured as integral constituents of a higher-order system',
-          retainedStructure: {
-            relationship: CognitiveRelationPredicate.PART_OF,
-            invariant: 'compositional_hierarchy'
-          },
-          discardedDetails: ['component implementation specifics', 'substrate physical properties']
-        };
-      }
-
-      if (predicates.includes(CognitiveRelationPredicate.CAUSES)) {
-        return {
-          pattern: 'Causal propagation invariant: antecedent events or states induce deterministic systemic consequences',
-          retainedStructure: {
-            relationship: CognitiveRelationPredicate.CAUSES,
-            invariant: 'causal_chain'
-          },
-          discardedDetails: ['intermediate timing latency', 'carrier medium']
-        };
-      }
-
-      if (predicates.includes(CognitiveRelationPredicate.REQUIRES) || predicates.includes(CognitiveRelationPredicate.DEPENDS_ON)) {
-        return {
-          pattern: 'Prerequisite dependency constraint: operational transition conditioned upon prior satisfaction of invariants',
-          retainedStructure: {
-            relationship: CognitiveRelationPredicate.REQUIRES,
-            invariant: 'precondition_constraint'
-          },
-          discardedDetails: ['runtime scheduling mechanism', 'resource allocation format']
-        };
-      }
+    if (!extractedRelations || extractedRelations.length === 0) {
+      return null;
     }
 
-    // 2. Semantic Heuristics (Supplementary / fallback)
-    const factsText = Array.isArray(knowledge.facts) ? knowledge.facts.join(' ') : '';
-    const text = `${knowledge.title || ''} ${knowledge.summary || ''} ${factsText}`.toLowerCase();
+    const predicates = extractedRelations.map(r => r.predicate);
 
-    if (text.includes('consensus') || text.includes('byzantine') || text.includes('quorum') || text.includes('fault tolerance')) {
+    if (predicates.includes(CognitiveRelationPredicate.PART_OF)) {
       return {
-        pattern: 'Distributed multi-party agreement under asynchronous and adversarial conditions',
+        pattern: 'Compositional hierarchy: subsystem components structured as integral constituents of a higher-order system',
         retainedStructure: {
-          mechanism: 'distributed_consensus',
-          fault_model: 'byzantine_or_crash'
+          relationship: CognitiveRelationPredicate.PART_OF,
+          invariant: 'compositional_hierarchy'
         },
-        discardedDetails: ['transport protocol', 'node implementation specifics']
+        discardedDetails: ['component implementation specifics', 'substrate physical properties']
       };
     }
 
-    if (text.includes('inject') || text.includes('untrusted input') || text.includes('boundary')) {
+    if (predicates.includes(CognitiveRelationPredicate.CAUSES)) {
       return {
-        pattern: 'Untrusted input crossing an instruction/data boundary without strict parsing or sanitization',
+        pattern: 'Causal propagation invariant: antecedent events or states induce deterministic systemic consequences',
         retainedStructure: {
-          mechanism: 'boundary_violation',
-          actor: 'untrusted_input',
-          sink: 'interpreter_or_executor'
+          relationship: CognitiveRelationPredicate.CAUSES,
+          invariant: 'causal_chain'
         },
-        discardedDetails: ['specific programming language', 'database dialect', 'runtime environment']
+        discardedDetails: ['intermediate timing latency', 'carrier medium']
       };
     }
 
-    if (text.includes('overflow') || text.includes('bound') || text.includes('buffer')) {
+    if (predicates.includes(CognitiveRelationPredicate.REQUIRES) || predicates.includes(CognitiveRelationPredicate.DEPENDS_ON)) {
       return {
-        pattern: 'Write or read operation exceeding allocated memory or resource boundary',
+        pattern: 'Prerequisite dependency constraint: operational transition conditioned upon prior satisfaction of invariants',
         retainedStructure: {
-          mechanism: 'resource_boundary_exceeded',
-          constraint: 'finite_allocation'
+          relationship: CognitiveRelationPredicate.REQUIRES,
+          invariant: 'precondition_constraint'
         },
-        discardedDetails: ['architecture specifics', 'variable identifiers']
+        discardedDetails: ['runtime scheduling mechanism', 'resource allocation format']
       };
     }
 
-    if (text.includes('traversal') || text.includes('path') || text.includes('escape')) {
+    if (predicates.includes(CognitiveRelationPredicate.SUPPORTS)) {
       return {
-        pattern: 'Hierarchical scope breakout via unconstrained path or directory resolution',
+        pattern: 'Structural foundation invariant: underlying components reinforcing systemic stability',
         retainedStructure: {
-          mechanism: 'hierarchical_escape',
-          constraint: 'rooted_filesystem'
+          relationship: CognitiveRelationPredicate.SUPPORTS,
+          invariant: 'structural_support'
         },
-        discardedDetails: ['operating system directory separator']
+        discardedDetails: ['substrate material properties', 'implementation specifics']
       };
     }
 
-    if (text.includes('authentication') || text.includes('credential') || text.includes('identity')) {
+    if (predicates.length > 0) {
       return {
-        pattern: 'Verification of principal identity against authoritative proof prior to granting access',
+        pattern: `Relational invariant: ${predicates[0]} structural topology across distributed system entities`,
         retainedStructure: {
-          mechanism: 'access_control_verification',
-          prerequisite: 'identity_proof'
+          relationship: predicates[0],
+          invariant: 'relational_invariance'
         },
-        discardedDetails: ['hash algorithm', 'token serialization format']
+        discardedDetails: ['domain-specific instance labels', 'leaf node attributes']
       };
     }
 
@@ -363,9 +371,10 @@ export class CognitiveRepresentationEngine {
   }
 
   /**
-   * Evaluates generalization candidate with strict evidence tracking.
+   * Evaluates generalization candidate with strict structural evidence tracking.
    * If only 1 evidence exists, verificationStatus must be PENDING (hypothesis).
-   * Uses structural signatures / relational patterns rather than hardcoded keywords.
+   * Requires structural compatibility + signature similarity >= 0.5.
+   * Same category alone or single predicate without structural compatibility CANNOT produce generalization.
    */
   private evaluateGeneralization(
     concept: CognitiveConcept,
@@ -373,6 +382,10 @@ export class CognitiveRepresentationEngine {
     graph?: CognitiveGraph,
     extractedRelations?: CognitiveRelation[]
   ): CognitiveGeneralization | null {
+    if (!extractedRelations || extractedRelations.length === 0) {
+      return null;
+    }
+
     const patternInfo = this.detectAbstractionPattern(knowledge, extractedRelations, graph);
     if (!patternInfo) return null;
 
@@ -387,14 +400,17 @@ export class CognitiveRepresentationEngine {
       for (const other of existingConcepts) {
         if (other.conceptId === concept.conceptId) continue;
 
-        // 1. Check structural signature similarity if available
+        // Structural signature similarity check:
+        // Must have matching structural signature with similarity >= 0.5 and shared predicate direction.
+        // Same category alone or isolated predicate match without topological compatibility is rejected.
         if (currentSig) {
           const otherSig = graph.computeStructuralSignature(other.conceptId);
           if (otherSig) {
+            const signatureSim = graph.compareSignatures(currentSig, otherSig);
             const sharedOut = currentSig.outgoingPredicates.filter(p => otherSig.outgoingPredicates.includes(p));
             const sharedIn = currentSig.incomingPredicates.filter(p => otherSig.incomingPredicates.includes(p));
-            // Must have actual shared relational structure / predicate invariants
-            if (sharedOut.length > 0 || sharedIn.length > 0) {
+
+            if (signatureSim >= 0.5 && (sharedOut.length > 0 || sharedIn.length > 0)) {
               supportingEvidence.push(other.conceptId);
               sourceConceptIds.push(other.conceptId);
               continue;
@@ -402,7 +418,7 @@ export class CognitiveRepresentationEngine {
           }
         }
 
-        // 2. Check if other concept participates in a shared abstraction with identical structural pattern
+        // Check if other concept participates in a shared abstraction with identical structural pattern
         const abstractions = graph.getAllAbstractions();
         const sharedAbs = abstractions.find(a => 
           a.sourceConceptIds.includes(other.conceptId) && 

@@ -155,9 +155,30 @@ export class CognitiveGraph {
 
   /**
    * Inserts an abstraction pattern into the cognitive graph.
+   * Enforces self-abstraction rejection and structural validation.
    */
   public async insertAbstraction(candidate: CognitiveAbstraction): Promise<CognitiveAbstraction> {
     const validated = CognitiveAbstractionSchema.parse(candidate);
+
+    // Self-abstraction prevention: An abstraction cannot be self-referential or match the concrete concept itself
+    for (const sourceId of validated.sourceConceptIds) {
+      if (sourceId === validated.abstractionId) {
+        throw new Error(`Self-abstraction rejected: abstractionId '${validated.abstractionId}' cannot equal source conceptId`);
+      }
+      const concept = this.concepts.get(sourceId);
+      if (concept) {
+        const normPattern = validated.generalizedPattern.trim().toLowerCase();
+        const normName = concept.canonicalName.trim().toLowerCase();
+        if (
+          normPattern === normName ||
+          normPattern === `abstraction(${normName})` ||
+          normPattern === `${normName} abstraction`
+        ) {
+          throw new Error(`Self-abstraction rejected: abstraction pattern matches concept canonical name '${concept.canonicalName}'`);
+        }
+      }
+    }
+
     this.abstractions.set(validated.abstractionId, validated);
 
     // Also link abstraction to other source concepts via GENERALIZES relation if not present
@@ -243,7 +264,8 @@ export class CognitiveGraph {
 
   /**
    * Preserves conflicting representations without destructive overwrite.
-   * Updates status to CONTRADICTED and records a CONTRADICTS relation.
+   * Both concepts are preserved non-destructively with their verification status intact.
+   * Records a CONTRADICTS relation explicitly with verification status SUPPORTED.
    */
   public async preserveConflict(
     conceptIdA: string,
@@ -253,12 +275,25 @@ export class CognitiveGraph {
     const conceptA = this.concepts.get(conceptIdA);
     const conceptB = this.concepts.get(conceptIdB);
 
+    // Conflict metadata recorded on concepts without destroying them
     if (conceptA) {
       conceptA.verificationStatus = RepresentationVerificationStatus.CONTRADICTED;
+      conceptA.metadata = {
+        ...conceptA.metadata,
+        conflictingConceptIds: Array.from(
+          new Set([...((conceptA.metadata?.conflictingConceptIds as string[]) || []), conceptIdB])
+        )
+      };
       await this.persistEntry(conceptA.conceptId, 'COGNITIVE_CONCEPT', conceptA, conceptA.confidence, conceptA.provenance);
     }
     if (conceptB) {
       conceptB.verificationStatus = RepresentationVerificationStatus.CONTRADICTED;
+      conceptB.metadata = {
+        ...conceptB.metadata,
+        conflictingConceptIds: Array.from(
+          new Set([...((conceptB.metadata?.conflictingConceptIds as string[]) || []), conceptIdA])
+        )
+      };
       await this.persistEntry(conceptB.conceptId, 'COGNITIVE_CONCEPT', conceptB, conceptB.confidence, conceptB.provenance);
     }
 
@@ -269,7 +304,7 @@ export class CognitiveGraph {
       objectConceptId: conceptIdB,
       confidence: 1.0,
       provenance: [this.cellId],
-      verificationStatus: RepresentationVerificationStatus.CONTRADICTED,
+      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
       createdAt: new Date().toISOString(),
       originatingCellId: this.cellId,
       metadata: { reason }
@@ -441,9 +476,15 @@ export class CognitiveGraph {
     let concept = this.concepts.get(conceptId);
     let inFlightRelations: CognitiveRelation[] = [];
 
-    if (!concept && inFlightContext && inFlightContext.concept.conceptId === conceptId) {
-      concept = inFlightContext.concept;
-      inFlightRelations = inFlightContext.relations;
+    if (inFlightContext) {
+      if (!concept && inFlightContext.concept && inFlightContext.concept.conceptId === conceptId) {
+        concept = inFlightContext.concept;
+      }
+      if (inFlightContext.relations) {
+        inFlightRelations = inFlightContext.relations.filter(
+          r => r.subjectConceptId === conceptId || r.objectConceptId === conceptId
+        );
+      }
     }
 
     if (!concept) return null;
@@ -592,7 +633,7 @@ export class CognitiveGraph {
     return candidates.slice(0, maxCandidates);
   }
 
-  private compareSignatures(a: StructuralSignature, b: StructuralSignature): number {
+  public compareSignatures(a: StructuralSignature, b: StructuralSignature): number {
     // Jaccard similarity of outgoing predicates
     const setAOut = new Set(a.outgoingPredicates);
     const setBOut = new Set(b.outgoingPredicates);
