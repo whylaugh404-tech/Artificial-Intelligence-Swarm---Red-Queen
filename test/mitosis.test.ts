@@ -7,8 +7,27 @@ import { CellState } from '../src/redqueen/core/lifecycle';
 import { GovernanceEnforcer } from '../src/redqueen/reproduction/policy';
 import { MitosisEngine } from '../src/redqueen/reproduction/mitosis';
 import { MemoryCategory } from '../src/redqueen/memory/store';
+import { identityCrypto } from '../src/redqueen/crypto/identity';
+import { AuthorizationProof } from '../src/redqueen/reproduction/types';
 
 const TEST_STORAGE_DIR = path.join(process.cwd(), 'data', 'test_mitosis');
+
+function createTestAuthProof(parentCellId: string, eventId: string): AuthorizationProof {
+  const kp = identityCrypto.generateKeyPair();
+  const payload = {
+    action: 'reproduce',
+    subject: parentCellId,
+    eventId,
+    exp: Date.now() + 60000,
+    issuer: 'test-issuer'
+  };
+  const signature = identityCrypto.signData(kp.privateKey, JSON.stringify(payload));
+  return {
+    payload,
+    signature,
+    issuerPublicKey: kp.publicKey
+  };
+}
 
 describe('P6 Cell Mitosis & Cell Reproduction', () => {
   let parentCell: Cell;
@@ -57,7 +76,7 @@ describe('P6 Cell Mitosis & Cell Reproduction', () => {
 
     await parentCell.start();
 
-    governance = new GovernanceEnforcer({ populationCeiling: 3, cooldownMs: 0, requireAuthorization: true });
+    governance = new GovernanceEnforcer({ populationCeiling: 3, cooldownMs: 0, requireAuthorization: true, minMemoryPressure: 0.0 });
     mitosis = new MitosisEngine(governance);
   });
 
@@ -73,13 +92,13 @@ describe('P6 Cell Mitosis & Cell Reproduction', () => {
 
   it('M1 & M2: Mitosis creates unique child identity and correct lineage', async () => {
     const { result, child } = await mitosis.reproduce(parentCell, {
-      authorizationProof: 'test-auth',
+      authorizationProof: createTestAuthProof(parentCell.nodeId, 'test-event-2'), reproductionSeed: 'test-event-2',
       storageBasePath: TEST_STORAGE_DIR,
       currentPopulation: 1,
       openRouterApiKey: 'dummy-api-key'
     });
 
-    if(!result.success) console.log(result.errors); expect(result.success).toBe(true);
+    if(!result.success) throw new Error(JSON.stringify(result.errors));
     expect(child).toBeDefined();
     if (!child) return;
     childCell = child;
@@ -94,14 +113,14 @@ describe('P6 Cell Mitosis & Cell Reproduction', () => {
 
   it('M3 & M4 & M5: Genome inheritance, bounded mutation, and differentiation', async () => {
     const { result, child } = await mitosis.reproduce(parentCell, {
-      authorizationProof: 'test-auth',
+      authorizationProof: createTestAuthProof(parentCell.nodeId, 'test-event-2'), reproductionSeed: 'test-event-2',
       storageBasePath: TEST_STORAGE_DIR,
       currentPopulation: 1,
       specializationBias: 'cybersecurity',
       openRouterApiKey: 'dummy-api-key'
     });
 
-    if(!result.success) console.log(result.errors); expect(result.success).toBe(true);
+    if(!result.success) throw new Error(JSON.stringify(result.errors));
     expect(child).toBeDefined();
     if (!child) return;
     childCell = child;
@@ -121,13 +140,13 @@ describe('P6 Cell Mitosis & Cell Reproduction', () => {
 
   it('M6 & M7: Memory partition and isolation', async () => {
     const { result, child } = await mitosis.reproduce(parentCell, {
-      authorizationProof: 'test-auth',
+      authorizationProof: createTestAuthProof(parentCell.nodeId, 'test-event-2'), reproductionSeed: 'test-event-2',
       storageBasePath: TEST_STORAGE_DIR,
       currentPopulation: 1,
       openRouterApiKey: 'dummy-api-key'
     });
 
-    if(!result.success) console.log(result.errors); expect(result.success).toBe(true);
+    if(!result.success) throw new Error(JSON.stringify(result.errors));
     expect(child).toBeDefined();
     if (!child) return;
     childCell = child;
@@ -160,13 +179,13 @@ describe('P6 Cell Mitosis & Cell Reproduction', () => {
 
   it('M9: Representation Inheritance preserves provenance', async () => {
     const { result, child } = await mitosis.reproduce(parentCell, {
-      authorizationProof: 'test-auth',
+      authorizationProof: createTestAuthProof(parentCell.nodeId, 'test-event-2'), reproductionSeed: 'test-event-2',
       storageBasePath: TEST_STORAGE_DIR,
       currentPopulation: 1,
       openRouterApiKey: 'dummy-api-key'
     });
 
-    if(!result.success) console.log(result.errors); expect(result.success).toBe(true);
+    if(!result.success) throw new Error(JSON.stringify(result.errors));
     if (!child) return;
     childCell = child;
 
@@ -190,7 +209,7 @@ describe('P6 Cell Mitosis & Cell Reproduction', () => {
 
     // 2. Population ceiling
     const ceilingResult = await mitosis.reproduce(parentCell, {
-      authorizationProof: 'test-auth',
+      authorizationProof: createTestAuthProof(parentCell.nodeId, 'test-event-2'), reproductionSeed: 'test-event-2',
       storageBasePath: TEST_STORAGE_DIR,
       currentPopulation: 3, // Matches ceiling of 3
       openRouterApiKey: 'dummy-api-key'
@@ -201,22 +220,22 @@ describe('P6 Cell Mitosis & Cell Reproduction', () => {
   });
 
   it('M19: Reproduction Cooldown', async () => {
-    const strictGovernance = new GovernanceEnforcer({ populationCeiling: 10, cooldownMs: 5000, requireAuthorization: true });
+    const strictGovernance = new GovernanceEnforcer({ populationCeiling: 10, cooldownMs: 5000, requireAuthorization: true, minMemoryPressure: 0.0 });
     const strictMitosis = new MitosisEngine(strictGovernance);
 
     // First reproduction
     const res1 = await strictMitosis.reproduce(parentCell, {
-      authorizationProof: 'test-auth',
+      authorizationProof: createTestAuthProof(parentCell.nodeId, 'test-event-1'), reproductionSeed: 'test-event-1',
       storageBasePath: TEST_STORAGE_DIR,
       currentPopulation: 1,
       openRouterApiKey: 'dummy-api-key'
     });
-    expect(res1.result.success).toBe(true);
+    if (!res1.result.success) throw new Error(JSON.stringify(res1.result.errors));
     if (res1.child) await res1.child.stop();
 
     // Immediate second reproduction should fail
     const res2 = await strictMitosis.reproduce(parentCell, {
-      authorizationProof: 'test-auth',
+      authorizationProof: createTestAuthProof(parentCell.nodeId, 'test-event-2'), reproductionSeed: 'test-event-2',
       storageBasePath: TEST_STORAGE_DIR,
       currentPopulation: 2,
       openRouterApiKey: 'dummy-api-key'
@@ -238,14 +257,14 @@ describe('P6 Cell Mitosis & Cell Reproduction', () => {
     });
 
     const { result, child } = await mitosis.reproduce(parentCell, {
-      authorizationProof: 'test-auth',
+      authorizationProof: createTestAuthProof(parentCell.nodeId, 'test-event-2'), reproductionSeed: 'test-event-2',
       storageBasePath: TEST_STORAGE_DIR,
       currentPopulation: 1,
       specializationBias: 'network security',
       openRouterApiKey: 'dummy-api-key'
     });
 
-    expect(result.success).toBe(true);
+    if (!result.success) throw new Error(JSON.stringify(result.errors));
     if (!child) return;
     childCell = child;
 
@@ -269,7 +288,7 @@ describe('P6 Cell Mitosis & Cell Reproduction', () => {
     });
 
     const { child } = await mitosis.reproduce(parentCell, {
-      authorizationProof: 'test-auth',
+      authorizationProof: createTestAuthProof(parentCell.nodeId, 'test-event-2'), reproductionSeed: 'test-event-2',
       storageBasePath: TEST_STORAGE_DIR,
       currentPopulation: 1,
       specializationBias: 'cyber',
@@ -287,16 +306,18 @@ describe('P6 Cell Mitosis & Cell Reproduction', () => {
     const seed = 'test-seed-123';
     
     const res1 = await mitosis.reproduce(parentCell, {
-      authorizationProof: 'test-auth', storageBasePath: TEST_STORAGE_DIR, currentPopulation: 1, openRouterApiKey: 'dummy', reproductionSeed: seed
+      authorizationProof: createTestAuthProof(parentCell.nodeId, seed), storageBasePath: TEST_STORAGE_DIR, currentPopulation: 1, openRouterApiKey: 'dummy', reproductionSeed: seed
     });
     const child1Traits = res1.child!.genome.traits;
     await res1.child!.stop();
 
     // Reset cooldown to allow second reproduction
     parentCell.cognitiveState.setMetadata('lastReproductionTimestamp', '0');
+    // Also reset idempotency check
+    parentCell.cognitiveState.setMetadata(`reproduction_event_${seed}`, '');
 
     const res2 = await mitosis.reproduce(parentCell, {
-      authorizationProof: 'test-auth', storageBasePath: TEST_STORAGE_DIR, currentPopulation: 1, openRouterApiKey: 'dummy', reproductionSeed: seed
+      authorizationProof: createTestAuthProof(parentCell.nodeId, seed), storageBasePath: TEST_STORAGE_DIR, currentPopulation: 1, openRouterApiKey: 'dummy', reproductionSeed: seed
     });
     const child2Traits = res2.child!.genome.traits;
     childCell = res2.child;

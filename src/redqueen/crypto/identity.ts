@@ -50,6 +50,24 @@ export class IdentityCrypto {
     const nodeId = hash.digest('hex');
     return nodeId;
   }
+
+  /**
+   * Signs a payload using the provided private key.
+   */
+  signData(privateKeyPem: string, data: string): string {
+    return crypto.sign(null, Buffer.from(data), privateKeyPem).toString('hex');
+  }
+
+  /**
+   * Verifies a signature using the provided public key.
+   */
+  verifySignature(publicKeyPem: string, data: string, signatureHex: string): boolean {
+    try {
+      return crypto.verify(null, Buffer.from(data), publicKeyPem, Buffer.from(signatureHex, 'hex'));
+    } catch (e) {
+      return false;
+    }
+  }
 }
 
 export const identityCrypto = new IdentityCrypto();

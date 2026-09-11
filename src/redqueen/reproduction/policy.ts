@@ -1,5 +1,6 @@
-import { ReproductionPolicy, ReproductionPolicySchema } from './types';
+import { ReproductionPolicy, ReproductionPolicySchema, AuthorizationProof } from './types';
 import { CellState } from '../core/lifecycle';
+import { identityCrypto } from '../crypto/identity';
 import { logger } from '../core/logger';
 
 export class GovernanceEnforcer {
@@ -9,19 +10,50 @@ export class GovernanceEnforcer {
     this.policy = ReproductionPolicySchema.parse(policyConfig || {});
   }
 
+  public get policyMemoryCapacity(): number {
+    return this.policy.memoryCapacity;
+  }
+
   public validateReproduction(
     parentState: CellState,
     parentMetadata: Record<string, string>,
     currentPopulation: number,
     memoryPressure: number,
-    isAuthorized: boolean
+    eventId: string,
+    parentId: string,
+    proof?: AuthorizationProof | any
   ): { allowed: boolean; reason?: string } {
     if (parentState !== CellState.ACTIVE) {
       return { allowed: false, reason: 'Parent cell is not ACTIVE' };
     }
 
-    if (this.policy.requireAuthorization && !isAuthorized) {
-      return { allowed: false, reason: 'Reproduction lacks explicit creator authorization' };
+    if (this.policy.requireAuthorization) {
+      if (!proof) {
+        return { allowed: false, reason: 'Reproduction lacks explicit creator authorization' };
+      }
+      if (!proof.payload || !proof.signature || !proof.issuerPublicKey) {
+        return { allowed: false, reason: 'Invalid authorization proof format' };
+      }
+      
+      const now = Date.now();
+      if (proof.payload.exp < now) {
+        return { allowed: false, reason: 'Authorization proof expired' };
+      }
+      if (proof.payload.action !== 'reproduce') {
+        return { allowed: false, reason: 'Authorization proof action mismatch' };
+      }
+      if (proof.payload.subject !== parentId) {
+        return { allowed: false, reason: 'Authorization proof subject mismatch' };
+      }
+      if (proof.payload.eventId !== eventId) {
+        return { allowed: false, reason: 'Authorization proof eventId mismatch' };
+      }
+      
+      const payloadString = JSON.stringify(proof.payload);
+      const isVerified = identityCrypto.verifySignature(proof.issuerPublicKey, payloadString, proof.signature);
+      if (!isVerified) {
+        return { allowed: false, reason: 'Authorization proof signature verification failed' };
+      }
     }
 
     if (currentPopulation >= this.policy.populationCeiling) {

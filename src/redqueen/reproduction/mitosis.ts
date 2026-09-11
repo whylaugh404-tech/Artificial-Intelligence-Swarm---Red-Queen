@@ -4,14 +4,15 @@ import * as fs from 'fs/promises';
 import { Cell } from '../core/cell';
 import { deriveProgenyGenome } from '../genome/genome';
 import { CellCapability } from '../genome/types';
-import { MitosisResult } from './types';
+import { MitosisResult, AuthorizationProof } from './types';
 import { GovernanceEnforcer } from './policy';
 import { logger } from '../core/logger';
 import { MemoryEntry, MemoryCategory } from '../memory/store';
 import { identityCrypto } from '../crypto/identity';
+import { CellState } from '../core/lifecycle';
 
 export interface MitosisOptions {
-  authorizationProof?: string;
+  authorizationProof?: AuthorizationProof | any;
   storageBasePath: string;
   currentPopulation: number;
   memoryPressure?: number;
@@ -51,6 +52,7 @@ function computeRelevance(entry: MemoryEntry, specialization: string): number {
 
 export class MitosisEngine {
   private readonly component = 'mitosis';
+  private activeReproductions = new Set<string>();
   
   constructor(private governance: GovernanceEnforcer) {}
 
@@ -59,39 +61,75 @@ export class MitosisEngine {
     options: MitosisOptions
   ): Promise<{ result: MitosisResult; child?: Cell }> {
     const eventId = options.reproductionSeed || `mitosis_${randomUUID()}`;
-    const pressure = options.memoryPressure ?? 0.8;
-    const isAuthorized = !!options.authorizationProof;
-
-    const parentMetadata = parent.cognitiveState.getState().metadata || {};
-
-    // 1. Governance Validation
-    const validation = this.governance.validateReproduction(
-      parent.lifecycle.getState(),
-      parentMetadata,
-      options.currentPopulation,
-      pressure,
-      isAuthorized
-    );
-
-    if (!validation.allowed) {
-      logger.warn(this.component, 'reproduction_denied', { parentCellId: parent.nodeId, reason: validation.reason });
+    
+    // Concurrency protection
+    if (this.activeReproductions.has(parent.nodeId)) {
       return {
         result: {
           success: false,
           parentCellId: parent.nodeId,
           eventId,
           generation: parent.genome.generation,
-          errors: [validation.reason || 'Denied by policy']
+          errors: ['Concurrent reproduction attempt blocked']
         }
       };
     }
-
-    logger.info(this.component, 'mitosis_started', { parentCellId: parent.nodeId, eventId });
+    this.activeReproductions.add(parent.nodeId);
 
     let childStoragePath = '';
     let childNodeId = '';
 
     try {
+      const parentMetadata = parent.cognitiveState.getState().metadata || {};
+
+      // Idempotency check
+      const idempotencyKey = `reproduction_event_${eventId}`;
+      if (parentMetadata[idempotencyKey]) {
+        logger.info(this.component, 'reproduction_idempotent_hit', { parentCellId: parent.nodeId, eventId });
+        return {
+          result: {
+            success: false,
+            parentCellId: parent.nodeId,
+            eventId,
+            generation: parent.genome.generation,
+            errors: ['Idempotent request: this eventId has already been committed']
+          }
+        };
+      }
+
+      // 1. Governance Validation
+      const memoryStats = parent.memory.getStats ? parent.memory.getStats() : { total: 0 };
+      const logicalCapacity = this.governance.policyMemoryCapacity || 100;
+      let realPressure = memoryStats.total / logicalCapacity;
+      if (options.memoryPressure !== undefined && process.env.NODE_ENV === 'test') {
+        realPressure = options.memoryPressure; // testing override
+      }
+
+      const validation = this.governance.validateReproduction(
+        parent.lifecycle.getState(),
+        parentMetadata,
+        options.currentPopulation,
+        realPressure,
+        eventId,
+        parent.nodeId,
+        options.authorizationProof
+      );
+
+      if (!validation.allowed) {
+        logger.warn(this.component, 'reproduction_denied', { parentCellId: parent.nodeId, reason: validation.reason });
+        return {
+          result: {
+            success: false,
+            parentCellId: parent.nodeId,
+            eventId,
+            generation: parent.genome.generation,
+            errors: [validation.reason || 'Denied by policy']
+          }
+        };
+      }
+
+      logger.info(this.component, 'mitosis_started', { parentCellId: parent.nodeId, eventId });
+
       // 2. Identity Generation
       const keypair = identityCrypto.generateKeyPair();
       childNodeId = identityCrypto.deriveNodeId(keypair.publicKey);
@@ -145,8 +183,10 @@ export class MitosisEngine {
             shouldInherit = true;
           }
         } else if (entry.category === MemoryCategory.PROCEDURAL) {
-          // Procedural memories are structural, usually inherited
-          shouldInherit = true;
+          // Procedural partitioning
+          if (isCore || relevance >= 0.3) {
+            shouldInherit = true;
+          }
         } else if (entry.category === MemoryCategory.EPISODIC) {
           // Episodic memories are conditionally inherited if highly relevant or core
           if (isCore || (entry.confidence >= 0.8 && relevance >= 0.5)) {
@@ -203,6 +243,7 @@ export class MitosisEngine {
       parent.cognitiveState.setMetadata('lastReproductionEvent', eventId);
       parent.cognitiveState.setMetadata('lastReproductionTimestamp', Date.now().toString());
       parent.cognitiveState.setMetadata('descendantsCount', (currentDescendants + 1).toString());
+      parent.cognitiveState.setMetadata(`reproduction_event_${eventId}`, childNodeId);
 
       logger.info(this.component, 'mitosis_completed', { 
         parentCellId: parent.nodeId, 
@@ -229,7 +270,6 @@ export class MitosisEngine {
           lineageRecord: child.lineage
         }
       };
-
     } catch (error: any) {
       console.error("MITOSIS CATCH ERROR", error);
       
@@ -244,6 +284,7 @@ export class MitosisEngine {
 
       const errorMsg = error instanceof Error ? error.stack || error.message : JSON.stringify(error);
       logger.error(this.component, 'mitosis_failed', { parentCellId: parent.nodeId, error: errorMsg });
+
       return {
         result: {
           success: false,
@@ -253,6 +294,8 @@ export class MitosisEngine {
           errors: [errorMsg]
         }
       };
+    } finally {
+      this.activeReproductions.delete(parent.nodeId);
     }
   }
 }
