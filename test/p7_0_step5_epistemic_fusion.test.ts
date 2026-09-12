@@ -122,7 +122,8 @@ describe('P7.0 Step 5: Epistemic Fusion & Conflict Resolution', () => {
     // With effective mass = 2.0, W = 2.0: belief = 2/(2+2) = 0.50, uncertainty = 0.50
     expect(result.fusedState.opinion?.belief).toBeCloseTo(0.5, 4);
     expect(result.fusedState.opinion?.uncertainty).toBeCloseTo(0.5, 4);
-    expect(result.fusedState.status).toBe(EpistemicStatus.BELIEVED);
+    expect(result.fusedState.status).toBe(EpistemicStatus.VERIFIED);
+    expect(result.fusedState.verificationStatus).toBe(RepresentationVerificationStatus.VERIFIED);
   });
 
   // 3. CORRELATED → tidak double-count
@@ -138,9 +139,9 @@ describe('P7.0 Step 5: Epistemic Fusion & Conflict Resolution', () => {
 
     const resultCorrelated = fusionEngine.fuse([evA, evB], mockContext, edg);
 
-    // First evidence gives 1.0. Second is correlated, so it provides discounted mass (0.35)
-    // Strictly LESS than 2.0 (independent)
-    expect(resultCorrelated.effectiveSupportMass).toBeCloseTo(1.35, 4);
+    // First evidence gives 1.0. Second is correlated (shared observation, confidence 0.85 in EDG)
+    // so it provides dynamically discounted mass: 1.0 - 0.85 = 0.15
+    expect(resultCorrelated.effectiveSupportMass).toBeCloseTo(1.15, 4);
     expect(resultCorrelated.effectiveSupportMass).toBeLessThan(2.0);
     expect(resultCorrelated.fusedState.opinion?.belief).toBeLessThan(0.5); // strictly less belief than independent
   });
@@ -178,15 +179,14 @@ describe('P7.0 Step 5: Epistemic Fusion & Conflict Resolution', () => {
 
     const result = fusionEngine.fuse([ev1, ev2], mockContext, edg);
 
-    // First gives 1.0. Second gives unknown discount (0.50).
-    // Effective mass = 1.50 (less than 2.0 independent, but more than 1.0 dependent)
-    expect(result.effectiveSupportMass).toBeCloseTo(1.50, 4);
+    // First gives 1.0. Second gives unknown (factor 0.0).
+    // Effective mass = 1.0 (conservative, assuming they might be the same evidence)
+    expect(result.effectiveSupportMass).toBeCloseTo(1.00, 4);
     expect(result.effectiveSupportMass).toBeLessThan(2.0);
-    expect(result.effectiveSupportMass).toBeGreaterThan(1.0);
   });
 
   // 6. Evidence konflik
-  test('TEST 6: Evidence konflik terdeteksi dan menghasilkan status CONTRADICTED', () => {
+  test('TEST 6: Evidence konflik terdeteksi tidak otomatis menghasilkan status CONTRADICTED', () => {
     const evSupp = createTestEvidence('ev-supp-1', 'source-sat', 'obs-sat-1');
     const evContr = createTestEvidence('ev-contr-1', 'source-radar', 'obs-radar-1');
 
@@ -201,8 +201,9 @@ describe('P7.0 Step 5: Epistemic Fusion & Conflict Resolution', () => {
     expect(result.unresolvedConflict).toBeDefined();
     expect(result.unresolvedConflict?.supportingEvidenceIds).toContain('ev-supp-1');
     expect(result.unresolvedConflict?.conflictingEvidenceIds).toContain('ev-contr-1');
-    expect(result.fusedState.status).toBe(EpistemicStatus.CONTRADICTED);
-    expect(result.fusedState.verificationStatus).toBe(RepresentationVerificationStatus.CONTRADICTED);
+    // Maintain unresolved/pending state instead of auto-contradicted
+    expect(result.fusedState.status).toBe(EpistemicStatus.UNKNOWN);
+    expect(result.fusedState.verificationStatus).toBe(RepresentationVerificationStatus.PENDING);
     expect(result.fusedState.opinion?.belief).toBeGreaterThan(0);
     expect(result.fusedState.opinion?.disbelief).toBeGreaterThan(0);
   });

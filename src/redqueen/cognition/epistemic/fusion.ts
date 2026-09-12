@@ -129,16 +129,6 @@ export class EpistemicFusionEngine {
   private readonly defaultBaseRate = 0.5;
 
   /**
-   * Discount factors for EDG dependency types:
-   * - INDEPENDENT: 1.0 (full weight)
-   * - CORRELATED: 0.35 (discounted contribution for subsequent correlated evidence)
-   * - DEPENDENT: 0.0 (strictly 0 additional weight; derived evidence cannot amplify parent belief)
-   * - UNKNOWN: 0.5 (conservative discount; cannot assume independence)
-   */
-  private readonly correlationDiscount = 0.35;
-  private readonly unknownDiscount = 0.50;
-
-  /**
    * Fuses a list of AttributedEvidence or Evidence records into an EpistemicFusionResult.
    */
   public fuse(
@@ -149,6 +139,7 @@ export class EpistemicFusionEngine {
       targetRepresentationId?: string;
       baseRate?: number;
       fusionId?: string;
+      previousState?: EpistemicState;
     }
   ): Readonly<EpistemicFusionResult> {
     if (!inputs || inputs.length === 0) {
@@ -261,19 +252,20 @@ export class EpistemicFusionEngine {
     let epistemicStatus: EpistemicStatus;
 
     if (hasConflict) {
-      verificationStatus = RepresentationVerificationStatus.CONTRADICTED;
-      epistemicStatus = EpistemicStatus.CONTRADICTED;
+      verificationStatus = options?.previousState?.verificationStatus ?? RepresentationVerificationStatus.PENDING;
+      epistemicStatus = options?.previousState?.status ?? EpistemicStatus.UNKNOWN;
     } else if (supportingItems.length > 0 && conflictingItems.length === 0) {
-      if (belief >= 0.70 && uncertainty <= 0.30) {
+      // Determine verificationStatus based on structural corroboration
+      // At least 2 independent fully-weighted items would result in mass >= 2.0
+      // Due to correlation, mass might be slightly less, but >= 1.5 indicates significant independent corroboration
+      const hasIndependentCorroboration = effectiveSupportMass >= 1.5;
+
+      if (hasIndependentCorroboration) {
         verificationStatus = RepresentationVerificationStatus.VERIFIED;
-        epistemicStatus = EpistemicStatus.VERIFIED;
-      } else if (belief >= 0.30) {
-        verificationStatus = RepresentationVerificationStatus.SUPPORTED;
-        epistemicStatus = EpistemicStatus.BELIEVED;
       } else {
-        verificationStatus = RepresentationVerificationStatus.PENDING;
-        epistemicStatus = EpistemicStatus.HYPOTHESIS;
+        verificationStatus = RepresentationVerificationStatus.SUPPORTED;
       }
+      epistemicStatus = EpistemicAdapter.evaluateStatus(verificationStatus);
     } else if (conflictingItems.length > 0 && supportingItems.length === 0) {
       verificationStatus = RepresentationVerificationStatus.CONTRADICTED;
       epistemicStatus = EpistemicStatus.CONTRADICTED;
@@ -420,17 +412,19 @@ export class EpistemicFusionEngine {
 
         usedDeps.push(dep);
 
-        // Evaluate factor based on type
+        // Evaluate factor based on type dynamically
         let factor = 1.0;
         switch (dep.type) {
           case EvidenceDependencyType.DEPENDENT:
             factor = 0.0; // Strictly zero additional mass
             break;
           case EvidenceDependencyType.CORRELATED:
-            factor = this.correlationDiscount;
+            // Dynamic discount based on confidence of correlation
+            factor = Math.max(0.0, 1.0 - (dep.confidence ?? 0.5));
             break;
           case EvidenceDependencyType.UNKNOWN:
-            factor = this.unknownDiscount;
+            // Conservative assumption: do not add independent mass if unknown
+            factor = 0.0;
             break;
           case EvidenceDependencyType.INDEPENDENT:
             factor = 1.0;
@@ -442,7 +436,7 @@ export class EpistemicFusionEngine {
           mostRestrictiveDep = dep;
         }
 
-        // If already 0 (DEPENDENT), no need to look further for this item
+        // If already 0 (DEPENDENT or UNKNOWN), no need to look further for this item
         if (minDiscountFactor === 0.0) {
           break;
         }
