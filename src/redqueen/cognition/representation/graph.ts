@@ -19,7 +19,8 @@ import {
 } from './types';
 import { InformationCategory } from '../../metabolism/types';
 import { EpistemicState, EpistemicStateSchema } from '../epistemic/types';
-import { Evidence, EvidenceSchema, freezeEvidence } from '../evidence/types';
+import { Evidence, EvidenceSchema, freezeEvidence, EvidenceDependency, EvidenceDependencySchema } from '../evidence/types';
+import { EvidenceDependencyGraph } from '../evidence/graph';
 import { EpistemicAdapter } from '../epistemic/adapter';
 import { v4 as uuidv4 } from 'uuid';
 import * as crypto from 'crypto';
@@ -48,6 +49,7 @@ export class CognitiveGraph {
   private readonly analogies: Map<string, CognitiveAnalogy> = new Map();
   private readonly epistemicStates: Map<string, EpistemicState> = new Map();
   private readonly evidences: Map<string, Evidence> = new Map();
+  private readonly edg: EvidenceDependencyGraph = new EvidenceDependencyGraph();
 
   // Adjacency indices for rapid relationship lookups
   private readonly outgoingRelations: Map<string, Set<string>> = new Map();
@@ -716,6 +718,7 @@ export class CognitiveGraph {
     const validated = EvidenceSchema.parse(evidence);
     const frozen = freezeEvidence(validated);
     this.evidences.set(frozen.evidenceId, frozen);
+    this.edg.addEvidence(frozen);
     await this.persistEntry(frozen.evidenceId, 'COGNITIVE_EVIDENCE', frozen, 1.0, []);
     return frozen;
   }
@@ -726,6 +729,38 @@ export class CognitiveGraph {
 
   public getAllEvidences(): Evidence[] {
     return Array.from(this.evidences.values());
+  }
+
+  public async insertDependency(candidate: EvidenceDependency): Promise<EvidenceDependency> {
+    const inserted = this.edg.insertDependency(candidate);
+    await this.persistEntry(
+      inserted.dependencyId,
+      'EVIDENCE_DEPENDENCY',
+      inserted,
+      inserted.confidence ?? 1.0,
+      inserted.provenance
+    );
+    return inserted;
+  }
+
+  public getDependency(dependencyId: string): EvidenceDependency | undefined {
+    return this.edg.getDependency(dependencyId);
+  }
+
+  public getDependencies(): EvidenceDependency[] {
+    return this.edg.getAllDependencies();
+  }
+
+  public getDependenciesForEvidence(evidenceId: string): EvidenceDependency[] {
+    return this.edg.getDependenciesForEvidence(evidenceId);
+  }
+
+  public getDependencyBetween(evidenceIdA: string, evidenceIdB: string): EvidenceDependency | undefined {
+    return this.edg.getDependencyBetween(evidenceIdA, evidenceIdB);
+  }
+
+  public getEDG(): EvidenceDependencyGraph {
+    return this.edg;
   }
 
   public async insertEpistemicState(state: EpistemicState): Promise<EpistemicState> {
@@ -747,7 +782,8 @@ export class CognitiveGraph {
       generalizations: this.generalizations.size,
       analogies: this.analogies.size,
       epistemicStates: this.epistemicStates.size,
-      evidences: this.evidences.size
+      evidences: this.evidences.size,
+      dependencies: this.edg.getAllDependencies().length
     };
   }
 
@@ -764,7 +800,11 @@ export class CognitiveGraph {
         category: MemoryCategory.SEMANTIC
       });
 
-      for (const entry of entries) {
+      // Sort entries so COGNITIVE_EVIDENCE is restored before EVIDENCE_DEPENDENCY
+      const priority = (type?: string) => (type === 'EVIDENCE_DEPENDENCY' ? 2 : 1);
+      const sortedEntries = [...entries].sort((a, b) => priority(a.type) - priority(b.type));
+
+      for (const entry of sortedEntries) {
         if (!entry.content) continue;
         switch (entry.type) {
           case 'COGNITIVE_CONCEPT': {
@@ -814,7 +854,20 @@ export class CognitiveGraph {
           case 'COGNITIVE_EVIDENCE': {
             const parsed = EvidenceSchema.safeParse(entry.content);
             if (parsed.success) {
-              this.evidences.set(parsed.data.evidenceId, freezeEvidence(parsed.data));
+              const frozen = freezeEvidence(parsed.data);
+              this.evidences.set(frozen.evidenceId, frozen);
+              this.edg.addEvidence(frozen);
+            }
+            break;
+          }
+          case 'EVIDENCE_DEPENDENCY': {
+            const parsed = EvidenceDependencySchema.safeParse(entry.content);
+            if (parsed.success) {
+              try {
+                this.edg.insertDependency(parsed.data);
+              } catch {
+                // Ignore corrupted or dangling dependencies on reload
+              }
             }
             break;
           }
