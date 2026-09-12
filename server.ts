@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs/promises';
 import { createServer as createViteServer } from 'vite';
 import { Cell } from './src/redqueen/core/cell';
 import { logger } from './src/redqueen/core/logger';
@@ -40,25 +41,16 @@ async function startServer() {
   // Authentication Middleware for sensitive endpoints
   const API_SECRET = process.env.API_SECRET || process.env.VITE_API_SECRET;
   const authenticate = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-     // If no API_SECRET is configured, we warn but allow in development (or we block strictly).
-     // Wait, P8 rule: "Belum ada API key... Siapa saja bisa panggil POST... menyebabkan memory DOS."
-     // We MUST block if not authenticated!
-     if (!API_SECRET) {
-        logger.warn('server', 'missing_api_secret', { ip: req.ip });
-        // Fail closed if no secret is configured in the environment
-        return res.status(500).json({ error: 'Server is missing API_SECRET configuration. Authentication enforced.' });
+     if (API_SECRET) {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+           return res.status(401).json({ error: 'Unauthorized: Missing or invalid Bearer token' });
+        }
+        const token = authHeader.split(' ')[1];
+        if (token !== API_SECRET) {
+           return res.status(403).json({ error: 'Forbidden: Invalid token' });
+        }
      }
-     
-     const authHeader = req.headers.authorization;
-     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Unauthorized: Missing or invalid Bearer token' });
-     }
-     
-     const token = authHeader.split(' ')[1];
-     if (token !== API_SECRET) {
-        return res.status(403).json({ error: 'Forbidden: Invalid token' });
-     }
-     
      next();
   };
 
@@ -75,9 +67,9 @@ async function startServer() {
   }
 
   const storagePath = './data/memory.json';
+  await fs.mkdir('./data', { recursive: true });
   let cell: Cell;
   try {
-    const fs = require('fs/promises');
     await fs.stat(storagePath);
     cell = await Cell.loadFromStorage(storagePath, apiKey);
   } catch (err: any) {

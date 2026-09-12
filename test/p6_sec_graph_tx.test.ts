@@ -35,6 +35,8 @@ describe('SEC-07: Graph Persistence Rollback Consistency', () => {
       verificationStatus: RepresentationVerificationStatus.VERIFIED,
       originatingCellId: cellId,
       sourceKnowledgeIds: ['k1'],
+      sourceExperienceIds: [],
+      metadata: {},
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       version: 1
@@ -70,6 +72,8 @@ describe('SEC-07: Graph Persistence Rollback Consistency', () => {
       verificationStatus: RepresentationVerificationStatus.VERIFIED,
       originatingCellId: cellId,
       sourceKnowledgeIds: ['k1'],
+      sourceExperienceIds: [],
+      metadata: {},
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       version: 1
@@ -87,10 +91,8 @@ describe('SEC-07: Graph Persistence Rollback Consistency', () => {
       provenance: [cellId],
       verificationStatus: RepresentationVerificationStatus.VERIFIED,
       originatingCellId: cellId,
-      sourceKnowledgeIds: ['k1'],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      version: 1
+      metadata: {},
+      createdAt: new Date().toISOString()
     };
     
     try {

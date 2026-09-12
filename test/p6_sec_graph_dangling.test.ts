@@ -33,10 +33,8 @@ describe('SEC-09: Graph Dangling References', () => {
       provenance: [cellId],
       verificationStatus: RepresentationVerificationStatus.VERIFIED,
       originatingCellId: cellId,
-      sourceKnowledgeIds: ['k1'],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      version: 1
+      metadata: {},
+      createdAt: new Date().toISOString()
     };
     
     await memory.put({
@@ -55,7 +53,7 @@ describe('SEC-09: Graph Dangling References', () => {
     });
     
     // 2. Load the graph
-    const newGraph = new CognitiveGraph(memory, cellId);
+    const newGraph = new CognitiveGraph(cellId, memory);
     await newGraph.load();
     
     // 3. The dangling relation should be purged (or at least not loaded)
