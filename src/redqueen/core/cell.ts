@@ -401,8 +401,7 @@ export class Cell {
     const key = `cell_genome_${this.nodeId}`;
     const existing = await this.memory.get(key);
     if (existing && existing.content) {
-      // If it exists, we rely on the constructor validation that already happened.
-      // We don't overwrite it silently if validation failed (it would have thrown already).
+      this.restoreGenome(existing.content);
       return;
     }
 
@@ -656,6 +655,9 @@ export class Cell {
   }
 
   async stop() {
+    if (this.lifecycle.getState() === CellState.STOPPED || this.lifecycle.getState() === CellState.SHUTTING_DOWN) {
+      return;
+    }
     if (this.syncIntervalTimer) {
       clearInterval(this.syncIntervalTimer);
       this.syncIntervalTimer = null;
