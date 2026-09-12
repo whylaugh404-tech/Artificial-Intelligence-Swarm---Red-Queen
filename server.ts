@@ -13,6 +13,55 @@ async function startServer() {
   
   app.use(express.json());
 
+  // In-memory simple Rate Limiter
+  const rateLimitMap = new Map<string, { count: number, resetAt: number }>();
+  const RATE_LIMIT_WINDOW = 60000; // 1 min
+  const MAX_REQUESTS = 100;
+  
+  app.use('/api', (req, res, next) => {
+     const ip = req.ip || req.socket.remoteAddress || 'unknown';
+     const now = Date.now();
+     let record = rateLimitMap.get(ip);
+     
+     if (!record || now > record.resetAt) {
+       record = { count: 0, resetAt: now + RATE_LIMIT_WINDOW };
+     }
+     
+     record.count++;
+     rateLimitMap.set(ip, record);
+     
+     if (record.count > MAX_REQUESTS) {
+       return res.status(429).json({ error: 'Too many requests, please try again later.' });
+     }
+     
+     next();
+  });
+
+  // Authentication Middleware for sensitive endpoints
+  const API_SECRET = process.env.API_SECRET || process.env.VITE_API_SECRET;
+  const authenticate = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+     // If no API_SECRET is configured, we warn but allow in development (or we block strictly).
+     // Wait, P8 rule: "Belum ada API key... Siapa saja bisa panggil POST... menyebabkan memory DOS."
+     // We MUST block if not authenticated!
+     if (!API_SECRET) {
+        logger.warn('server', 'missing_api_secret', { ip: req.ip });
+        // Fail closed if no secret is configured in the environment
+        return res.status(500).json({ error: 'Server is missing API_SECRET configuration. Authentication enforced.' });
+     }
+     
+     const authHeader = req.headers.authorization;
+     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized: Missing or invalid Bearer token' });
+     }
+     
+     const token = authHeader.split(' ')[1];
+     if (token !== API_SECRET) {
+        return res.status(403).json({ error: 'Forbidden: Invalid token' });
+     }
+     
+     next();
+  };
+
   // Instantiate the RedQueen Cell
   const apiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || '';
   if (!apiKey) {
@@ -25,7 +74,19 @@ async function startServer() {
     });
   }
 
-  const cell = new Cell('./data/memory.json', apiKey);
+  const storagePath = './data/memory.json';
+  let cell: Cell;
+  try {
+    const fs = require('fs/promises');
+    await fs.stat(storagePath);
+    cell = await Cell.loadFromStorage(storagePath, apiKey);
+  } catch (err: any) {
+    if (err.code === 'ENOENT') {
+      cell = new Cell(storagePath, apiKey);
+    } else {
+      throw err;
+    }
+  }
   
   const p2pPort = parseInt(process.env.P2P_PORT || '0', 10);
   if (p2pPort > 0) {
@@ -60,7 +121,7 @@ async function startServer() {
     res.json(cell.cognitiveState.getState());
   });
 
-  app.post('/api/cell/metabolize', async (req, res) => {
+  app.post('/api/cell/metabolize', authenticate, async (req, res) => {
     try {
       const result = await cell.metabolize(req.body);
       const statusCode = result.status === 'ACCEPTED' ? 200 : (result.status === 'INVALID' ? 400 : 202);
@@ -70,7 +131,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/cell/metabolism/events', (req, res) => {
+  app.get('/api/cell/metabolism/events', authenticate, (req, res) => {
     try {
       const limit = parseInt(req.query.limit as string || '100', 10);
       res.json({ events: cell.metabolism.audit.getEvents(limit) });
@@ -79,7 +140,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/cell/knowledge', async (req, res) => {
+  app.get('/api/cell/knowledge', authenticate, async (req, res) => {
     try {
       const entries = await cell.memory.search({ category: 'SEMANTIC' as any });
       const knowledge = entries.filter(e => e.type === 'KNOWLEDGE_RECORD' || e.content?.knowledgeId);
@@ -89,7 +150,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/observe', async (req, res) => {
+  app.post('/api/observe', authenticate, async (req, res) => {
     try {
       const { observation } = req.body;
       if (!observation || typeof observation !== 'string') {
@@ -106,7 +167,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/chat', async (req, res) => {
+  app.post('/api/chat', authenticate, async (req, res) => {
     try {
       const { message, model } = req.body;
       if (!message) {
@@ -128,10 +189,19 @@ async function startServer() {
     }
   });
 
-  app.get('/api/memory', async (req, res) => {
+  app.get('/api/memory', authenticate, async (req, res) => {
     try {
       const entries = await cell.memory.search({});
-      res.json({ data: entries });
+      // SEC-01: Redact private cryptographic material if it somehow exists in memory
+      const safeEntries = entries.map(entry => {
+        if (entry.id.startsWith('cell_identity_') || (entry.content && entry.content.privateKey)) {
+          const safeEntry = { ...entry, content: { ...entry.content } };
+          delete safeEntry.content.privateKey;
+          return safeEntry;
+        }
+        return entry;
+      });
+      res.json({ data: safeEntries });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

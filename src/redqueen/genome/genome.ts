@@ -162,8 +162,38 @@ export function validateGenome(candidate: unknown): {
     };
   }
 
+  const genome = result.data;
+  const errors: string[] = [];
+
+  // P3: Semantic generation consistency
+  if (genome.generation > 0) {
+    if (!genome.parentCellId) {
+      errors.push('parentCellId must be defined for generation > 0');
+    }
+    if (!genome.parentGenomeId) {
+      errors.push('parentGenomeId must be defined for generation > 0');
+    }
+    if (genome.ancestorGenomeIds.length < genome.generation) {
+      errors.push('ancestorGenomeIds length must be at least generation count');
+    }
+    if (genome.ancestorCellIds.length < genome.generation) {
+      errors.push('ancestorCellIds length must be at least generation count');
+    }
+  } else if (genome.generation === 0) {
+    if (genome.parentCellId || genome.parentGenomeId) {
+      errors.push('parentCellId and parentGenomeId must be null for generation 0');
+    }
+    if (genome.ancestorGenomeIds.length !== 0 || genome.ancestorCellIds.length !== 0) {
+      errors.push('ancestor arrays must be empty for generation 0');
+    }
+  }
+
+  if (errors.length > 0) {
+    return { valid: false, errors };
+  }
+
   return {
     valid: true,
-    genome: result.data
+    genome: genome
   };
 }

@@ -158,8 +158,59 @@ export class JsonFileMemoryStore implements MemoryStore {
     }
   }
 
+  private async acquireLock(): Promise<void> {
+    const lockPath = `${this.storagePath}.lock`;
+    let attempts = 0;
+    while (attempts < 50) {
+      try {
+        await fs.mkdir(lockPath);
+        return;
+      } catch (err: any) {
+        if (err.code === 'EEXIST') {
+          try {
+            const stat = await fs.stat(lockPath);
+            if (Date.now() - stat.mtimeMs > 5000) {
+               await fs.rm(lockPath, { recursive: true, force: true });
+               continue;
+            }
+          } catch (e) {
+             // likely removed
+          }
+          await new Promise(r => setTimeout(r, 100));
+          attempts++;
+        } else {
+          throw err;
+        }
+      }
+    }
+    throw new Error('Timeout acquiring lock on memory store');
+  }
+
+  private async releaseLock(): Promise<void> {
+    const lockPath = `${this.storagePath}.lock`;
+    try {
+      await fs.rm(lockPath, { recursive: true, force: true });
+    } catch {}
+  }
+
+  private async syncFromDisk(): Promise<void> {
+     try {
+        const data = await fs.readFile(this.storagePath, 'utf8');
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) {
+           this.memoryMap.clear();
+           for (const entry of parsed) {
+              this.memoryMap.set(entry.id, entry);
+           }
+        }
+     } catch (err: any) {
+        if (err.code !== 'ENOENT') throw err;
+     }
+  }
+
   /**
    * Durably persists in-memory entries to disk.
+
    * Persistence Semantics:
    * 1. Serialization: In-memory map entries are serialized to JSON.
    * 2. Staging Write: Serialized data is written to a temporary sibling file (${storagePath}.tmp).
@@ -176,36 +227,59 @@ export class JsonFileMemoryStore implements MemoryStore {
 
   async put(entry: MemoryEntry): Promise<void> {
     const validId = validateMemoryId(entry.id);
-    entry.id = validId;
+    const clonedEntry = JSON.parse(JSON.stringify(entry)) as MemoryEntry;
+    clonedEntry.id = validId;
 
     // Enforce Cell Ownership: A cell cannot store entries belonging to another cell
     if (this.normalizedOwningCellId) {
-      if (entry.cellId) {
-        const normalizedEntryCell = validateCellId(entry.cellId);
+      if (clonedEntry.cellId) {
+        const normalizedEntryCell = validateCellId(clonedEntry.cellId);
         if (normalizedEntryCell !== this.normalizedOwningCellId) {
           throw new Error(
-            `Memory ownership violation: Cell ${this.owningCellId} cannot store entry owned by Cell ${entry.cellId}`
+            `Memory ownership violation: Cell ${this.owningCellId} cannot store entry owned by Cell ${clonedEntry.cellId}`
           );
         }
-        entry.cellId = this.owningCellId;
+        clonedEntry.cellId = this.owningCellId;
       } else {
-        entry.cellId = this.owningCellId;
+        clonedEntry.cellId = this.owningCellId;
       }
     }
 
     // Default category if not specified
-    if (!entry.category) {
-      entry.category = MemoryCategory.SEMANTIC;
+    if (!clonedEntry.category) {
+      clonedEntry.category = MemoryCategory.SEMANTIC;
     }
 
     // Default version
-    if (entry.version === undefined) {
-      entry.version = 1;
+    if (clonedEntry.version === undefined) {
+      clonedEntry.version = 1;
     }
 
-    this.memoryMap.set(entry.id, entry);
-    await this.persist();
-    logger.debug(this.component, 'memory_put', { id: entry.id, category: entry.category, cellId: entry.cellId });
+    // Attempt concurrent-safe write
+    await this.acquireLock();
+    try {
+      await this.syncFromDisk(); // Refresh map
+      const existing = this.memoryMap.get(validId);
+      if (existing && existing.version && clonedEntry.version) {
+         // If caller's version is less than what's on disk, they are trying to write over a newer change
+         if (clonedEntry.version < existing.version) {
+           throw new Error(`Concurrency Conflict: Attempted to write stale version for ${validId}. Expected >= ${existing.version}, got ${clonedEntry.version}`);
+         }
+      }
+      if (existing) {
+         clonedEntry.version = existing.version ? existing.version + 1 : 2;
+      }
+      this.memoryMap.set(validId, clonedEntry);
+      
+      // Update caller's object version so they can do subsequent puts
+      entry.version = clonedEntry.version;
+      
+      await this.persist();
+    } finally {
+      await this.releaseLock();
+    }
+
+    logger.debug(this.component, 'memory_put', { id: validId, category: clonedEntry.category, cellId: clonedEntry.cellId });
   }
 
   async get(id: string): Promise<MemoryEntry | null> {
@@ -218,7 +292,7 @@ export class JsonFileMemoryStore implements MemoryStore {
         return null;
       }
     }
-    return entry;
+    return JSON.parse(JSON.stringify(entry)); // Defensive copy
   }
 
   async search(query: Partial<MemoryEntry>): Promise<MemoryEntry[]> {
@@ -252,25 +326,36 @@ export class JsonFileMemoryStore implements MemoryStore {
           break;
         }
       }
-      if (match) results.push(entry);
+      if (match) results.push(JSON.parse(JSON.stringify(entry))); // Defensive copy
     }
     return results;
   }
 
   async delete(id: string): Promise<boolean> {
     const validId = validateMemoryId(id);
-    const entry = this.memoryMap.get(validId);
-    if (!entry) return false;
-    if (this.normalizedOwningCellId && entry.cellId) {
-      const normalizedEntryCell = validateCellId(entry.cellId);
-      if (normalizedEntryCell !== this.normalizedOwningCellId) {
-        throw new Error(`Memory ownership violation: Cannot delete memory belonging to another cell`);
+    
+    await this.acquireLock();
+    let deleted = false;
+    try {
+      await this.syncFromDisk();
+      const entry = this.memoryMap.get(validId);
+      if (!entry) return false;
+      if (this.normalizedOwningCellId && entry.cellId) {
+        const normalizedEntryCell = validateCellId(entry.cellId);
+        if (normalizedEntryCell !== this.normalizedOwningCellId) {
+          throw new Error(`Memory ownership violation: Cannot delete memory belonging to another cell`);
+        }
       }
-    }
 
-    const deleted = this.memoryMap.delete(validId);
+      deleted = this.memoryMap.delete(validId);
+      if (deleted) {
+        await this.persist();
+      }
+    } finally {
+      await this.releaseLock();
+    }
+    
     if (deleted) {
-      await this.persist();
       logger.debug(this.component, 'memory_deleted', { id: validId });
     }
     return deleted;

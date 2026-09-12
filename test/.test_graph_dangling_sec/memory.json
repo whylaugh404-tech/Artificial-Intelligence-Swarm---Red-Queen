@@ -1,0 +1,35 @@
+[
+  {
+    "id": "r1",
+    "cellId": "test-cell-dangling",
+    "category": "SEMANTIC",
+    "type": "COGNITIVE_RELATION",
+    "content": {
+      "relationId": "r1",
+      "subjectConceptId": "missing-1",
+      "predicate": "CAUSES",
+      "objectConceptId": "missing-2",
+      "confidence": 1,
+      "provenance": [
+        "test-cell-dangling"
+      ],
+      "verificationStatus": "VERIFIED",
+      "originatingCellId": "test-cell-dangling",
+      "sourceKnowledgeIds": [
+        "k1"
+      ],
+      "createdAt": "2026-09-12T06:24:34.144Z",
+      "updatedAt": "2026-09-12T06:24:34.144Z",
+      "version": 1
+    },
+    "source": "test",
+    "createdAt": "2026-09-12T06:24:34.144Z",
+    "updatedAt": "2026-09-12T06:24:34.144Z",
+    "confidence": 1,
+    "hash": "",
+    "provenance": [
+      "test-cell-dangling"
+    ],
+    "version": 1
+  }
+]

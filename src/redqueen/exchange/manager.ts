@@ -410,9 +410,11 @@ export class ExchangeManager extends EventEmitter {
     let rejected = 0;
     const reasons: string[] = [];
     const provenanceOrigin = sourcePeerId || 'external_peer';
-
-    // 1. Ingest Concepts
-    if (payload.concepts) {
+    
+    this.graph.beginTransaction();
+    try {
+      // 1. Ingest Concepts
+      if (payload.concepts) {
       for (const concept of payload.concepts) {
         const parse = CognitiveConceptSchema.safeParse(concept);
         if (!parse.success) {
@@ -548,6 +550,23 @@ export class ExchangeManager extends EventEmitter {
         await this.graph.insertAnalogy(localAna);
         accepted++;
       }
+    }
+
+    try {
+      await this.graph.commitTransaction();
+    } catch(err: any) {
+      this.graph.rollbackTransaction();
+      logger.error('exchange_manager', 'assimilate_representation_transaction_failed', {
+        cellId: this.cellId,
+        error: err.message,
+        sourcePeerId
+      });
+      return { accepted: 0, rejected: payload.concepts?.length || 1, reasons: [err.message] };
+    }
+
+    } catch (e: any) {
+      this.graph.rollbackTransaction();
+      return { accepted: 0, rejected: 1, reasons: [e.message] };
     }
 
     logger.info('exchange_manager', 'assimilate_representation_completed', {

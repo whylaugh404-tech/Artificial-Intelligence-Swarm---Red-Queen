@@ -691,6 +691,121 @@ export class CognitiveGraph {
     return this.getAllRelations().filter(r => r.predicate === CognitiveRelationPredicate.CONTRADICTS);
   }
 
+  // P7: Graph Persistence Rollback Consistency
+  private transactionState: {
+    concepts: Map<string, CognitiveConcept>;
+    relations: Map<string, CognitiveRelation>;
+    abstractions: Map<string, CognitiveAbstraction>;
+    generalizations: Map<string, CognitiveGeneralization>;
+    analogies: Map<string, CognitiveAnalogy>;
+    outgoingRelations: Map<string, Set<string>>;
+    incomingRelations: Map<string, Set<string>>;
+    pendingOps: { id: string, type: string, content: any, confidence: number, provenance: string[] }[];
+  } | null = null;
+
+  public beginTransaction(): void {
+    if (this.transactionState) {
+      throw new Error('Transaction already in progress');
+    }
+    
+    // Deep copy maps to allow in-memory rollback
+    this.transactionState = {
+      concepts: new Map(this.concepts),
+      relations: new Map(this.relations),
+      abstractions: new Map(this.abstractions),
+      generalizations: new Map(this.generalizations),
+      analogies: new Map(this.analogies),
+      outgoingRelations: new Map(),
+      incomingRelations: new Map(),
+      pendingOps: []
+    };
+    
+    for(const [k, v] of this.outgoingRelations) {
+       this.transactionState.outgoingRelations.set(k, new Set(v));
+    }
+    for(const [k, v] of this.incomingRelations) {
+       this.transactionState.incomingRelations.set(k, new Set(v));
+    }
+  }
+
+  public async commitTransaction(): Promise<void> {
+    if (!this.transactionState) {
+      throw new Error('No transaction in progress');
+    }
+    
+    const ops = this.transactionState.pendingOps;
+    const compensations: { id: string, prevContent: MemoryEntry | null }[] = [];
+    
+    try {
+      for (const op of ops) {
+        const memoryEntry: MemoryEntry = {
+          id: op.id,
+          cellId: this.cellId,
+          category: MemoryCategory.SEMANTIC,
+          type: op.type,
+          content: op.content,
+          source: 'cognitive_graph',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          confidence: op.confidence,
+          hash: '',
+          provenance: op.provenance,
+          version: 1
+        };
+        const prevEntry = await this.memory.get(op.id);
+        compensations.push({ id: op.id, prevContent: prevEntry });
+        await this.memory.put(memoryEntry);
+      }
+    } catch (err: any) {
+      // Execute compensating transaction backwards
+      for (let i = compensations.length - 1; i >= 0; i--) {
+        const comp = compensations[i];
+        try {
+          if (comp.prevContent) {
+            await this.memory.put(comp.prevContent);
+          } else {
+            await this.memory.delete(comp.id);
+          }
+        } catch (e) {
+          logger.error(this.component, 'compensation_failed', { id: comp.id, error: e });
+        }
+      }
+      
+      this.rollbackTransaction(); // restore in-memory maps
+      throw new Error(`CognitiveGraph Transaction failed and rolled back: ${err.message}`);
+    }
+    
+    this.transactionState = null;
+  }
+
+  public rollbackTransaction(): void {
+    if (!this.transactionState) return;
+    
+    // Restore maps
+    this.concepts.clear();
+    for (const [k, v] of this.transactionState.concepts) this.concepts.set(k, v);
+    
+    this.relations.clear();
+    for (const [k, v] of this.transactionState.relations) this.relations.set(k, v);
+    
+    this.abstractions.clear();
+    for (const [k, v] of this.transactionState.abstractions) this.abstractions.set(k, v);
+    
+    this.generalizations.clear();
+    for (const [k, v] of this.transactionState.generalizations) this.generalizations.set(k, v);
+    
+    this.analogies.clear();
+    for (const [k, v] of this.transactionState.analogies) this.analogies.set(k, v);
+    
+    this.outgoingRelations.clear();
+    for (const [k, v] of this.transactionState.outgoingRelations) this.outgoingRelations.set(k, v);
+    
+    this.incomingRelations.clear();
+    for (const [k, v] of this.transactionState.incomingRelations) this.incomingRelations.set(k, v);
+    
+    this.transactionState = null;
+  }
+
   public getStats() {
     return {
       concepts: this.concepts.size,
@@ -783,6 +898,11 @@ export class CognitiveGraph {
     confidence: number,
     provenance: string[]
   ): Promise<void> {
+    if (this.transactionState) {
+      this.transactionState.pendingOps.push({ id, type, content, confidence, provenance });
+      return;
+    }
+
     const memoryEntry: MemoryEntry = {
       id,
       cellId: this.cellId,

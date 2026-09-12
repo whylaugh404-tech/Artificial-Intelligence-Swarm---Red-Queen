@@ -111,6 +111,41 @@ export class MitosisEngine {
 
     await prevParentQueue;
 
+    // Cross-process locking (Global Swarm Reproduction Lock for Population Atomicity)
+    const globalLockPath = path.join(options.storageBasePath, 'global_mitosis.lock');
+    let crossProcessLockAcquired = false;
+    let attempts = 0;
+    while(attempts < 50) {
+      try {
+        await fs.mkdir(globalLockPath);
+        crossProcessLockAcquired = true;
+        break;
+      } catch (err: any) {
+        if (err.code === 'EEXIST') {
+          // Check for stale lock (15 seconds)
+          try {
+             const stat = await fs.stat(globalLockPath);
+             if (Date.now() - stat.mtimeMs > 15000) {
+                 await fs.rm(globalLockPath, { recursive: true, force: true });
+                 continue; // steal lock
+             }
+          } catch(e) {}
+          await new Promise(r => setTimeout(r, 200));
+          attempts++;
+        } else {
+          releaseLock();
+          throw err;
+        }
+      }
+    }
+
+    if (!crossProcessLockAcquired) {
+       releaseLock();
+       return {
+         result: { success: false, parentCellId: parent.nodeId, eventId, generation: parent.genome.generation, errors: ['Global cross-process reproduction lock timeout'] }
+       };
+    }
+
     let childStoragePath = '';
     let childNodeId = '';
     const eventKey = `reproduction_event_${eventId}`;
@@ -381,10 +416,18 @@ export class MitosisEngine {
         realPressure = options.memoryPressure; // testing override
       }
 
+      let realPopulation = options.currentPopulation;
+      try {
+        const files = await fs.readdir(options.storageBasePath);
+        realPopulation = files.filter(f => f.startsWith('cell_') && f.endsWith('.json')).length;
+      } catch (e) {
+        logger.warn(this.component, 'failed_to_count_population_dynamically', { error: e });
+      }
+
       const validation = this.governance.validateReproduction(
         parent.lifecycle.getState(),
         parentMetadata,
-        options.currentPopulation,
+        realPopulation,
         realPressure,
         eventId,
         parent.nodeId,
@@ -569,7 +612,7 @@ export class MitosisEngine {
 
       // Initialize child memory store and persist its identity and genome
       await child.memory.initialize();
-      await child.restoreOrPersistIdentity();
+      await child.restoreOrPersistIdentity(child.getStoragePath());
       await child.restoreOrPersistGenome();
 
       // Failure Hook 3: AFTER_CHILD_STORAGE
@@ -776,6 +819,11 @@ export class MitosisEngine {
         }
       };
     } finally {
+      if (crossProcessLockAcquired) {
+        try {
+           await fs.rm(globalLockPath, { recursive: true, force: true });
+        } catch(e) {}
+      }
       releaseLock();
     }
   }
