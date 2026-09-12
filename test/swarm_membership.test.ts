@@ -22,10 +22,6 @@ describe('P2 Authorized Swarm Membership: Multi-Cell Integration & Lifecycle', (
   const portD = 39104;
 
   beforeEach(async () => {
-    cellA = undefined as any;
-    cellB = undefined as any;
-    cellC = undefined as any;
-    cellD = undefined as any;
     await fs.mkdir(tmpDir, { recursive: true });
     authority = new MembershipAuthority();
   });
@@ -251,7 +247,6 @@ describe('P2 Authorized Swarm Membership: Multi-Cell Integration & Lifecycle', (
         issuerPublicKey: authority.publicKey
       }
     );
-    cellA = restartedCellA;
     await restartedCellA.start(0);
 
     // Certificate restored from storage!

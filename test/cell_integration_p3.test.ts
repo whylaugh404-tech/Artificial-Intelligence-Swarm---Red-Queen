@@ -12,15 +12,11 @@ describe('P3: Cell End-to-End Genome & Cognitive State Integration', () => {
   beforeEach(async () => {
     try { await fs.unlink(TEST_STORAGE_A); } catch {}
     try { await fs.unlink(TEST_STORAGE_B); } catch {}
-    try { await fs.unlink(`${TEST_STORAGE_A}.identity`); } catch {}
-    try { await fs.unlink(`${TEST_STORAGE_B}.identity`); } catch {}
   });
 
   afterEach(async () => {
     try { await fs.unlink(TEST_STORAGE_A); } catch {}
     try { await fs.unlink(TEST_STORAGE_B); } catch {}
-    try { await fs.unlink(`${TEST_STORAGE_A}.identity`); } catch {}
-    try { await fs.unlink(`${TEST_STORAGE_B}.identity`); } catch {}
   });
 
   it('29. initializes Cell with valid Genesis genome, lineage, and active cognitive state', async () => {

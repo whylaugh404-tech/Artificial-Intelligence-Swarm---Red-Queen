@@ -21,9 +21,6 @@ describe('P6.3 Persistent Parent-Specific Cooldown (CD-01 to CD-07)', () => {
   const COOLDOWN_MS = 5000;
 
   beforeEach(async () => {
-    try {
-      await fs.rm(TEST_DIR, { recursive: true, force: true });
-    } catch {}
     await fs.mkdir(TEST_DIR, { recursive: true });
 
     authorityKp = identityCrypto.generateKeyPair();
@@ -53,7 +50,6 @@ describe('P6.3 Persistent Parent-Specific Cooldown (CD-01 to CD-07)', () => {
       { specialization: 'generalist_a' }
     );
     await parentA.memory.initialize();
-    await parentA.restoreOrPersistIdentity();
     await parentA.start();
 
     // Parent B
@@ -66,18 +62,13 @@ describe('P6.3 Persistent Parent-Specific Cooldown (CD-01 to CD-07)', () => {
       { specialization: 'generalist_b' }
     );
     await parentB.memory.initialize();
-    await parentB.restoreOrPersistIdentity();
     await parentB.start();
   });
 
   afterEach(async () => {
     try {
       await parentA.stop();
-    } catch {}
-    try {
       await parentB.stop();
-    } catch {}
-    try {
       await fs.rm(TEST_DIR, { recursive: true, force: true });
     } catch {}
   });

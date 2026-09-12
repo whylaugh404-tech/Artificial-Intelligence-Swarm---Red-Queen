@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import fs from 'fs/promises';
 import { createServer as createViteServer } from 'vite';
 import { Cell } from './src/redqueen/core/cell';
 import { logger } from './src/redqueen/core/logger';
@@ -8,124 +7,60 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-export function isPlaceholderSecret(secret?: string): boolean {
-  if (!secret) return true;
-  const s = secret.trim().toLowerCase();
-  const placeholders = [
-    '',
-    'default',
-    'placeholder',
-    'changeme',
-    'secret',
-    '123456',
-    'your_api_secret',
-    'your-secret-here',
-    'your_secret',
-    'password',
-    'admin'
-  ];
-  return placeholders.includes(s) || secret.trim().length < 16;
-}
-
-export function validateProductionConfig(apiSecret?: string, isProduction = false): void {
-  const rawSecret = apiSecret ?? (process.env.API_SECRET || process.env.VITE_API_SECRET);
-  const secret = rawSecret?.trim();
-  if (isProduction && isPlaceholderSecret(secret)) {
-    throw new Error('FATAL: In production, API_SECRET must be configured with a secure, non-placeholder value of at least 16 characters.');
-  }
-}
-
-export interface AppOptions {
-  cell?: Cell;
-  apiSecret?: string;
-  isProduction?: boolean;
-  rateLimitMax?: number;
-  rateLimitWindow?: number;
-}
-
-export function createApp(options: AppOptions = {}): express.Express {
+async function startServer() {
   const app = express();
+  const PORT = 3000;
+  
   app.use(express.json());
 
-  // In-memory simple Rate Limiter
-  const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-  const RATE_LIMIT_WINDOW = options.rateLimitWindow ?? 60000; // 1 min
-  const MAX_REQUESTS = options.rateLimitMax ?? 100;
-
-  app.use('/api', (req, res, next) => {
-    const ip = req.ip || req.socket.remoteAddress || 'unknown';
-    const now = Date.now();
-    let record = rateLimitMap.get(ip);
-
-    if (!record || now > record.resetAt) {
-      record = { count: 0, resetAt: now + RATE_LIMIT_WINDOW };
-    }
-
-    record.count++;
-    rateLimitMap.set(ip, record);
-
-    if (record.count > MAX_REQUESTS) {
-      return res.status(429).json({ error: 'Too many requests, please try again later.' });
-    }
-
-    next();
-  });
-
-  // Authentication Middleware for sensitive endpoints: FAIL-CLOSED in production
-  const isProduction = options.isProduction ?? (process.env.NODE_ENV === 'production');
-  const rawSecret = options.apiSecret ?? (process.env.API_SECRET || process.env.VITE_API_SECRET);
-  const API_SECRET = rawSecret?.trim();
-
-  if (isProduction && isPlaceholderSecret(API_SECRET)) {
-    throw new Error('FATAL: In production, API_SECRET must be configured with a secure, non-placeholder value of at least 16 characters.');
+  // Instantiate the RedQueen Cell
+  const apiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || '';
+  if (!apiKey) {
+    logger.warn('server', 'no_api_key_set', {
+      message: 'Neither OPENROUTER_API_KEY nor GEMINI_API_KEY is configured. AI chat will return helpful configuration notices.'
+    });
+  } else {
+    logger.info('server', 'api_key_configured', {
+      provider: process.env.GEMINI_API_KEY ? 'gemini' : 'openrouter'
+    });
   }
 
-  const authenticate = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (isProduction || (API_SECRET && !isPlaceholderSecret(API_SECRET))) {
-      const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Unauthorized: Missing or invalid Bearer token' });
-      }
-      const token = authHeader.split(' ')[1]?.trim();
-      if (!token || token !== API_SECRET) {
-        return res.status(403).json({ error: 'Forbidden: Invalid token' });
-      }
-    }
-    next();
-  };
+  const cell = new Cell('./data/memory.json', apiKey);
+  
+  const p2pPort = parseInt(process.env.P2P_PORT || '0', 10);
+  if (p2pPort > 0) {
+    logger.info('server', 'p2p_enabled', { port: p2pPort });
+  } else {
+    logger.info('server', 'P2P: DISABLED');
+  }
 
-  const cell = options.cell;
+  await cell.start(p2pPort);
 
   // API Routes
   app.get('/api/health', (req, res) => {
     res.json({
       status: 'healthy',
-      cell: cell ? cell.getStatus() : { status: 'running' }
+      cell: cell.getStatus()
     });
   });
 
   app.get('/api/cell/status', (req, res) => {
-    if (!cell) return res.status(503).json({ error: 'Cell not initialized' });
     res.json(cell.getStatus());
   });
 
   app.get('/api/cell/genome', (req, res) => {
-    if (!cell) return res.status(503).json({ error: 'Cell not initialized' });
     res.json(cell.genome);
   });
 
   app.get('/api/cell/lineage', (req, res) => {
-    if (!cell) return res.status(503).json({ error: 'Cell not initialized' });
     res.json(cell.lineage);
   });
 
   app.get('/api/cell/cognitive-state', (req, res) => {
-    if (!cell) return res.status(503).json({ error: 'Cell not initialized' });
     res.json(cell.cognitiveState.getState());
   });
 
-  app.post('/api/cell/metabolize', authenticate, async (req, res) => {
-    if (!cell) return res.status(503).json({ error: 'Cell not initialized' });
+  app.post('/api/cell/metabolize', async (req, res) => {
     try {
       const result = await cell.metabolize(req.body);
       const statusCode = result.status === 'ACCEPTED' ? 200 : (result.status === 'INVALID' ? 400 : 202);
@@ -135,18 +70,16 @@ export function createApp(options: AppOptions = {}): express.Express {
     }
   });
 
-  app.get('/api/cell/metabolism/events', authenticate, (req, res) => {
-    if (!cell) return res.status(503).json({ error: 'Cell not initialized' });
+  app.get('/api/cell/metabolism/events', (req, res) => {
     try {
-      const limit = parseInt((req.query.limit as string) || '100', 10);
+      const limit = parseInt(req.query.limit as string || '100', 10);
       res.json({ events: cell.metabolism.audit.getEvents(limit) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.get('/api/cell/knowledge', authenticate, async (req, res) => {
-    if (!cell) return res.status(503).json({ error: 'Cell not initialized' });
+  app.get('/api/cell/knowledge', async (req, res) => {
     try {
       const entries = await cell.memory.search({ category: 'SEMANTIC' as any });
       const knowledge = entries.filter(e => e.type === 'KNOWLEDGE_RECORD' || e.content?.knowledgeId);
@@ -156,14 +89,14 @@ export function createApp(options: AppOptions = {}): express.Express {
     }
   });
 
-  app.post('/api/observe', authenticate, async (req, res) => {
-    if (!cell) return res.status(503).json({ error: 'Cell not initialized' });
+  app.post('/api/observe', async (req, res) => {
     try {
       const { observation } = req.body;
       if (!observation || typeof observation !== 'string') {
         return res.status(400).json({ error: 'observation string required' });
       }
-
+      
+      // We run cognition in the background so as not to block HTTP response
       cell.cognition.executeCycle(observation).catch(err => {
         logger.error('api', 'cognition_error', err);
       });
@@ -173,14 +106,13 @@ export function createApp(options: AppOptions = {}): express.Express {
     }
   });
 
-  app.post('/api/chat', authenticate, async (req, res) => {
-    if (!cell) return res.status(503).json({ error: 'Cell not initialized' });
+  app.post('/api/chat', async (req, res) => {
     try {
       const { message, model } = req.body;
       if (!message) {
         return res.status(400).json({ error: 'message required' });
       }
-
+      
       logger.info('api', 'chat_request', { model });
       const aiResult = await cell.aiProvider.generate({
         systemPrompt: 'You are Red Queen, an advanced, autonomous cyber-research AI. You analyze threats, manage distributed nodes, and speak with a precise, analytical, and slightly cold professional tone. Be concise and highly technical. Do not break character.',
@@ -196,20 +128,10 @@ export function createApp(options: AppOptions = {}): express.Express {
     }
   });
 
-  app.get('/api/memory', authenticate, async (req, res) => {
-    if (!cell) return res.status(503).json({ error: 'Cell not initialized' });
+  app.get('/api/memory', async (req, res) => {
     try {
       const entries = await cell.memory.search({});
-      // SEC-01: Redact private cryptographic material if it somehow exists in memory
-      const safeEntries = entries.map(entry => {
-        if (entry.id.startsWith('cell_identity_') || (entry.content && entry.content.privateKey)) {
-          const safeEntry = { ...entry, content: { ...entry.content } };
-          delete safeEntry.content.privateKey;
-          return safeEntry;
-        }
-        return entry;
-      });
-      res.json({ data: safeEntries });
+      res.json({ data: entries });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -219,49 +141,6 @@ export function createApp(options: AppOptions = {}): express.Express {
   app.all('/api/*', (req, res) => {
     res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.path}` });
   });
-
-  return app;
-}
-
-async function startServer() {
-  const PORT = 3000;
-
-  // Instantiate the RedQueen Cell
-  const apiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || '';
-  if (!apiKey) {
-    logger.warn('server', 'no_api_key_set', {
-      message: 'Neither OPENROUTER_API_KEY nor GEMINI_API_KEY is configured. AI chat will return helpful configuration notices.'
-    });
-  } else {
-    logger.info('server', 'api_key_configured', {
-      provider: process.env.GEMINI_API_KEY ? 'gemini' : 'openrouter'
-    });
-  }
-
-  const storagePath = './data/memory.json';
-  await fs.mkdir('./data', { recursive: true });
-  let cell: Cell;
-  try {
-    await fs.stat(storagePath);
-    cell = await Cell.loadFromStorage(storagePath, apiKey);
-  } catch (err: any) {
-    if (err.code === 'ENOENT') {
-      cell = new Cell(storagePath, apiKey);
-    } else {
-      throw err;
-    }
-  }
-  
-  const p2pPort = parseInt(process.env.P2P_PORT || '0', 10);
-  if (p2pPort > 0) {
-    logger.info('server', 'p2p_enabled', { port: p2pPort });
-  } else {
-    logger.info('server', 'P2P: DISABLED');
-  }
-
-  await cell.start(p2pPort);
-
-  const app = createApp({ cell });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
@@ -291,10 +170,7 @@ async function startServer() {
   });
 }
 
-// Only start the server when run directly, not when imported during testing
-if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
-  startServer().catch(err => {
-    console.error('Failed to start server:', err);
-    process.exit(1);
-  });
-}
+startServer().catch(err => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
+});

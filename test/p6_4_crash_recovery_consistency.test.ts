@@ -27,9 +27,6 @@ describe('P6.4 Crash Recovery, Cross-Restart Durability & Population Consistency
   let mitosis: MitosisEngine;
 
   beforeEach(async () => {
-    try {
-      await fs.rm(TEST_DIR, { recursive: true, force: true });
-    } catch {}
     await fs.mkdir(TEST_DIR, { recursive: true });
 
     authorityKp = identityCrypto.generateKeyPair();
@@ -64,8 +61,6 @@ describe('P6.4 Crash Recovery, Cross-Restart Durability & Population Consistency
   afterEach(async () => {
     try {
       await parentCell.stop();
-    } catch {}
-    try {
       await fs.rm(TEST_DIR, { recursive: true, force: true });
     } catch {}
   });

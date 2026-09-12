@@ -40,17 +40,6 @@ export class IdentityCrypto {
     }
   }
 
-  isValidKeyPair(publicKeyPem: string, privateKeyPem: string): boolean {
-    try {
-      if (!this.isValidPublicKey(publicKeyPem)) return false;
-      const testData = "test-signature-data";
-      const sig = this.signData(privateKeyPem, testData);
-      return this.verifySignature(publicKeyPem, testData, sig);
-    } catch {
-      return false;
-    }
-  }
-
   /**
    * Derives a stable Node ID from a public key.
    * Uses SHA-256 hash of the normalized PEM formatted public key.

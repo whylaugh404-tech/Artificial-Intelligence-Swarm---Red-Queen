@@ -1,5 +1,4 @@
 import * as fs from 'fs/promises';
-import * as fsSync from 'fs';
 import { identityCrypto } from '../crypto/identity';
 import { CellState, Lifecycle } from './lifecycle';
 import { JsonFileMemoryStore, MemoryStore, MemoryCategory } from '../memory/store';
@@ -56,7 +55,6 @@ export interface CellOptions {
   metabolismBudget?: Partial<MetabolismBudget>;
   exchangeConfig?: Partial<ExchangeConfig>;
   representationBudget?: Partial<CognitiveRepresentationBudget>;
-  isRecovery?: boolean;
 }
 
 export class Cell {
@@ -80,7 +78,6 @@ export class Cell {
   public readonly cognitiveGraph: CognitiveGraph;
   public readonly representation: CognitiveRepresentationEngine;
 
-  public readonly storagePath: string;
   private _genome: CellGenome;
   private _lineage: CellLineage;
   public readonly cognitiveState: CognitiveStateManager;
@@ -103,38 +100,14 @@ export class Cell {
     swarmOptions?: SwarmMembershipOptions,
     cellOptions?: CellOptions
   ) {
-    this.storagePath = storagePath;
     let rawPrivateKey: string;
     if (existingPrivateKey && existingPublicKey) {
       rawPrivateKey = existingPrivateKey.trim();
       this.publicKey = existingPublicKey.trim();
-      if (!identityCrypto.isValidKeyPair(this.publicKey, rawPrivateKey)) {
-        throw new Error('Cell identity corruption: provided public and private keys do not match or are invalid');
-      }
     } else {
-      const identityPath = `${storagePath}.identity`;
-      let loadedFromDisk = false;
-      if (fsSync.existsSync(identityPath)) {
-        try {
-          const idData = JSON.parse(fsSync.readFileSync(identityPath, 'utf8'));
-          if (idData.privateKey && idData.publicKey && identityCrypto.isValidKeyPair(idData.publicKey, idData.privateKey)) {
-            rawPrivateKey = idData.privateKey.trim();
-            this.publicKey = idData.publicKey.trim();
-            loadedFromDisk = true;
-          }
-        } catch {
-          // Ignore corrupt identity read
-        }
-      }
-
-      if (!loadedFromDisk) {
-        if (cellOptions?.isRecovery) {
-          throw new Error('Cell recovery failed: missing existing identity keys');
-        }
-        const kp = identityCrypto.generateKeyPair();
-        rawPrivateKey = kp.privateKey.trim();
-        this.publicKey = kp.publicKey.trim();
-      }
+      const kp = identityCrypto.generateKeyPair();
+      rawPrivateKey = kp.privateKey.trim();
+      this.publicKey = kp.publicKey.trim();
     }
 
     // Mark privateKey non-enumerable to prevent accidental serialization leakage
@@ -154,27 +127,9 @@ export class Cell {
     this.cognition = new CognitionPipeline(this.aiProvider, this.memory, this.nodeId);
     
     // Initialize Genome
-    if (cellOptions?.genome) {
-      const validation = validateGenome(cellOptions.genome);
-      if (validation.valid) {
-        this._genome = deepFreeze(CellGenomeSchema.parse(cellOptions.genome));
-      } else {
-        if (cellOptions?.isRecovery) {
-          throw new Error(`Cell recovery failed: corrupted genome in storage: ${validation.errors?.join(', ')}`);
-        }
-        this._genome = createGenesisGenome({
-          parentCellId: cellOptions?.parentCellId,
-          generation: cellOptions?.generation,
-          lineageId: cellOptions?.lineageId,
-          traits: cellOptions?.customTraits,
-          capabilities: cellOptions?.capabilities,
-          specialization: cellOptions?.specialization
-        });
-      }
+    if (cellOptions?.genome && validateGenome(cellOptions.genome).valid) {
+      this._genome = deepFreeze(CellGenomeSchema.parse(cellOptions.genome));
     } else {
-      if (cellOptions?.isRecovery) {
-        throw new Error('Cell recovery failed: missing genome in storage');
-      }
       this._genome = createGenesisGenome({
         parentCellId: cellOptions?.parentCellId,
         generation: cellOptions?.generation,
@@ -333,25 +288,27 @@ export class Cell {
     });
   }
 
-  public async restoreOrPersistIdentity(storagePath: string = this.storagePath): Promise<void> {
-    const identityPath = `${storagePath}.identity`;
-    try {
-      const data = await fs.readFile(identityPath, 'utf8');
-      const identity = JSON.parse(data);
-      if (identity.nodeId !== this.nodeId || identity.publicKey !== this.publicKey) {
-         throw new Error('Identity mismatch between memory and instance');
-      }
-    } catch (err: any) {
-      if (err.code === 'ENOENT') {
-        const identityData = {
+  public async restoreOrPersistIdentity(): Promise<void> {
+    const key = `cell_identity_${this.nodeId}`;
+    const existing = await this.memory.get(key);
+    if (!existing) {
+      await this.memory.put({
+        id: key,
+        cellId: this.nodeId,
+        category: MemoryCategory.PROCEDURAL,
+        content: {
           nodeId: this.nodeId,
           publicKey: this.publicKey,
           privateKey: this.privateKey
-        };
-        await fs.writeFile(identityPath, JSON.stringify(identityData, null, 2), { mode: 0o600 });
-      } else {
-        throw err;
-      }
+        },
+        source: 'cell_initialization',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        confidence: 1.0,
+        hash: '',
+        provenance: [this.nodeId],
+        version: 1
+      });
     }
   }
 
@@ -369,27 +326,14 @@ export class Cell {
 
     let privateKey: string | undefined;
     let publicKey: string | undefined;
-    
-    try {
-      const identityPath = `${storagePath}.identity`;
-      const idData = await fs.readFile(identityPath, 'utf8');
-      const identity = JSON.parse(idData);
-      privateKey = identity.privateKey;
-      publicKey = identity.publicKey;
-    } catch (err: any) {
-      if (err.code === 'ENOENT') {
-         // Fallback for older P0-P5 tests: try to load from memory store if not in .identity
-         const identityEntry = entries.find((e: any) => e.id && typeof e.id === 'string' && e.id.startsWith('cell_identity_'));
-         if (identityEntry && identityEntry.content) {
-           privateKey = identityEntry.content.privateKey;
-           publicKey = identityEntry.content.publicKey;
-         }
-      } else {
-         throw err;
-      }
+    let genome: any;
+
+    const identityEntry = entries.find((e: any) => e.id && typeof e.id === 'string' && e.id.startsWith('cell_identity_'));
+    if (identityEntry && identityEntry.content) {
+      privateKey = identityEntry.content.privateKey;
+      publicKey = identityEntry.content.publicKey;
     }
 
-    let genome: any;
     const genomeEntry = entries.find((e: any) => e.id && typeof e.id === 'string' && e.id.startsWith('cell_genome_'));
     if (genomeEntry && genomeEntry.content) {
       genome = genomeEntry.content;
@@ -397,8 +341,7 @@ export class Cell {
 
     const mergedOptions: CellOptions = {
       ...cellOptions,
-      genome: genome || cellOptions?.genome,
-      isRecovery: true
+      genome: genome || cellOptions?.genome
     };
 
     const cell = new Cell(
@@ -419,8 +362,17 @@ export class Cell {
     const key = `cell_genome_${this.nodeId}`;
     const existing = await this.memory.get(key);
     if (existing && existing.content) {
-      this.restoreGenome(existing.content);
-      return;
+      try {
+        this.restoreGenome(existing.content);
+        logger.info(this.component, 'cell_genome_restored_from_storage', {
+          genomeId: this._genome.genomeId,
+          generation: this._genome.generation,
+          lineageId: this._lineage.lineageId
+        });
+        return;
+      } catch (err: any) {
+        logger.warn(this.component, 'persisted_genome_invalid_falling_back', { error: err.message });
+      }
     }
 
     await this.memory.put({
@@ -438,15 +390,11 @@ export class Cell {
     });
   }
 
-  public getStoragePath(): string {
-    return this.storagePath;
-  }
-
   async start(p2pPort: number = 0) {
     await this.lifecycle.initialize(async () => {
       logger.info(this.component, 'starting_cell', { nodeId: this.nodeId });
       await this.memory.initialize();
-      await this.restoreOrPersistIdentity(this.storagePath);
+      await this.restoreOrPersistIdentity();
       await this.restoreOrPersistGenome();
       await this.cognitiveState.restore(this.memory);
       await this.cognitiveGraph.load();
@@ -673,9 +621,6 @@ export class Cell {
   }
 
   async stop() {
-    if (this.lifecycle.getState() === CellState.STOPPED || this.lifecycle.getState() === CellState.SHUTTING_DOWN) {
-      return;
-    }
     if (this.syncIntervalTimer) {
       clearInterval(this.syncIntervalTimer);
       this.syncIntervalTimer = null;

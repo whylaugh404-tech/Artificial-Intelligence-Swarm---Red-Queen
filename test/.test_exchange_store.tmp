@@ -1,0 +1,33 @@
+[
+  {
+    "id": "cognitive_state_4fa764e7f07ea70a339127a58e4d18ea9c240c2d40e67db2206ad62587114458",
+    "cellId": "4fa764e7f07ea70a339127a58e4d18ea9c240c2d40e67db2206ad62587114458",
+    "category": "SEMANTIC",
+    "content": {
+      "cellId": "4fa764e7f07ea70a339127a58e4d18ea9c240c2d40e67db2206ad62587114458",
+      "lifecycleState": "STOPPED",
+      "specialization": null,
+      "activeGoals": [],
+      "knowledgeReferences": [],
+      "knowledgeGaps": [],
+      "operationalConfidence": 1,
+      "lastCognitiveUpdate": "2026-09-10T14:21:20.024Z",
+      "memoryStats": {
+        "total": 0,
+        "episodic": 0,
+        "semantic": 0,
+        "procedural": 0
+      },
+      "metadata": {}
+    },
+    "source": "cognitive_state_manager",
+    "createdAt": "2026-09-10T14:21:20.024Z",
+    "updatedAt": "2026-09-10T14:21:20.024Z",
+    "confidence": 1,
+    "hash": "",
+    "provenance": [
+      "4fa764e7f07ea70a339127a58e4d18ea9c240c2d40e67db2206ad62587114458"
+    ],
+    "version": 1
+  }
+]

@@ -393,34 +393,26 @@ export class MetabolismEngine {
               transactionId
             }, knowledge.knowledgeId);
 
-            this.graph.beginTransaction();
-            try {
-              for (const c of rep.concepts) {
-                await this.graph.insertConcept(c);
-                storedRepresentationIds.push(c.conceptId);
-                this.cognitiveState.addConceptReference(c.conceptId);
-              }
-              for (const r of rep.relations) {
-                await this.graph.insertRelation(r);
-                storedRepresentationIds.push(r.relationId);
-              }
-              for (const a of rep.abstractions) {
-                await this.graph.insertAbstraction(a);
-                storedRepresentationIds.push(a.abstractionId);
-              }
-              for (const g of rep.generalizations) {
-                await this.graph.insertGeneralization(g);
-                storedRepresentationIds.push(g.generalizationId);
-              }
-              for (const an of rep.analogies) {
-                await this.graph.insertAnalogy(an);
-                storedRepresentationIds.push(an.analogyId);
-              }
-              await this.graph.commitTransaction();
-            } catch (err: any) {
-              this.graph.rollbackTransaction();
-              logger.error(this.component, 'graph_transaction_failed', { error: err, knowledgeId: knowledge.knowledgeId });
-              throw err;
+            for (const c of rep.concepts) {
+              await this.graph.insertConcept(c);
+              storedRepresentationIds.push(c.conceptId);
+              this.cognitiveState.addConceptReference(c.conceptId);
+            }
+            for (const r of rep.relations) {
+              await this.graph.insertRelation(r);
+              storedRepresentationIds.push(r.relationId);
+            }
+            for (const a of rep.abstractions) {
+              await this.graph.insertAbstraction(a);
+              storedRepresentationIds.push(a.abstractionId);
+            }
+            for (const g of rep.generalizations) {
+              await this.graph.insertGeneralization(g);
+              storedRepresentationIds.push(g.generalizationId);
+            }
+            for (const an of rep.analogies) {
+              await this.graph.insertAnalogy(an);
+              storedRepresentationIds.push(an.analogyId);
             }
 
             this.audit.recordEvent(MetabolismEventType.REPRESENTATION_STORED, record.informationId, {
@@ -631,29 +623,21 @@ export class MetabolismEngine {
       if (this.representationEngine && this.graph) {
         try {
           const rep = await this.representationEngine.extractRepresentations(assimilatedKnowledge, incomingExperience, this.graph);
-          
-          this.graph.beginTransaction();
-          try {
-            for (const c of rep.concepts) {
-              await this.graph.insertConcept(c);
-              this.cognitiveState.addConceptReference(c.conceptId);
-            }
-            for (const r of rep.relations) {
-              await this.graph.insertRelation(r);
-            }
-            for (const a of rep.abstractions) {
-              await this.graph.insertAbstraction(a);
-            }
-            for (const g of rep.generalizations) {
-              await this.graph.insertGeneralization(g);
-            }
-            for (const an of rep.analogies) {
-              await this.graph.insertAnalogy(an);
-            }
-            await this.graph.commitTransaction();
-          } catch (graphErr: any) {
-            this.graph.rollbackTransaction();
-            throw graphErr;
+          for (const c of rep.concepts) {
+            await this.graph.insertConcept(c);
+            this.cognitiveState.addConceptReference(c.conceptId);
+          }
+          for (const r of rep.relations) {
+            await this.graph.insertRelation(r);
+          }
+          for (const a of rep.abstractions) {
+            await this.graph.insertAbstraction(a);
+          }
+          for (const g of rep.generalizations) {
+            await this.graph.insertGeneralization(g);
+          }
+          for (const an of rep.analogies) {
+            await this.graph.insertAnalogy(an);
           }
         } catch (repErr: any) {
           logger.warn(this.component, 'assimilate_representation_derivation_failed', {

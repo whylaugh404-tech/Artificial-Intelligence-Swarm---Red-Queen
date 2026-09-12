@@ -113,14 +113,6 @@ export class CognitiveGraph {
       throw new Error(`Self-loop relation rejected: concept '${validated.subjectConceptId}' cannot relate to itself via '${validated.predicate}'`);
     }
 
-    // Graph integrity: Ensure subject and object concepts exist
-    if (!this.concepts.has(validated.subjectConceptId)) {
-      throw new Error(`Dangling relation rejected: subject concept '${validated.subjectConceptId}' does not exist in graph`);
-    }
-    if (!this.concepts.has(validated.objectConceptId)) {
-      throw new Error(`Dangling relation rejected: object concept '${validated.objectConceptId}' does not exist in graph`);
-    }
-
     // Duplicate relation check
     for (const rel of this.relations.values()) {
       if (
@@ -173,9 +165,6 @@ export class CognitiveGraph {
       if (sourceId === validated.abstractionId) {
         throw new Error(`Self-abstraction rejected: abstractionId '${validated.abstractionId}' cannot equal source conceptId`);
       }
-      if (!this.concepts.has(sourceId)) {
-        throw new Error(`Dangling abstraction rejected: source concept '${sourceId}' does not exist in graph`);
-      }
       const concept = this.concepts.get(sourceId);
       if (concept) {
         const normPattern = validated.generalizedPattern.trim().toLowerCase();
@@ -227,13 +216,6 @@ export class CognitiveGraph {
     }
 
     const validated = CognitiveGeneralizationSchema.parse(toValidate);
-
-    for (const sourceId of validated.sourceConceptIds) {
-      if (!this.concepts.has(sourceId)) {
-        throw new Error(`Dangling generalization rejected: source concept '${sourceId}' does not exist in graph`);
-      }
-    }
-
     this.generalizations.set(validated.generalizationId, validated);
     await this.persistEntry(validated.generalizationId, 'COGNITIVE_GENERALIZATION', validated, validated.confidence, validated.provenance);
     return validated;
@@ -254,18 +236,6 @@ export class CognitiveGraph {
     }
 
     const validated = CognitiveAnalogySchema.parse(toValidate);
-
-    for (const src of validated.sourceConceptIds) {
-      if (!this.concepts.has(src)) {
-        throw new Error(`Dangling analogy rejected: source concept '${src}' does not exist in graph`);
-      }
-    }
-    for (const tgt of validated.targetConceptIds) {
-      if (!this.concepts.has(tgt)) {
-        throw new Error(`Dangling analogy rejected: target concept '${tgt}' does not exist in graph`);
-      }
-    }
-
     this.analogies.set(validated.analogyId, validated);
 
     // Link analogy concepts via ANALOGOUS_TO relation
@@ -721,121 +691,6 @@ export class CognitiveGraph {
     return this.getAllRelations().filter(r => r.predicate === CognitiveRelationPredicate.CONTRADICTS);
   }
 
-  // P7: Graph Persistence Rollback Consistency
-  private transactionState: {
-    concepts: Map<string, CognitiveConcept>;
-    relations: Map<string, CognitiveRelation>;
-    abstractions: Map<string, CognitiveAbstraction>;
-    generalizations: Map<string, CognitiveGeneralization>;
-    analogies: Map<string, CognitiveAnalogy>;
-    outgoingRelations: Map<string, Set<string>>;
-    incomingRelations: Map<string, Set<string>>;
-    pendingOps: { id: string, type: string, content: any, confidence: number, provenance: string[] }[];
-  } | null = null;
-
-  public beginTransaction(): void {
-    if (this.transactionState) {
-      throw new Error('Transaction already in progress');
-    }
-    
-    // Deep copy maps to allow in-memory rollback
-    this.transactionState = {
-      concepts: new Map(this.concepts),
-      relations: new Map(this.relations),
-      abstractions: new Map(this.abstractions),
-      generalizations: new Map(this.generalizations),
-      analogies: new Map(this.analogies),
-      outgoingRelations: new Map(),
-      incomingRelations: new Map(),
-      pendingOps: []
-    };
-    
-    for(const [k, v] of this.outgoingRelations) {
-       this.transactionState.outgoingRelations.set(k, new Set(v));
-    }
-    for(const [k, v] of this.incomingRelations) {
-       this.transactionState.incomingRelations.set(k, new Set(v));
-    }
-  }
-
-  public async commitTransaction(): Promise<void> {
-    if (!this.transactionState) {
-      throw new Error('No transaction in progress');
-    }
-    
-    const ops = this.transactionState.pendingOps;
-    const compensations: { id: string, prevContent: MemoryEntry | null }[] = [];
-    
-    try {
-      for (const op of ops) {
-        const memoryEntry: MemoryEntry = {
-          id: op.id,
-          cellId: this.cellId,
-          category: MemoryCategory.SEMANTIC,
-          type: op.type,
-          content: op.content,
-          source: 'cognitive_graph',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          confidence: op.confidence,
-          hash: '',
-          provenance: op.provenance,
-          version: 1
-        };
-        const prevEntry = await this.memory.get(op.id);
-        compensations.push({ id: op.id, prevContent: prevEntry });
-        await this.memory.put(memoryEntry);
-      }
-    } catch (err: any) {
-      // Execute compensating transaction backwards
-      for (let i = compensations.length - 1; i >= 0; i--) {
-        const comp = compensations[i];
-        try {
-          if (comp.prevContent) {
-            await this.memory.put(comp.prevContent);
-          } else {
-            await this.memory.delete(comp.id);
-          }
-        } catch (e) {
-          logger.error(this.component, 'compensation_failed', { id: comp.id, error: e });
-        }
-      }
-      
-      this.rollbackTransaction(); // restore in-memory maps
-      throw new Error(`CognitiveGraph Transaction failed and rolled back: ${err.message}`);
-    }
-    
-    this.transactionState = null;
-  }
-
-  public rollbackTransaction(): void {
-    if (!this.transactionState) return;
-    
-    // Restore maps
-    this.concepts.clear();
-    for (const [k, v] of this.transactionState.concepts) this.concepts.set(k, v);
-    
-    this.relations.clear();
-    for (const [k, v] of this.transactionState.relations) this.relations.set(k, v);
-    
-    this.abstractions.clear();
-    for (const [k, v] of this.transactionState.abstractions) this.abstractions.set(k, v);
-    
-    this.generalizations.clear();
-    for (const [k, v] of this.transactionState.generalizations) this.generalizations.set(k, v);
-    
-    this.analogies.clear();
-    for (const [k, v] of this.transactionState.analogies) this.analogies.set(k, v);
-    
-    this.outgoingRelations.clear();
-    for (const [k, v] of this.transactionState.outgoingRelations) this.outgoingRelations.set(k, v);
-    
-    this.incomingRelations.clear();
-    for (const [k, v] of this.transactionState.incomingRelations) this.incomingRelations.set(k, v);
-    
-    this.transactionState = null;
-  }
-
   public getStats() {
     return {
       concepts: this.concepts.size,
@@ -855,45 +710,24 @@ export class CognitiveGraph {
 
   public async restore(): Promise<void> {
     try {
-      this.concepts.clear();
-      this.relations.clear();
-      this.outgoingRelations.clear();
-      this.incomingRelations.clear();
-      this.abstractions.clear();
-      this.generalizations.clear();
-      this.analogies.clear();
-
       const entries = await this.memory.search({
         category: MemoryCategory.SEMANTIC
       });
 
-      // Pass 1: Restore all valid concepts first
       for (const entry of entries) {
-        if (!entry.content || entry.type !== 'COGNITIVE_CONCEPT') continue;
-        const parsed = CognitiveConceptSchema.safeParse(entry.content);
-        if (parsed.success) {
-          this.concepts.set(parsed.data.conceptId, parsed.data);
-        }
-      }
-
-      // Pass 2: Restore relations, abstractions, generalizations, analogies
-      // Discard and purge any dangling references where referenced concepts do not exist
-      for (const entry of entries) {
-        if (!entry.content || entry.type === 'COGNITIVE_CONCEPT') continue;
+        if (!entry.content) continue;
         switch (entry.type) {
+          case 'COGNITIVE_CONCEPT': {
+            const parsed = CognitiveConceptSchema.safeParse(entry.content);
+            if (parsed.success) {
+              this.concepts.set(parsed.data.conceptId, parsed.data);
+            }
+            break;
+          }
           case 'COGNITIVE_RELATION': {
             const parsed = CognitiveRelationSchema.safeParse(entry.content);
             if (parsed.success) {
               const rel = parsed.data;
-              if (!this.concepts.has(rel.subjectConceptId) || !this.concepts.has(rel.objectConceptId)) {
-                logger.warn(this.component, 'purging_dangling_relation', {
-                  relationId: rel.relationId,
-                  subject: rel.subjectConceptId,
-                  object: rel.objectConceptId
-                });
-                await this.memory.delete(entry.id);
-                break;
-              }
               this.relations.set(rel.relationId, rel);
               if (!this.outgoingRelations.has(rel.subjectConceptId)) {
                 this.outgoingRelations.set(rel.subjectConceptId, new Set());
@@ -903,58 +737,27 @@ export class CognitiveGraph {
                 this.incomingRelations.set(rel.objectConceptId, new Set());
               }
               this.incomingRelations.get(rel.objectConceptId)!.add(rel.relationId);
-            } else {
-              await this.memory.delete(entry.id);
             }
             break;
           }
           case 'COGNITIVE_ABSTRACTION': {
             const parsed = CognitiveAbstractionSchema.safeParse(entry.content);
             if (parsed.success) {
-              const abs = parsed.data;
-              const hasDangling = abs.sourceConceptIds.some(id => !this.concepts.has(id));
-              if (hasDangling) {
-                logger.warn(this.component, 'purging_dangling_abstraction', { abstractionId: abs.abstractionId });
-                await this.memory.delete(entry.id);
-                break;
-              }
-              this.abstractions.set(abs.abstractionId, abs);
-            } else {
-              await this.memory.delete(entry.id);
+              this.abstractions.set(parsed.data.abstractionId, parsed.data);
             }
             break;
           }
           case 'COGNITIVE_GENERALIZATION': {
             const parsed = CognitiveGeneralizationSchema.safeParse(entry.content);
             if (parsed.success) {
-              const gen = parsed.data;
-              const hasDangling = gen.sourceConceptIds.some(id => !this.concepts.has(id));
-              if (hasDangling) {
-                logger.warn(this.component, 'purging_dangling_generalization', { generalizationId: gen.generalizationId });
-                await this.memory.delete(entry.id);
-                break;
-              }
-              this.generalizations.set(gen.generalizationId, gen);
-            } else {
-              await this.memory.delete(entry.id);
+              this.generalizations.set(parsed.data.generalizationId, parsed.data);
             }
             break;
           }
           case 'COGNITIVE_ANALOGY': {
             const parsed = CognitiveAnalogySchema.safeParse(entry.content);
             if (parsed.success) {
-              const ana = parsed.data;
-              const hasDangling =
-                ana.sourceConceptIds.some(id => !this.concepts.has(id)) ||
-                ana.targetConceptIds.some(id => !this.concepts.has(id));
-              if (hasDangling) {
-                logger.warn(this.component, 'purging_dangling_analogy', { analogyId: ana.analogyId });
-                await this.memory.delete(entry.id);
-                break;
-              }
-              this.analogies.set(ana.analogyId, ana);
-            } else {
-              await this.memory.delete(entry.id);
+              this.analogies.set(parsed.data.analogyId, parsed.data);
             }
             break;
           }
@@ -980,11 +783,6 @@ export class CognitiveGraph {
     confidence: number,
     provenance: string[]
   ): Promise<void> {
-    if (this.transactionState) {
-      this.transactionState.pendingOps.push({ id, type, content, confidence, provenance });
-      return;
-    }
-
     const memoryEntry: MemoryEntry = {
       id,
       cellId: this.cellId,
