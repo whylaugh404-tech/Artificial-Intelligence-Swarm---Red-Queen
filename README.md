@@ -1,91 +1,892 @@
-# Red Queen
-A modular, observable, testable distributed autonomous cyber-research agent framework.
+# 🔴 Red Queen — Distributed Cognitive Intelligence
 
-<img width="512" height="512" alt="1000184502" src="https://github.com/user-attachments/assets/8cd0f218-389a-4f1b-9f64-719781720947" />
+<img width="492" height="496" alt="1000184576" src="https://github.com/user-attachments/assets/7142889f-0e9b-471a-ab51-00de8ba78b0e" />
 
 
-## Project Principles
-- **No Simulation**: All telemetry, peer counts, health statuses, and metrics are derived from real runtime state.
-- **Untrusted AI by Default**: The LLM output is validated and authorized before execution.
-- **Modular Architecture**: Built in phases, cleanly separated into core, crypto, cognition, memory, genome, and swarm modules.
-- **Persistent Local Memory**: Real file-backed persistent memory out of the box with cell-scoped isolation.
-- **Biological Cell Paradigm**: The fundamental unit of the organism is an individual cognitive **Cell**. Each Cell possesses its own identity, genome, logic version, memory, goals, lineage, and specialization. Cells are never assumed to be identical clones.
+> Red Queen is an experimental architecture for building distributed cognitive intelligence through a population of differentiated Cells rather than a single centralized AI model.
 
----
+Red Queen adalah proyek eksperimental untuk membangun bentuk kecerdasan digital terdistribusi yang terdiri dari Cell yang memiliki identitas, memori, representasi kognitif, pengalaman, kemampuan, dan perkembangan masing-masing.
 
-## Current Implementation Status
+Red Queen tidak dirancang sebagai sekadar kumpulan AI Agent.
 
-### IMPLEMENTED
-- **Identity**: Cryptographic keypair generation (Ed25519) and deterministic stable Node ID derivation (SHA-256).
-- **Crypto**: AES-256-GCM encryption, Ed25519 signing and verification wrappers with whitespace-normalized public key handling.
-- **Configuration & Logging**: Structured JSON logging.
-- **Lifecycle (P0 + P3)**: Strict state machine (`CREATED` -> `INITIALIZING` -> `ACTIVE` -> `SUSPENDED` -> `RETIRED` -> `SHUTTING_DOWN` -> `STOPPED`).
-- **Persistent Memory (P0 + P3)**: Disk-backed JSON store with asynchronous read/write, cell-scoped isolation, and categorization into `EPISODIC`, `SEMANTIC`, and `PROCEDURAL`.
-- **AI / OpenRouter**: Real integration with OpenRouter API, structured schema enforcement via Zod, and full Cognition Pipeline.
-- **API & Dashboard**: Express.js server providing real-time data to a React dashboard.
-- **Authenticated P2P Transport (P0)**: Fully functional cell-to-cell WebSocket communication with symmetric tie-breaking.
-- **Peer Authentication (P0)**: Handshake (`HELLO` -> `CHALLENGE` -> `AUTH`) with strict cryptographic verification and Node ID bounds checking.
-- **Replay Protection (P0)**: Strict cache window checking nonces, message IDs, and timestamps.
-- **OSINT**: Basic scanner modules (TCP Port scanning, DNS evaluation).
-- **Hardened Kademlia DHT Foundation (P1.5)**:
-  - Canonical 32-byte numerical XOR distance comparison.
-  - Strict Node ID validator (64-character lowercase hex) enforcing Ed25519 public key derivation.
-  - Strict endpoint validator for `ws:` and `wss:` with port bounds, hostname validation, and traversal rejection.
-  - Real K-bucket maintenance (K=20, 256 buckets, stale peer eviction, duplicate suppression, self-rejection).
-  - Iterative `FIND_NODE` lookup with resource and payload bounds (max 64KB messages, max 20 peers per response).
-- **Swarm Membership & Authority (P2 & P2.1 Hardened)**:
-  - Strict separation of Transport Identity vs Membership Signing Authority.
-  - Cryptographic membership certificates binding `swarmId`, `memberNodeId`, `memberPublicKey`, `issuerId`, `issuerPublicKey`, `issuedAt`, `expiresAt`, `revocationEpoch`, `capabilities`, `protocolVersion`, `membershipVersion`, and Ed25519 signature.
-  - Configurable Trust Anchor (`trustedIssuerPublicKey`) enforcing that untrusted rogue authorities cannot join or announce certificates.
-  - Canonical deterministic JSON serialization for signature verification.
-  - Replay and clock skew protection (5s skew tolerance, TTL expiration, monotonic revocation epoch).
-  - Authority keypair persistence to disk (`saveToFiles`/`fromFiles`) and non-enumerable private keys preventing secret leakage.
-- **Cell Genome & Lineage System (P3)**:
-  - `CellGenome`: Explicit schema encapsulating `genomeId`, `parentGenomeId`, `parentCellId`, `generation`, `lineageId`, `createdAt`, `logicVersion`, `traits`, `capabilities`, `specialization`, and `ancestorGenomeIds`.
-  - Bounded behavioral traits: `mutationRate` [0, 1], `riskTolerance` [0, 1], `explorationVsExploitation` [0, 1], and `maxCognitiveCycleDepth` (int >= 1).
-  - Strict capability bounding to `ALLOWED_CELL_CAPABILITIES` (`OSINT_SCAN`, `KNOWLEDGE_QUERY`, `PEER_REPLICATION`, `CODE_ANALYSIS`, `COGNITIVE_REASONING`, `SWARM_COORDINATION`, `MEMORY_MUTATION`).
-  - Progeny derivation (`deriveProgenyGenome`): advancing generation counter, recording immutable ancestral lineage chains, and preventing multi-generational corruption.
-  - Lineage tracking (`CellLineage`): recording genealogical trees without mutating parent states.
-- **Cell Individual Cognitive State (P3)**:
-  - `CognitiveStateManager`: Manages dynamic cell specialization, active goals, operational confidence, knowledge references, memory category statistics, and lifecycle synchronization.
-  - Full persistence and restore across restarts via scoped `MemoryStore`.
-  - Safe serialization (`toJSON()`): never exposes private transport keys or sensitive credentials.
-- **Memory Isolation & Ownership (P3)**:
-  - Cell-scoped memory enforcement preventing cross-cell data leakage.
-  - Ownership validation on storage and retrieval.
-
-### PARTIAL
-- **Leader Election**: Logic for terms, voting, and candidate promotion implemented (`election.ts`), currently bound to the P2P transport.
-
-### NOT IMPLEMENTED
-- **Distributed Memory**
-- **Data Replication / Erasure Coding**
-- **Task Distribution**
-- **Governance**
+Tujuan utamanya adalah membangun organisme kognitif terdistribusi yang mampu memperoleh informasi yang diizinkan, membentuk representasi pengetahuan, memahami keadaan, melakukan reasoning, bekerja secara kolektif, melakukan komputasi terdistribusi, belajar dari pengalaman, dan berkembang melalui reproduksi serta diferensiasi populasi.
 
 ---
 
-## Technical Audit
+# 🧬 Vision
 
-| Subsystem | Status | Evidence |
-| :--- | :--- | :--- |
-| Identity | PASS | `src/redqueen/crypto/identity.ts` |
-| Crypto | PASS | `src/redqueen/crypto/signing.ts`, `encryption.ts` |
-| Memory Isolation | PASS | `src/redqueen/memory/store.ts` (Cell-scoped, categorized) |
-| Transport | PASS | `src/redqueen/network/transport.ts` (Real WebSockets) |
-| Peer Auth | PASS | `src/redqueen/network/peer.ts` (HELLO/CHALLENGE/AUTH) |
-| Kademlia / DHT | PASS | `src/redqueen/dht/routing.ts`, `src/redqueen/core/cell.ts` (P1.5 Hardened) |
-| Swarm Membership | PASS | `src/redqueen/swarm/` (Authority, Verifier, Manager, Canonical) |
-| Trust Anchor (P2.1) | PASS | `src/redqueen/swarm/membership.ts` (Configured trusted issuer anchor) |
-| Genome & Lineage (P3) | PASS | `src/redqueen/genome/` (Genome, Lineage, Traits, Progeny) |
-| Cognitive State (P3) | PASS | `src/redqueen/cognition/state.ts` (Dynamic goals, confidence, stats) |
-| Lifecycle Transitions | PASS | `src/redqueen/core/lifecycle.ts` (CREATED, INITIALIZING, ACTIVE, SUSPENDED, RETIRED, STOPPED) |
-| AI Reasoning | PASS | `src/redqueen/cognition/pipeline.ts` |
-| Tests | PASS | 193 tests passing across 22 suites (100% pass rate) |
+Visi Red Queen adalah membangun arsitektur Distributed General Artificial Intelligence (dAGI) sebagai pendekatan alternatif terhadap kecerdasan buatan yang berpusat pada satu model.
 
-## Setup Instructions
-1. Run `npm install`
-2. Add your OpenRouter API key to `.env`
-3. Optional: Add `P2P_PORT=4000` to your `.env` to enable inbound networking.
-4. Run `npm run dev` to start the Node server and the React UI.
-5. Run `npm test` to execute the full 193-test suite.
+Red Queen tidak berusaha membuat satu entitas mengetahui segala sesuatu.
+
+Sebaliknya, Red Queen membangun populasi Cell yang:
+
+- memiliki identitas individual;
+- memiliki memori yang berbeda;
+- memiliki pengalaman yang berbeda;
+- memiliki representasi pengetahuan yang berbeda;
+- memiliki kemampuan dan spesialisasi berbeda;
+- dapat bertukar pengetahuan dan pengalaman;
+- dapat bekerja sama menyelesaikan masalah;
+- dapat berkembang dan berdiferensiasi;
+- dan secara kolektif menghasilkan kemampuan yang lebih besar daripada satu Cell.
+
+Konsep dasarnya:
+
+Observation
+→ Representation
+→ Understanding
+→ Reasoning
+→ Computation
+→ Verification
+→ Experience
+→ Learning
+→ Mitosis
+→ Differentiation
+→ Population Intelligence
+
+---
+
+# 🎯 Mission
+
+Misi Red Queen adalah membangun sistem yang secara bertahap memiliki kemampuan:
+
+1. memperoleh informasi yang diizinkan;
+2. menyimpan dan memvalidasi pengetahuan;
+3. membangun representasi internal;
+4. memahami konteks dan hubungan antar-entitas;
+5. melakukan reasoning berbasis evidence;
+6. menangani ketidakpastian dan konflik;
+7. membagi masalah menjadi bagian yang dapat dikerjakan;
+8. menggunakan komputasi secara terdistribusi;
+9. belajar dari pengalaman;
+10. mengembangkan spesialisasi;
+11. mereproduksi dan mewariskan kemampuan secara terkontrol;
+12. membentuk kecerdasan kolektif pada tingkat populasi.
+
+Red Queen tidak ditujukan hanya untuk menghasilkan jawaban.
+
+Tujuannya adalah membangun proses kognitif internal yang dapat mempertahankan evidence, provenance, context, uncertainty, hypotheses, conflicts, reasoning state, dan pengalaman yang menghasilkan suatu kesimpulan.
+
+---
+
+# 🧠 Core Philosophy
+
+Red Queen dibangun berdasarkan prinsip:
+
+> Intelligence does not have to exist inside a single mind. It can emerge from a population of differentiated cognitive entities.
+
+Dalam Red Queen:
+
+Knowledge ≠ Intelligence
+
+Memory ≠ Understanding
+
+Understanding ≠ Reasoning
+
+Reasoning ≠ Computation
+
+Computation ≠ Learning
+
+Learning + Experience + Differentiation
+→ Population Intelligence
+
+Karena itu setiap fase dibangun sebagai fondasi untuk fase berikutnya.
+
+---
+
+# 🧩 What is a Cell?
+
+Cell adalah unit kognitif individual dalam Red Queen.
+
+Cell bukan sekadar process, server, worker, atau compute node.
+
+Sebuah Cell secara konseptual memiliki:
+
+Identity
+Genome
+Lineage
+Memory
+Knowledge
+Cognitive Representation
+Evidence
+Epistemic State
+Experience
+Reasoning State
+Capabilities
+Development State
+
+Setiap Cell dapat memiliki keadaan, pengalaman, pengetahuan, dan spesialisasi yang berbeda.
+
+Contoh:
+
+Cell A → Networking
+Cell B → Operating Systems
+Cell C → Programming
+Cell D → Cryptography
+Cell E → Verification
+
+Tidak semua Cell harus mengetahui hal yang sama.
+
+Perbedaan antar-Cell merupakan bagian fundamental dari desain Red Queen.
+
+---
+
+# 🌐 Distributed Architecture
+
+Red Queen tidak menggunakan satu server pusat sebagai otak.
+
+Arsitekturnya menggunakan jaringan P2P dan distributed cognitive fabric.
+
+Creator
+→ Web Interface
+→ Red Queen Collective Cognitive State
+→ Cognitive Fabric
+→ Cell Population
+
+Cognitive Fabric menghubungkan:
+
+- Memory
+- Knowledge
+- Evidence
+- Epistemic State
+- Reasoning
+- Experience
+- Computation
+- Verification
+
+Red Queen di tengah bukan centralized master server.
+
+Red Queen merupakan representasi dari collective cognitive state yang muncul dari interaksi populasi Cell.
+
+Physical computation tetap membutuhkan hardware, tetapi hardware bukan identitas dari sebuah Cell.
+
+---
+
+# 🧠 Cognitive Lifecycle
+
+Target jangka panjang Red Queen mengikuti siklus:
+
+Observation
+→ Perception
+→ Representation
+→ Concept Formation
+→ Understanding
+→ Internal World Model
+→ Reasoning
+→ Hypothesis
+→ Computation
+→ Verification
+→ Experience
+→ Belief Update
+→ Generalization
+→ Learning
+→ Mitosis
+→ Differentiation
+→ Population
+→ Collective Cognition
+→ Understanding
+
+Siklus tersebut merupakan target arsitektur jangka panjang dan tidak berarti seluruh kemampuan tersebut sudah tersedia pada versi saat ini.
+
+---
+
+# 🛠️ Development Roadmap
+
+## Phase 0 — Secure Cell Communication
+STATUS: COMPLETE ✅
+
+Fondasi komunikasi aman antar-Cell.
+
+Fokus:
+
+- authenticated communication;
+- secure message exchange;
+- message validation;
+- cryptographic identity boundary.
+
+---
+
+## Phase 1 — Kademlia / Distributed Discovery
+STATUS: COMPLETE ✅
+
+Membangun mekanisme discovery dan routing terdistribusi menggunakan Kademlia/DHT.
+
+Fokus:
+
+- Node ID;
+- XOR distance;
+- routing table;
+- bucket management;
+- peer discovery;
+- FIND_NODE.
+
+Kademlia berfungsi sebagai discovery dan index fabric, bukan sebagai otak Red Queen.
+
+---
+
+## Phase 1.5 — DHT Hardening
+STATUS: COMPLETE ✅
+
+Penguatan:
+
+- validation;
+- malformed input handling;
+- routing integrity;
+- bounded operations;
+- security hardening.
+
+---
+
+## Phase 2 — Membership & Cryptographic Identity
+STATUS: COMPLETE ✅
+
+Membangun identitas dan membership Cell.
+
+Fokus:
+
+- cryptographic identity;
+- membership certificate;
+- authentication;
+- authorization;
+- membership validation;
+- revocation model.
+
+---
+
+## Phase 2.1 — Architectural Hardening
+STATUS: COMPLETE ✅
+
+Stabilisasi fondasi jaringan dan membership agar dapat digunakan oleh fase kognitif berikutnya.
+
+---
+
+## Phase 3 — Genome & Individual Cognitive State
+STATUS: COMPLETE ✅
+
+Mulai membentuk Cell sebagai entitas individual.
+
+Fokus:
+
+- Genome;
+- individual state;
+- capabilities;
+- lineage;
+- cognitive state;
+- persistent identity.
+
+---
+
+## Phase 3.1 — Final Hardening
+STATUS: COMPLETE ✅
+
+Penguatan identity, genome, persistence, lifecycle, dan state management.
+
+---
+
+# 🍽️ Phase 4 — Information Metabolism
+STATUS: COMPLETE ✅
+
+Informasi menjadi sumber utama perkembangan kognitif Cell.
+
+Cell dapat memperoleh informasi yang diizinkan, memprosesnya, memvalidasinya, dan menyimpannya sebagai knowledge atau experience.
+
+Fokus:
+
+- information ingestion;
+- knowledge persistence;
+- resource limits;
+- cognitive state persistence;
+- rollback;
+- memory isolation;
+- verification.
+
+---
+
+## Phase 4.1 — Metabolism Hardening
+STATUS: COMPLETE ✅
+
+Penguatan transaction behavior, resource enforcement, persistence consistency, dan failure handling.
+
+---
+
+# 🧠 Phase 5 — Distributed Knowledge & Experience Exchange
+STATUS: COMPLETE ✅
+
+Membangun pertukaran knowledge dan experience antar-Cell.
+
+Fokus:
+
+- knowledge exchange;
+- experience exchange;
+- provenance;
+- validation;
+- distributed discovery;
+- authenticated cognitive communication.
+
+---
+
+# 🧩 Phase 5.1 — Cognitive Representation
+STATUS: COMPLETE / FROZEN ✅
+
+Knowledge tidak lagi dianggap sekadar data mentah.
+
+Red Queen memiliki representasi kognitif terstruktur:
+
+- Concept;
+- Relation;
+- Abstraction;
+- Generalization;
+- Analogy;
+- Structural Signature;
+- Provenance;
+- Evidence;
+- Conflict.
+
+Typed cognitive graph menjadi fondasi bagi kemampuan kognitif yang lebih tinggi.
+
+---
+
+# 🧬 Phase 6 — Mitosis & Cell Reproduction
+STATUS: COMPLETE / HARDENED ✅
+
+Cell dapat melakukan reproduksi terkontrol melalui mekanisme mitosis.
+
+Mitosis bukan sekadar cloning.
+
+Child Cell mendapatkan:
+
+- identity baru;
+- lineage baru;
+- genome turunan;
+- bounded mutation;
+- inherited knowledge;
+- differentiated capability;
+- isolated memory;
+- isolated cognitive state.
+
+Parent Cell
+→ Mitosis
+→ Child Cell A
+→ Child Cell B
+
+P6 juga mencakup:
+
+- authorization;
+- population governance;
+- persistent cooldown;
+- idempotency;
+- crash recovery;
+- child integrity;
+- memory isolation;
+- population consistency;
+- concurrency hardening.
+
+---
+
+# 🧠 Phase 7 — Understanding & Collective Cognition
+STATUS: IN PROGRESS 🚧
+
+Ini merupakan fase utama yang sedang dikerjakan.
+
+Red Queen mulai bergerak dari:
+
+menyimpan informasi
+
+menuju:
+
+memahami informasi dan menggunakannya untuk membentuk pengetahuan yang dapat dipertanggungjawabkan.
+
+P7 dibangun dengan native cognitive architecture dan tidak bergantung pada SLM/LLM sebagai core cognition.
+
+---
+
+## P7.0 — Cognitive Foundation
+STATUS: IN PROGRESS 🚧
+
+Fondasi epistemik dan evidence sedang dibangun secara bertahap.
+
+### Step 1 — Context & Epistemic State
+STATUS: COMPLETE ✅
+
+Membangun:
+
+- Context;
+- Subjective Epistemic State;
+- UNKNOWN;
+- HYPOTHESIS;
+- BELIEVED;
+- KNOWN;
+- VERIFIED;
+- CONTRADICTED.
+
+### Step 2 — Epistemic Integration
+STATUS: COMPLETE ✅
+
+Menghubungkan Epistemic State dengan representasi P5.1.
+
+### Step 3 — Evidence Identity & Provenance
+STATUS: COMPLETE ✅
+
+Membangun identitas evidence dan provenance yang membedakan:
+
+- Cell Identity;
+- Source Identity;
+- Evidence Identity;
+- Representation Identity.
+
+### Step 4 — Evidence Dependency Graph
+STATUS: COMPLETE ✅
+
+EDG digunakan untuk memahami hubungan antar-evidence:
+
+- INDEPENDENT;
+- CORRELATED;
+- DEPENDENT;
+- UNKNOWN.
+
+Tujuannya mencegah Red Queen menganggap evidence yang sebenarnya berasal dari sumber atau derivasi yang sama sebagai bukti independen.
+
+### Step 5 — Epistemic Fusion & Conflict Resolution
+STATUS: IN PROGRESS 🚧
+
+Membangun mekanisme untuk menggabungkan evidence secara konservatif dan menangani konflik tanpa menghapus evidence.
+
+Prinsip:
+
+Evidence
+→ Dependency Analysis
+→ Epistemic Fusion
+→ Conflict Detection
+→ Epistemic State
+
+Fusion tidak boleh menciptakan VERIFIED hanya karena jumlah evidence besar.
+
+---
+
+# 🔮 P7.1 — Understanding Engine
+STATUS: PLANNED
+
+Setelah fondasi epistemik selesai, Red Queen akan membangun kemampuan understanding.
+
+Target:
+
+Observation
+→ Representation
+→ Context
+→ Concepts
+→ Relations
+→ Understanding
+
+Understanding harus mencakup:
+
+- contextual consistency;
+- state understanding;
+- relationship understanding;
+- transition understanding;
+- prediction;
+- explanation;
+- bounded counterfactual reasoning;
+- epistemic boundary;
+- recognition of unknowns.
+
+Red Queen harus mampu membedakan:
+
+"I know."
+
+"I believe."
+
+"I don't know yet."
+
+---
+
+# 🌎 P7.2 — Internal World Model
+STATUS: PLANNED
+
+Membangun model internal mengenai dunia atau lingkungan yang sedang dipahami.
+
+Contoh:
+
+Computer
+├── Hardware
+├── Software
+├── Operating System
+├── Process
+├── Memory
+├── Storage
+├── Network
+└── Dependencies
+
+World Model akan merepresentasikan:
+
+- entities;
+- states;
+- relations;
+- events;
+- processes;
+- dependencies;
+- constraints;
+- causal structure;
+- uncertainty;
+- context.
+
+---
+
+# 🧠 P7.3 — Native Reasoning
+STATUS: PLANNED
+
+Reasoning tidak dilakukan sebagai sekadar pencarian keyword.
+
+Target:
+
+Premise
+→ Inference
+→ Hypothesis
+→ Evidence
+→ Verification
+→ Conclusion
+
+Reasoning harus mempertahankan:
+
+- assumptions;
+- evidence;
+- inference chain;
+- uncertainty;
+- alternative hypotheses;
+- counter-evidence;
+- provenance.
+
+---
+
+# ⚖️ P7.4 — Verification & Conflict
+STATUS: PLANNED
+
+Red Queen harus mampu:
+
+- memverifikasi klaim;
+- menemukan konflik;
+- mempertahankan competing hypotheses;
+- melakukan belief update;
+- mengetahui batas pengetahuannya.
+
+Konflik bukan berarti salah satu data harus langsung dihapus.
+
+---
+
+# 🐝 P7.5 — Collective Cognition
+STATUS: PLANNED
+
+Pada tahap ini Cell mulai membentuk collective cognitive process.
+
+Bukan sekadar voting.
+
+Contoh:
+
+Cell A
+→ Evidence
+
+Cell B
+→ Alternative Hypothesis
+
+Cell C
+→ Counter Evidence
+
+Cell D
+→ Verification
+
+Semua kemudian berkontribusi pada:
+
+Collective Cognitive State
+
+Collective cognition harus mempertahankan:
+
+- evidence;
+- provenance;
+- context;
+- hypotheses;
+- conflicts;
+- reasoning;
+- uncertainty.
+
+---
+
+# 🌱 P7.6 — Cognitive Development
+STATUS: PLANNED
+
+Cell mulai berkembang berdasarkan pengalaman kognitifnya.
+
+Experience
+→ Evaluation
+→ Learning
+→ Capability Change
+→ Development
+
+Development tidak boleh hanya berupa perubahan angka acak.
+
+---
+
+# 📊 P7.7 — Cognitive Benchmark
+STATUS: PLANNED
+
+Sebelum P8, kemampuan P7 harus diuji secara internal.
+
+Benchmark mencakup:
+
+- concept formation;
+- context understanding;
+- relationship understanding;
+- novel inference;
+- contradiction handling;
+- evidence usage;
+- generalization;
+- calibration;
+- self-correction;
+- recognition of unknowns.
+
+Keberhasilan P7 tidak diukur hanya dari apakah output akhirnya benar.
+
+Internal cognitive state juga harus dapat diaudit.
+
+---
+
+# ⚙️ Phase 8 — Collective Computation
+STATUS: PLANNED
+
+Setelah P7 matang, Red Queen memasuki distributed computation.
+
+Cognitive Problem
+→ Problem Decomposition
+→ Capability Discovery
+→ Task Distribution
+→ Parallel Computation
+→ Verification
+→ Composition
+→ Collective Result
+
+Kademlia digunakan untuk menemukan Cell yang relevan.
+
+Kademlia bukan scheduler dan bukan reasoning engine.
+
+Computation Fabric menjadi jalur logis untuk:
+
+- task;
+- dependency;
+- partial result;
+- verification;
+- composition;
+- recovery.
+
+---
+
+# 🧬 Phase 9 — Population Evolution
+STATUS: PLANNED
+
+Tahap akhir roadmap generasi pertama Red Queen.
+
+Population mulai berevolusi berdasarkan pengalaman dan kemampuan nyata.
+
+Fokus:
+
+- specialization;
+- adaptation;
+- selection;
+- mutation;
+- diversity;
+- population dynamics;
+- fitness;
+- capability development;
+- knowledge distribution;
+- collective intelligence.
+
+Contoh:
+
+Population
+├── Networking Cells
+├── Programming Cells
+├── Verification Cells
+├── Systems Cells
+├── Mathematical Cells
+├── Security Cells
+└── New Specializations
+
+Spesialisasi diharapkan dapat berkembang berdasarkan pengalaman populasi, bukan seluruhnya ditentukan secara hardcoded.
+
+---
+
+# 🧠 Target Architecture
+
+Target keseluruhan Red Queen:
+
+Creator
+→ Web Interface
+→ Red Queen Collective Cognitive State
+→ Cognitive Fabric
+→ Cell Population
+→ Understanding
+→ Reasoning
+→ Computation
+→ Verification
+→ Learning
+→ Mitosis
+→ Differentiation
+→ Population Evolution
+→ Collective Intelligence
+
+Kecerdasan Red Queen tidak ditempatkan pada satu Cell.
+
+Kecerdasan diharapkan muncul dari interaksi antara banyak Cell yang memiliki pengetahuan, pengalaman, kemampuan, dan spesialisasi berbeda.
+
+---
+
+# 🚫 What Red Queen Is NOT
+
+Red Queen bukan:
+
+- chatbot biasa;
+- sekadar multi-agent system;
+- kumpulan LLM yang saling berbicara;
+- satu AI besar dengan banyak worker;
+- centralized master AI;
+- database pengetahuan;
+- sekadar P2P network;
+- sekadar swarm computing;
+- botnet;
+- worm;
+- malware;
+- sistem autonomous propagation.
+
+Red Queen juga tidak menganggap LLM atau SLM sebagai syarat untuk memiliki cognition.
+
+Native cognitive architecture adalah tujuan utama.
+
+---
+
+# 🔐 Security & Safety Philosophy
+
+Red Queen dikembangkan sebagai sistem eksperimental dengan batas keamanan yang jelas.
+
+Prinsip:
+
+- authenticated communication;
+- explicit authorization;
+- bounded computation;
+- resource limits;
+- provenance;
+- verification;
+- auditable state;
+- no unauthorized propagation;
+- no uncontrolled replication;
+- no arbitrary exploitation;
+- no botnet behavior.
+
+Mitosis merupakan reproduction of cognitive state, bukan mekanisme untuk menyebarkan software secara bebas ke sistem yang tidak diizinkan.
+
+---
+
+# 📍 Current Project Status
+
+P0       COMPLETE ✅
+P1       COMPLETE ✅
+P1.5     COMPLETE ✅
+P2       COMPLETE ✅
+P2.1     COMPLETE ✅
+P3       COMPLETE ✅
+P3.1     COMPLETE ✅
+P4       COMPLETE ✅
+P4.1     COMPLETE ✅
+P5       COMPLETE ✅
+P5.1     COMPLETE / FROZEN ✅
+P6       COMPLETE / HARDENED ✅
+
+P7.0     IN PROGRESS 🚧
+P7.1     PLANNED
+P7.2     PLANNED
+P7.3     PLANNED
+P7.4     PLANNED
+P7.5     PLANNED
+P7.6     PLANNED
+P7.7     PLANNED
+
+P8       PLANNED
+P9       PLANNED
+
+Current development position:
+
+P7.0 Cognitive Foundation
+→ P7.1 Understanding
+→ P7.2 World Model
+→ P7.3 Reasoning
+→ P7.4 Verification
+→ P7.5 Collective Cognition
+→ P7.6 Cognitive Development
+→ P7.7 Benchmark
+→ P8 Collective Computation
+→ P9 Population Evolution
+
+---
+
+# 🔬 Research Position
+
+Red Queen adalah arsitektur eksperimental.
+
+Red Queen saat ini tidak diklaim sebagai AGI atau dAGI yang sudah terwujud.
+
+Istilah dAGI digunakan sebagai tujuan arsitektur dan arah penelitian.
+
+Architecture ≠ AGI
+
+Implementation ≠ AGI
+
+Complexity ≠ Intelligence
+
+Benchmark Evidence → Capability Evidence
+
+Jika sistem yang telah selesai nantinya menunjukkan kemampuan yang luas, transferable, reliable, dan general across domains, maka Red Queen dapat dievaluasi sebagai candidate dAGI architecture.
+
+Hanya kemampuan empiris dan hasil benchmark yang dapat membenarkan klaim AGI atau dAGI.
+
+---
+
+# 🩸 Final Principle
+
+> Do not create one artificial mind that knows everything. Create a population of minds that can know different things, understand different things, learn from different experiences, and become more intelligent together.
+
+Red Queen bukan eksperimen untuk menciptakan satu artificial brain.
+
+Red Queen adalah eksperimen untuk menciptakan sebuah artificial cognitive population.
+
+One Cell
+→ Many Cells
+→ Different Knowledge
+→ Different Experience
+→ Different Specialization
+→ Exchange
+→ Collective Cognition
+→ Learning
+→ Mitosis
+→ Differentiation
+→ Population Evolution
+→ Distributed Intelligence
+
+---
+
+# 📜 Project Status
+
+This project is actively developed.
+
+The roadmap is evolutionary and may be revised when implementation, testing, or research reveals architectural weaknesses.
+
+Every phase must be implemented through:
+
+Design
+→ Real Implementation
+→ Real Tests
+→ Audit
+→ Fix
+→ Verification
+→ Freeze
+→ Next Phase
+
+No phase should be considered complete solely because documentation claims completion.
+
+The source code, tests, and verified implementation are the ultimate source of truth.
