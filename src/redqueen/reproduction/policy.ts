@@ -23,6 +23,10 @@ export class GovernanceEnforcer {
       this.trustAnchor = trustAnchor;
     } else if (this.policy.trustedIssuers && this.policy.trustedIssuers.length > 0) {
       this.trustAnchor = new StaticTrustAnchor(this.policy.trustedIssuers);
+    } else if (process.env.CREATOR_PUBLIC_KEY || process.env.TRUSTED_ROOT_PUBLIC_KEY) {
+      const rootKey = (process.env.CREATOR_PUBLIC_KEY || process.env.TRUSTED_ROOT_PUBLIC_KEY)!.trim();
+      const rootIssuer = process.env.CREATOR_ISSUER_NAME?.trim() || 'creator';
+      this.trustAnchor = new StaticTrustAnchor([{ issuer: rootIssuer, publicKey: rootKey }]);
     }
   }
 
@@ -91,15 +95,33 @@ export class GovernanceEnforcer {
       };
     }
 
-    // Check trust anchor if configured
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    // In production, a trusted Creator/root public key or trust anchor is strictly mandatory
+    if (isProduction && !this.trustAnchor) {
+      return {
+        valid: false,
+        state: AuthorizationVerificationState.UNTRUSTED_ISSUER,
+        reason: 'Production environment requires a configured trust anchor (CREATOR_PUBLIC_KEY / TRUSTED_ROOT_PUBLIC_KEY)'
+      };
+    }
+
+    // Check trust anchor if configured (or required in production)
     if (this.trustAnchor) {
       if (!this.trustAnchor.isTrustedIssuer(p.issuerPublicKey, p.payload.issuer)) {
         return {
           valid: false,
           state: AuthorizationVerificationState.UNTRUSTED_ISSUER,
-          reason: 'Authorization proof issuer is not a trusted authority'
+          reason: 'Authorization proof issuer is not a trusted authority in trust anchor'
         };
       }
+    } else if (isProduction) {
+      // Signature validity alone is insufficient: issuer must be verified against trust anchor
+      return {
+        valid: false,
+        state: AuthorizationVerificationState.UNTRUSTED_ISSUER,
+        reason: 'Untrusted issuer: production reproduction requires verification against trust anchor'
+      };
     }
 
     // Verify cryptographic signature of the payload
@@ -168,7 +190,8 @@ export class GovernanceEnforcer {
       return { allowed: false, reason: 'Parent cell is not ACTIVE' };
     }
 
-    if (this.policy.requireAuthorization) {
+    const isProduction = process.env.NODE_ENV === 'production';
+    if (this.policy.requireAuthorization || isProduction) {
       const auth = this.verifyAuthorizationProof(proof, parentId, eventId);
       if (!auth.valid) {
         return {
@@ -198,7 +221,7 @@ export class GovernanceEnforcer {
 
     return {
       allowed: true,
-      verificationState: this.policy.requireAuthorization ? AuthorizationVerificationState.VALID : undefined
+      verificationState: (this.policy.requireAuthorization || isProduction) ? AuthorizationVerificationState.VALID : undefined
     };
   }
 }

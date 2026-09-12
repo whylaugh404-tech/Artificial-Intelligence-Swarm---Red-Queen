@@ -2,6 +2,8 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { Cell } from '../core/cell';
 import { MemoryCategory } from '../memory/store';
+import { identityCrypto } from '../crypto/identity';
+import { validateGenome } from '../genome/genome';
 import {
   PopulationConsistencyReport,
   PopulationAnomaly,
@@ -10,11 +12,21 @@ import {
 
 /**
  * Validates the physical and structural integrity of a child cell storage file.
+ * Validates:
+ * - Physical storage existence and valid entries format.
+ * - Cryptographic identity file (.identity) existence.
+ * - publicKey <-> nodeId derivation via deriveNodeId().
+ * - publicKey <-> privateKey validity via isValidKeyPair().
+ * - Full genome schema validation via validateGenome().
+ * - parentCellId, generation, and lineageId consistency.
+ * - Reproduction eventId anchoring.
  */
 export async function validateChildIntegrity(
   childStoragePath: string,
   parentCellId: string,
-  expectedGeneration: number
+  expectedGeneration: number,
+  expectedEventId?: string,
+  expectedLineageId?: string
 ): Promise<{ valid: boolean; reason?: string; childNodeId?: string; childGenome?: any }> {
   try {
     const raw = await fs.readFile(childStoragePath, 'utf8');
@@ -33,33 +45,138 @@ export async function validateChildIntegrity(
       return { valid: false, reason: 'Child storage root is not a memory entries array' };
     }
 
-    // Locate genome entry
-    const genomeEntry = entries.find((e: any) => e.id && typeof e.id === 'string' && e.id.startsWith('cell_genome_'));
-    if (!genomeEntry || !genomeEntry.content) {
-      return { valid: false, reason: 'Child storage lacks valid cell_genome memory entry' };
+    // 1. Validate identity file and cryptographic invariants
+    const identityPath = `${childStoragePath}.identity`;
+    let identityRaw: string;
+    try {
+      identityRaw = await fs.readFile(identityPath, 'utf8');
+    } catch (idErr: any) {
+      return { valid: false, reason: `Child identity file missing or unreadable: ${idErr.message}` };
     }
 
-    const genome = genomeEntry.content;
-    const childNodeId = genomeEntry.cellId || genome.nodeId;
+    let identity: any;
+    try {
+      identity = JSON.parse(identityRaw);
+    } catch (parseErr: any) {
+      return { valid: false, reason: `Child identity JSON is malformed: ${parseErr.message}` };
+    }
 
+    if (!identity || typeof identity !== 'object') {
+      return { valid: false, reason: 'Child identity is not an object' };
+    }
+
+    if (!identity.publicKey || typeof identity.publicKey !== 'string' || !identityCrypto.isValidPublicKey(identity.publicKey)) {
+      return { valid: false, reason: 'Child identity has invalid or missing publicKey' };
+    }
+
+    if (!identity.nodeId || typeof identity.nodeId !== 'string') {
+      return { valid: false, reason: 'Child identity has invalid or missing nodeId' };
+    }
+
+    // Invariant: publicKey <-> nodeId using deriveNodeId()
+    const derivedNodeId = identityCrypto.deriveNodeId(identity.publicKey);
+    if (derivedNodeId !== identity.nodeId) {
+      return {
+        valid: false,
+        reason: `Child nodeId derivation mismatch: derived '${derivedNodeId}' from publicKey, but identity has '${identity.nodeId}'`,
+        childNodeId: identity.nodeId
+      };
+    }
+
+    // Invariant: publicKey <-> privateKey
+    if (!identity.privateKey || typeof identity.privateKey !== 'string') {
+      return { valid: false, reason: 'Child identity missing privateKey', childNodeId: identity.nodeId };
+    }
+    if (!identityCrypto.isValidKeyPair(identity.publicKey, identity.privateKey)) {
+      return {
+        valid: false,
+        reason: 'Child publicKey and privateKey do not form a valid cryptographic keypair',
+        childNodeId: identity.nodeId
+      };
+    }
+
+    const childNodeId = identity.nodeId;
+
+    // 2. Locate and fully validate genome entry
+    const genomeEntry = entries.find((e: any) => e.id && typeof e.id === 'string' && e.id.startsWith('cell_genome_'));
+    if (!genomeEntry || !genomeEntry.content) {
+      return { valid: false, reason: 'Child storage lacks valid cell_genome memory entry', childNodeId };
+    }
+
+    if (genomeEntry.cellId && genomeEntry.cellId !== childNodeId) {
+      return {
+        valid: false,
+        reason: `Child genome entry cellId '${genomeEntry.cellId}' does not match child nodeId '${childNodeId}'`,
+        childNodeId
+      };
+    }
+
+    // Full schema validation of genome
+    const genomeValidation = validateGenome(genomeEntry.content);
+    if (!genomeValidation.valid || !genomeValidation.genome) {
+      return {
+        valid: false,
+        reason: `Child genome schema validation failed: ${genomeValidation.errors.join('; ')}`,
+        childNodeId
+      };
+    }
+
+    const genome = genomeValidation.genome;
+
+    // Invariant: parentCellId validation
     if (genome.parentCellId !== parentCellId) {
       return {
         valid: false,
         reason: `Child genome parentCellId mismatch: expected '${parentCellId}', found '${genome.parentCellId}'`,
-        childNodeId
+        childNodeId,
+        childGenome: genome
       };
     }
 
+    // Invariant: generation validation
     if (genome.generation !== expectedGeneration) {
       return {
         valid: false,
         reason: `Child genome generation mismatch: expected ${expectedGeneration}, found ${genome.generation}`,
-        childNodeId
+        childNodeId,
+        childGenome: genome
       };
     }
 
-    if (!genome.lineageId) {
-      return { valid: false, reason: 'Child genome lacks lineageId', childNodeId };
+    // Invariant: lineageId validation
+    if (!genome.lineageId || typeof genome.lineageId !== 'string' || genome.lineageId.trim().length === 0) {
+      return { valid: false, reason: 'Child genome lacks valid lineageId', childNodeId, childGenome: genome };
+    }
+    if (expectedLineageId && genome.lineageId !== expectedLineageId) {
+      return {
+        valid: false,
+        reason: `Child genome lineageId mismatch: expected '${expectedLineageId}', found '${genome.lineageId}'`,
+        childNodeId,
+        childGenome: genome
+      };
+    }
+
+    // Invariant: reproduction eventId validation
+    if (expectedEventId) {
+      const originEntry = entries.find((e: any) => e.id === `cell_origin_${childNodeId}`);
+      const matchesOrigin = originEntry && originEntry.content && originEntry.content.eventId === expectedEventId;
+      const matchesProvenance = entries.some((e: any) => {
+        if (Array.isArray(e.provenance)) {
+          return e.provenance.some((p: any) =>
+            typeof p === 'string' && (p === expectedEventId || p.includes(`via_${expectedEventId}`) || p.includes(expectedEventId))
+          );
+        }
+        return false;
+      });
+
+      if (!matchesOrigin && !matchesProvenance) {
+        return {
+          valid: false,
+          reason: `Child storage does not anchor expected reproduction eventId '${expectedEventId}'`,
+          childNodeId,
+          childGenome: genome
+        };
+      }
     }
 
     return { valid: true, childNodeId, childGenome: genome };
@@ -137,7 +254,13 @@ export async function auditParentReproductionConsistency(
       childIdToEvents.set(childId, existingEvents);
 
       // Verify physical child storage existence and integrity
-      const childCheck = await validateChildIntegrity(childPath, parent.nodeId, content.generation);
+      const childCheck = await validateChildIntegrity(
+        childPath,
+        parent.nodeId,
+        content.generation || (parent.genome.generation + 1),
+        content.eventId,
+        content.lineageRecord?.lineageId
+      );
       if (!childCheck.valid) {
         try {
           await fs.access(childPath);

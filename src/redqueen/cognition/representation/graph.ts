@@ -113,6 +113,14 @@ export class CognitiveGraph {
       throw new Error(`Self-loop relation rejected: concept '${validated.subjectConceptId}' cannot relate to itself via '${validated.predicate}'`);
     }
 
+    // Graph integrity: Ensure subject and object concepts exist
+    if (!this.concepts.has(validated.subjectConceptId)) {
+      throw new Error(`Dangling relation rejected: subject concept '${validated.subjectConceptId}' does not exist in graph`);
+    }
+    if (!this.concepts.has(validated.objectConceptId)) {
+      throw new Error(`Dangling relation rejected: object concept '${validated.objectConceptId}' does not exist in graph`);
+    }
+
     // Duplicate relation check
     for (const rel of this.relations.values()) {
       if (
@@ -165,6 +173,9 @@ export class CognitiveGraph {
       if (sourceId === validated.abstractionId) {
         throw new Error(`Self-abstraction rejected: abstractionId '${validated.abstractionId}' cannot equal source conceptId`);
       }
+      if (!this.concepts.has(sourceId)) {
+        throw new Error(`Dangling abstraction rejected: source concept '${sourceId}' does not exist in graph`);
+      }
       const concept = this.concepts.get(sourceId);
       if (concept) {
         const normPattern = validated.generalizedPattern.trim().toLowerCase();
@@ -216,6 +227,13 @@ export class CognitiveGraph {
     }
 
     const validated = CognitiveGeneralizationSchema.parse(toValidate);
+
+    for (const sourceId of validated.sourceConceptIds) {
+      if (!this.concepts.has(sourceId)) {
+        throw new Error(`Dangling generalization rejected: source concept '${sourceId}' does not exist in graph`);
+      }
+    }
+
     this.generalizations.set(validated.generalizationId, validated);
     await this.persistEntry(validated.generalizationId, 'COGNITIVE_GENERALIZATION', validated, validated.confidence, validated.provenance);
     return validated;
@@ -236,6 +254,18 @@ export class CognitiveGraph {
     }
 
     const validated = CognitiveAnalogySchema.parse(toValidate);
+
+    for (const src of validated.sourceConceptIds) {
+      if (!this.concepts.has(src)) {
+        throw new Error(`Dangling analogy rejected: source concept '${src}' does not exist in graph`);
+      }
+    }
+    for (const tgt of validated.targetConceptIds) {
+      if (!this.concepts.has(tgt)) {
+        throw new Error(`Dangling analogy rejected: target concept '${tgt}' does not exist in graph`);
+      }
+    }
+
     this.analogies.set(validated.analogyId, validated);
 
     // Link analogy concepts via ANALOGOUS_TO relation
@@ -825,24 +855,45 @@ export class CognitiveGraph {
 
   public async restore(): Promise<void> {
     try {
+      this.concepts.clear();
+      this.relations.clear();
+      this.outgoingRelations.clear();
+      this.incomingRelations.clear();
+      this.abstractions.clear();
+      this.generalizations.clear();
+      this.analogies.clear();
+
       const entries = await this.memory.search({
         category: MemoryCategory.SEMANTIC
       });
 
+      // Pass 1: Restore all valid concepts first
       for (const entry of entries) {
-        if (!entry.content) continue;
+        if (!entry.content || entry.type !== 'COGNITIVE_CONCEPT') continue;
+        const parsed = CognitiveConceptSchema.safeParse(entry.content);
+        if (parsed.success) {
+          this.concepts.set(parsed.data.conceptId, parsed.data);
+        }
+      }
+
+      // Pass 2: Restore relations, abstractions, generalizations, analogies
+      // Discard and purge any dangling references where referenced concepts do not exist
+      for (const entry of entries) {
+        if (!entry.content || entry.type === 'COGNITIVE_CONCEPT') continue;
         switch (entry.type) {
-          case 'COGNITIVE_CONCEPT': {
-            const parsed = CognitiveConceptSchema.safeParse(entry.content);
-            if (parsed.success) {
-              this.concepts.set(parsed.data.conceptId, parsed.data);
-            }
-            break;
-          }
           case 'COGNITIVE_RELATION': {
             const parsed = CognitiveRelationSchema.safeParse(entry.content);
             if (parsed.success) {
               const rel = parsed.data;
+              if (!this.concepts.has(rel.subjectConceptId) || !this.concepts.has(rel.objectConceptId)) {
+                logger.warn(this.component, 'purging_dangling_relation', {
+                  relationId: rel.relationId,
+                  subject: rel.subjectConceptId,
+                  object: rel.objectConceptId
+                });
+                await this.memory.delete(entry.id);
+                break;
+              }
               this.relations.set(rel.relationId, rel);
               if (!this.outgoingRelations.has(rel.subjectConceptId)) {
                 this.outgoingRelations.set(rel.subjectConceptId, new Set());
@@ -852,27 +903,58 @@ export class CognitiveGraph {
                 this.incomingRelations.set(rel.objectConceptId, new Set());
               }
               this.incomingRelations.get(rel.objectConceptId)!.add(rel.relationId);
+            } else {
+              await this.memory.delete(entry.id);
             }
             break;
           }
           case 'COGNITIVE_ABSTRACTION': {
             const parsed = CognitiveAbstractionSchema.safeParse(entry.content);
             if (parsed.success) {
-              this.abstractions.set(parsed.data.abstractionId, parsed.data);
+              const abs = parsed.data;
+              const hasDangling = abs.sourceConceptIds.some(id => !this.concepts.has(id));
+              if (hasDangling) {
+                logger.warn(this.component, 'purging_dangling_abstraction', { abstractionId: abs.abstractionId });
+                await this.memory.delete(entry.id);
+                break;
+              }
+              this.abstractions.set(abs.abstractionId, abs);
+            } else {
+              await this.memory.delete(entry.id);
             }
             break;
           }
           case 'COGNITIVE_GENERALIZATION': {
             const parsed = CognitiveGeneralizationSchema.safeParse(entry.content);
             if (parsed.success) {
-              this.generalizations.set(parsed.data.generalizationId, parsed.data);
+              const gen = parsed.data;
+              const hasDangling = gen.sourceConceptIds.some(id => !this.concepts.has(id));
+              if (hasDangling) {
+                logger.warn(this.component, 'purging_dangling_generalization', { generalizationId: gen.generalizationId });
+                await this.memory.delete(entry.id);
+                break;
+              }
+              this.generalizations.set(gen.generalizationId, gen);
+            } else {
+              await this.memory.delete(entry.id);
             }
             break;
           }
           case 'COGNITIVE_ANALOGY': {
             const parsed = CognitiveAnalogySchema.safeParse(entry.content);
             if (parsed.success) {
-              this.analogies.set(parsed.data.analogyId, parsed.data);
+              const ana = parsed.data;
+              const hasDangling =
+                ana.sourceConceptIds.some(id => !this.concepts.has(id)) ||
+                ana.targetConceptIds.some(id => !this.concepts.has(id));
+              if (hasDangling) {
+                logger.warn(this.component, 'purging_dangling_analogy', { analogyId: ana.analogyId });
+                await this.memory.delete(entry.id);
+                break;
+              }
+              this.analogies.set(ana.analogyId, ana);
+            } else {
+              await this.memory.delete(entry.id);
             }
             break;
           }

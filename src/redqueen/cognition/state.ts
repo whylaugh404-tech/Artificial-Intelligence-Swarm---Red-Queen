@@ -35,6 +35,7 @@ export type CognitiveState = z.infer<typeof CognitiveStateSchema>;
 export class CognitiveStateManager {
   private readonly component = 'cognitive_state';
   private state: CognitiveState;
+  private currentVersion: number = 1;
 
   constructor(
     private readonly cellId: string,
@@ -165,7 +166,12 @@ export class CognitiveStateManager {
    */
   public async persist(store: MemoryStore): Promise<void> {
     try {
-      await store.put({
+      const existing = await store.get(`cognitive_state_${this.cellId}`);
+      if (existing && typeof existing.version === 'number' && existing.version > this.currentVersion) {
+        this.currentVersion = existing.version;
+      }
+
+      const memEntry = {
         id: `cognitive_state_${this.cellId}`,
         cellId: this.cellId,
         category: MemoryCategory.SEMANTIC,
@@ -176,8 +182,12 @@ export class CognitiveStateManager {
         confidence: this.state.operationalConfidence,
         hash: '',
         provenance: [this.cellId],
-        version: 1
-      });
+        version: this.currentVersion
+      };
+      await store.put(memEntry);
+      if (typeof memEntry.version === 'number') {
+        this.currentVersion = memEntry.version;
+      }
       logger.debug(this.component, 'cognitive_state_persisted', { cellId: this.cellId });
     } catch (err: any) {
       logger.error(this.component, 'cognitive_state_persist_failed', err, { cellId: this.cellId });
@@ -192,6 +202,9 @@ export class CognitiveStateManager {
     try {
       const entry = await store.get(`cognitive_state_${this.cellId}`);
       if (entry && entry.content) {
+        if (typeof entry.version === 'number') {
+          this.currentVersion = entry.version;
+        }
         const parsed = CognitiveStateSchema.safeParse(entry.content);
         if (parsed.success) {
           // Restore properties while retaining the correct cellId

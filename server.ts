@@ -8,6 +8,25 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+export function isPlaceholderSecret(secret?: string): boolean {
+  if (!secret) return true;
+  const s = secret.trim().toLowerCase();
+  const placeholders = [
+    '',
+    'default',
+    'placeholder',
+    'changeme',
+    'secret',
+    '123456',
+    'your_api_secret',
+    'your-secret-here',
+    'your_secret',
+    'password',
+    'admin'
+  ];
+  return placeholders.includes(s) || secret.trim().length < 16;
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -38,16 +57,28 @@ async function startServer() {
      next();
   });
 
-  // Authentication Middleware for sensitive endpoints
-  const API_SECRET = process.env.API_SECRET || process.env.VITE_API_SECRET;
+  // Authentication Middleware for sensitive endpoints: FAIL-CLOSED in production
+  const isProduction = process.env.NODE_ENV === 'production';
+  const rawSecret = process.env.API_SECRET || process.env.VITE_API_SECRET;
+  const API_SECRET = rawSecret?.trim();
+
+  if (isProduction) {
+    if (isPlaceholderSecret(API_SECRET)) {
+      logger.error('server', 'fatal_missing_api_secret', {
+        message: 'FATAL: In production, API_SECRET must be configured with a secure, non-placeholder value of at least 16 characters. Exiting with status 1.'
+      });
+      process.exit(1);
+    }
+  }
+
   const authenticate = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-     if (API_SECRET) {
+     if (isProduction || (API_SECRET && !isPlaceholderSecret(API_SECRET))) {
         const authHeader = req.headers.authorization;
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
            return res.status(401).json({ error: 'Unauthorized: Missing or invalid Bearer token' });
         }
-        const token = authHeader.split(' ')[1];
-        if (token !== API_SECRET) {
+        const token = authHeader.split(' ')[1]?.trim();
+        if (!token || token !== API_SECRET) {
            return res.status(403).json({ error: 'Forbidden: Invalid token' });
         }
      }
@@ -232,7 +263,10 @@ async function startServer() {
   });
 }
 
-startServer().catch(err => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+// Only start the server when run directly, not when imported during testing
+if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+  startServer().catch(err => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  });
+}

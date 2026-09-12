@@ -19,6 +19,9 @@ describe('P6.3 True Idempotent Reproduction (IDEM-01 to IDEM-10)', () => {
   let mitosis: MitosisEngine;
 
   beforeEach(async () => {
+    try {
+      await fs.rm(TEST_DIR, { recursive: true, force: true });
+    } catch {}
     await fs.mkdir(TEST_DIR, { recursive: true });
 
     authorityKp = identityCrypto.generateKeyPair();
@@ -53,6 +56,8 @@ describe('P6.3 True Idempotent Reproduction (IDEM-01 to IDEM-10)', () => {
   afterEach(async () => {
     try {
       await parentCell.stop();
+    } catch {}
+    try {
       await fs.rm(TEST_DIR, { recursive: true, force: true });
     } catch {}
   });
@@ -134,7 +139,7 @@ describe('P6.3 True Idempotent Reproduction (IDEM-01 to IDEM-10)', () => {
 
     // Check disk storage: there should only be 1 child file created
     const files = await fs.readdir(TEST_DIR);
-    const childFiles = files.filter((f) => f.startsWith('cell_') && !f.includes('parent'));
+    const childFiles = files.filter((f) => f.startsWith('cell_') && f.endsWith('.json') && !f.includes('parent'));
     expect(childFiles.length).toBe(1);
 
     if (results[0].child) await results[0].child.stop();

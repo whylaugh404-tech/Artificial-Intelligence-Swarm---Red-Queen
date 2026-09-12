@@ -213,10 +213,26 @@ export class MitosisEngine {
                   specialization: record.differentiationSummary?.specialization
                 }
               );
-              this.committedChildrenByEvent.set(eventId, child);
+              if (child) {
+                this.committedChildrenByEvent.set(eventId, child);
+              }
             } catch (loadErr: any) {
               logger.warn(this.component, 'failed_to_load_committed_child', { error: loadErr.message });
             }
+          }
+
+          if (!child) {
+            return {
+              child: undefined,
+              result: {
+                success: false,
+                parentCellId: parent.nodeId,
+                childCellId: record.childCellId,
+                eventId,
+                generation: record.generation,
+                errors: ['Recovery failure: unable to reconstruct committed child cell from storage']
+              }
+            };
           }
 
           return {
@@ -251,7 +267,13 @@ export class MitosisEngine {
 
           if (childFileExists && targetChildPath) {
             // Case B & C: Child file exists on disk
-            const integrity = await validateChildIntegrity(targetChildPath, parent.nodeId, record.generation || (parent.genome.generation + 1));
+            const integrity = await validateChildIntegrity(
+              targetChildPath,
+              parent.nodeId,
+              record.generation || (parent.genome.generation + 1),
+              eventId,
+              record.lineageRecord?.lineageId
+            );
             
             if (!integrity.valid) {
               // Case C: PENDING + malformed/inconsistent child
@@ -278,8 +300,7 @@ export class MitosisEngine {
                 updatedAt: new Date().toISOString(),
                 confidence: 1.0,
                 hash: '',
-                provenance: [parent.nodeId],
-                version: 1
+                provenance: [parent.nodeId]
               });
 
               return {
@@ -311,6 +332,45 @@ export class MitosisEngine {
               } catch (loadErr: any) {
                 logger.warn(this.component, 'failed_to_load_child_for_commit_finalization', { error: loadErr.message });
               }
+            }
+
+            if (!child) {
+              // Child cannot be reconstructed: MUST FAIL, NEVER COMMIT
+              try {
+                const quarantinePath = `${targetChildPath}.quarantine.${Date.now()}`;
+                await fs.rename(targetChildPath, quarantinePath);
+                logger.warn(this.component, 'quarantined_unreconstructible_child', { targetChildPath, quarantinePath });
+              } catch {
+                try {
+                  await fs.rm(targetChildPath, { force: true });
+                } catch {}
+              }
+
+              record.status = 'FAILED';
+              record.error = 'Child reconstruction failed during recovery: unable to load Cell';
+              await parent.memory.put({
+                id: eventKey,
+                cellId: parent.nodeId,
+                category: MemoryCategory.PROCEDURAL,
+                content: record,
+                source: 'mitosis_engine',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                confidence: 1.0,
+                hash: '',
+                provenance: [parent.nodeId]
+              });
+
+              return {
+                child: undefined,
+                result: {
+                  success: false,
+                  parentCellId: parent.nodeId,
+                  eventId,
+                  generation: parent.genome.generation,
+                  errors: [record.error]
+                }
+              };
             }
 
             const now = Date.now();
@@ -362,8 +422,7 @@ export class MitosisEngine {
               updatedAt: new Date().toISOString(),
               confidence: 1.0,
               hash: '',
-              provenance: [parent.nodeId],
-              version: 1
+              provenance: [parent.nodeId]
             });
 
             if (child) {
@@ -419,7 +478,8 @@ export class MitosisEngine {
       let realPopulation = options.currentPopulation;
       try {
         const files = await fs.readdir(options.storageBasePath);
-        realPopulation = files.filter(f => f.startsWith('cell_') && f.endsWith('.json')).length;
+        const diskCount = files.filter(f => f.startsWith('cell_') && f.endsWith('.json')).length;
+        realPopulation = Math.max(options.currentPopulation ?? 0, diskCount);
       } catch (e) {
         logger.warn(this.component, 'failed_to_count_population_dynamically', { error: e });
       }
@@ -451,8 +511,7 @@ export class MitosisEngine {
             updatedAt: new Date().toISOString(),
             confidence: 1.0,
             hash: '',
-            provenance: [parent.nodeId],
-            version: 1
+            provenance: [parent.nodeId]
           });
         }
 
@@ -486,8 +545,7 @@ export class MitosisEngine {
         updatedAt: new Date().toISOString(),
         confidence: 1.0,
         hash: '',
-        provenance: [parent.nodeId],
-        version: 1
+        provenance: [parent.nodeId]
       });
 
       logger.info(this.component, 'mitosis_started', { parentCellId: parent.nodeId, eventId });
@@ -521,8 +579,7 @@ export class MitosisEngine {
         updatedAt: new Date().toISOString(),
         confidence: 1.0,
         hash: '',
-        provenance: [parent.nodeId],
-        version: 1
+        provenance: [parent.nodeId]
       });
 
       // Failure Hook 2: AFTER_CHILD_IDENTITY
@@ -625,9 +682,65 @@ export class MitosisEngine {
         await child.memory.put(entry);
       }
 
+      // Anchor reproduction origin record in child memory
+      await child.memory.put({
+        id: `cell_origin_${childNodeId}`,
+        cellId: childNodeId,
+        category: MemoryCategory.PROCEDURAL,
+        type: 'CELL_ORIGIN',
+        content: {
+          eventId,
+          parentCellId: parent.nodeId,
+          generation: childGenome.generation,
+          lineageId: childGenome.lineageId,
+          bornAt: new Date().toISOString()
+        },
+        source: 'mitosis_engine',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        confidence: 1.0,
+        hash: '',
+        provenance: [parent.nodeId, eventId],
+        version: 1
+      });
+
       // Failure Hook 4: AFTER_MEMORY_INHERITANCE
       if (options.failureInjectionHook) {
         await options.failureInjectionHook(ReproductionStage.AFTER_MEMORY_INHERITANCE);
+      }
+
+      // STRICT VALIDATION: Validate child integrity across all invariants before committing
+      const childIntegrityCheck = await validateChildIntegrity(
+        childStoragePath,
+        parent.nodeId,
+        childGenome.generation,
+        eventId,
+        childGenome.lineageId
+      );
+      if (!childIntegrityCheck.valid) {
+        throw new Error(`Child integrity check failed: ${childIntegrityCheck.reason}`);
+      }
+
+      // STRICT VALIDATION: Verify child is reconstructible from storage before committing
+      let verifiedReconstructedChild: Cell;
+      try {
+        verifiedReconstructedChild = await Cell.loadFromStorage(
+          childStoragePath,
+          options.openRouterApiKey,
+          undefined,
+          {
+            parentCellId: parent.nodeId,
+            generation: childGenome.generation,
+            lineageId: childGenome.lineageId,
+            specialization: childSpecialization
+          }
+        );
+      } catch (loadErr: any) {
+        throw new Error(`Child reconstruction failed before commit: ${loadErr.message}`);
+      }
+
+      if (!verifiedReconstructedChild) {
+        throw new Error('Child reconstruction returned null/undefined before commit');
       }
 
       // 8. Commit Protocol: Update parent state, cooldown, and event record
@@ -666,8 +779,7 @@ export class MitosisEngine {
           updatedAt: new Date().toISOString(),
           confidence: 1.0,
           hash: '',
-          provenance: [parent.nodeId],
-          version: 1
+          provenance: [parent.nodeId]
         });
 
         // Failure Hook 6: AFTER_COOLDOWN_PERSISTENCE
@@ -710,8 +822,7 @@ export class MitosisEngine {
           updatedAt: new Date().toISOString(),
           confidence: 1.0,
           hash: '',
-          provenance: [parent.nodeId],
-          version: 1
+          provenance: [parent.nodeId]
         });
 
         // Failure Hook 9: AFTER_COMMITTED_PERSISTENCE
@@ -737,8 +848,7 @@ export class MitosisEngine {
               updatedAt: new Date().toISOString(),
               confidence: 1.0,
               hash: '',
-              provenance: [parent.nodeId],
-              version: 1
+              provenance: [parent.nodeId]
             });
           } catch {}
         }
@@ -802,8 +912,7 @@ export class MitosisEngine {
               updatedAt: new Date().toISOString(),
               confidence: 1.0,
               hash: '',
-              provenance: [parent.nodeId],
-              version: 1
+              provenance: [parent.nodeId]
             });
           }
         } catch {}

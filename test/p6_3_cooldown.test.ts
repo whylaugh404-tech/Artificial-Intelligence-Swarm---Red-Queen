@@ -21,6 +21,9 @@ describe('P6.3 Persistent Parent-Specific Cooldown (CD-01 to CD-07)', () => {
   const COOLDOWN_MS = 5000;
 
   beforeEach(async () => {
+    try {
+      await fs.rm(TEST_DIR, { recursive: true, force: true });
+    } catch {}
     await fs.mkdir(TEST_DIR, { recursive: true });
 
     authorityKp = identityCrypto.generateKeyPair();
@@ -68,7 +71,11 @@ describe('P6.3 Persistent Parent-Specific Cooldown (CD-01 to CD-07)', () => {
   afterEach(async () => {
     try {
       await parentA.stop();
+    } catch {}
+    try {
       await parentB.stop();
+    } catch {}
+    try {
       await fs.rm(TEST_DIR, { recursive: true, force: true });
     } catch {}
   });

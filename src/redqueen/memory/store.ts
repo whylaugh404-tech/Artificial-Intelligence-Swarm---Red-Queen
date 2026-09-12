@@ -251,6 +251,7 @@ export class JsonFileMemoryStore implements MemoryStore {
     }
 
     // Default version
+    const callerProvidedVersion = entry.version !== undefined;
     if (clonedEntry.version === undefined) {
       clonedEntry.version = 1;
     }
@@ -260,7 +261,7 @@ export class JsonFileMemoryStore implements MemoryStore {
     try {
       await this.syncFromDisk(); // Refresh map
       const existing = this.memoryMap.get(validId);
-      if (existing && existing.version && clonedEntry.version) {
+      if (existing && existing.version && callerProvidedVersion && clonedEntry.version) {
          // If caller's version is less than what's on disk, they are trying to write over a newer change
          if (clonedEntry.version < existing.version) {
            throw new Error(`Concurrency Conflict: Attempted to write stale version for ${validId}. Expected >= ${existing.version}, got ${clonedEntry.version}`);
