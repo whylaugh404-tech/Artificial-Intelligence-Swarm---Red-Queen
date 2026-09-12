@@ -58,7 +58,7 @@ describe('P7.0 Epistemic Adapter Regression Suite (Step 1B)', () => {
     const state = EpistemicAdapter.fromP5(0.99, RepresentationVerificationStatus.PENDING, dummyContext);
     expect(state.opinion).toBeUndefined();
     expect(state.rawConfidence).toBe(0.99);
-    expect(state.status).toBe(EpistemicStatus.UNKNOWN);
+    expect(state.status).toBe(EpistemicStatus.HYPOTHESIS); // updated to HYPOTHESIS for Step 2
   });
 
   // TEST 7: Valid SubjectiveOpinion is preserved

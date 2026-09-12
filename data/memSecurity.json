@@ -1,34 +1,34 @@
 [
   {
-    "id": "cell_identity_fd2905fcada666444025a31415fff583345d1716833946244ee4f65e05a30ce1",
-    "cellId": "fd2905fcada666444025a31415fff583345d1716833946244ee4f65e05a30ce1",
+    "id": "cell_identity_cec72af808338b6bd1c8812d6047816b72179f2d46cc4de51cd2ab42927672e4",
+    "cellId": "cec72af808338b6bd1c8812d6047816b72179f2d46cc4de51cd2ab42927672e4",
     "category": "PROCEDURAL",
     "content": {
-      "nodeId": "fd2905fcada666444025a31415fff583345d1716833946244ee4f65e05a30ce1",
-      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAN1OMIkdZ1gi/hG/ELDJ0SgA2+03L0Y28cBJW47C9diI=\n-----END PUBLIC KEY-----",
-      "privateKey": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIM0+5QuVdzQ4M9QnrogI+pv/1BL38oO0MfKCK4pxm5GJ\n-----END PRIVATE KEY-----"
+      "nodeId": "cec72af808338b6bd1c8812d6047816b72179f2d46cc4de51cd2ab42927672e4",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAZFfrlmm9OTxWRCdJU8oB7sSmeGOvKwX7ihaf4w41e+k=\n-----END PUBLIC KEY-----",
+      "privateKey": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIBTJ6QtLYebPqZvPULGv8bz6EpCr1yeyi1FVS3tKfA3K\n-----END PRIVATE KEY-----"
     },
     "source": "cell_initialization",
-    "createdAt": "2026-09-12T14:29:40.787Z",
-    "updatedAt": "2026-09-12T14:29:40.787Z",
+    "createdAt": "2026-09-12T15:51:26.471Z",
+    "updatedAt": "2026-09-12T15:51:26.471Z",
     "confidence": 1,
     "hash": "",
     "provenance": [
-      "fd2905fcada666444025a31415fff583345d1716833946244ee4f65e05a30ce1"
+      "cec72af808338b6bd1c8812d6047816b72179f2d46cc4de51cd2ab42927672e4"
     ],
     "version": 1
   },
   {
-    "id": "cell_genome_fd2905fcada666444025a31415fff583345d1716833946244ee4f65e05a30ce1",
-    "cellId": "fd2905fcada666444025a31415fff583345d1716833946244ee4f65e05a30ce1",
+    "id": "cell_genome_cec72af808338b6bd1c8812d6047816b72179f2d46cc4de51cd2ab42927672e4",
+    "cellId": "cec72af808338b6bd1c8812d6047816b72179f2d46cc4de51cd2ab42927672e4",
     "category": "SEMANTIC",
     "content": {
-      "genomeId": "c8bbf7ea8aaa4b16a47755b145f7fe13",
+      "genomeId": "bca66c0a9de842e6896f10396600d47c",
       "parentGenomeId": null,
       "parentCellId": null,
       "generation": 0,
-      "lineageId": "db3c1e655824447084b461ae5653568a",
-      "createdAt": "2026-09-12T14:29:40.771Z",
+      "lineageId": "202bc7c879b74e95b9265016e24a7c59",
+      "createdAt": "2026-09-12T15:51:26.458Z",
       "logicVersion": "1.0.0",
       "traits": {
         "mutationRate": 0.05,
@@ -49,21 +49,21 @@
       "ancestorCellIds": []
     },
     "source": "cell_initialization",
-    "createdAt": "2026-09-12T14:29:40.789Z",
-    "updatedAt": "2026-09-12T14:29:40.789Z",
+    "createdAt": "2026-09-12T15:51:26.473Z",
+    "updatedAt": "2026-09-12T15:51:26.473Z",
     "confidence": 1,
     "hash": "",
     "provenance": [
-      "fd2905fcada666444025a31415fff583345d1716833946244ee4f65e05a30ce1"
+      "cec72af808338b6bd1c8812d6047816b72179f2d46cc4de51cd2ab42927672e4"
     ],
     "version": 1
   },
   {
-    "id": "cognitive_state_fd2905fcada666444025a31415fff583345d1716833946244ee4f65e05a30ce1",
-    "cellId": "fd2905fcada666444025a31415fff583345d1716833946244ee4f65e05a30ce1",
+    "id": "cognitive_state_cec72af808338b6bd1c8812d6047816b72179f2d46cc4de51cd2ab42927672e4",
+    "cellId": "cec72af808338b6bd1c8812d6047816b72179f2d46cc4de51cd2ab42927672e4",
     "category": "SEMANTIC",
     "content": {
-      "cellId": "fd2905fcada666444025a31415fff583345d1716833946244ee4f65e05a30ce1",
+      "cellId": "cec72af808338b6bd1c8812d6047816b72179f2d46cc4de51cd2ab42927672e4",
       "lifecycleState": "STOPPED",
       "specialization": null,
       "activeGoals": [],
@@ -71,7 +71,7 @@
       "conceptReferences": [],
       "knowledgeGaps": [],
       "operationalConfidence": 1,
-      "lastCognitiveUpdate": "2026-09-12T14:29:42.478Z",
+      "lastCognitiveUpdate": "2026-09-12T15:51:28.149Z",
       "memoryStats": {
         "total": 2,
         "episodic": 0,
@@ -81,12 +81,12 @@
       "metadata": {}
     },
     "source": "cognitive_state_manager",
-    "createdAt": "2026-09-12T14:29:42.478Z",
-    "updatedAt": "2026-09-12T14:29:42.478Z",
+    "createdAt": "2026-09-12T15:51:28.149Z",
+    "updatedAt": "2026-09-12T15:51:28.149Z",
     "confidence": 1,
     "hash": "",
     "provenance": [
-      "fd2905fcada666444025a31415fff583345d1716833946244ee4f65e05a30ce1"
+      "cec72af808338b6bd1c8812d6047816b72179f2d46cc4de51cd2ab42927672e4"
     ],
     "version": 1
   }

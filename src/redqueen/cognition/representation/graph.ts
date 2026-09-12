@@ -18,6 +18,8 @@ import {
   StructuralSignature
 } from './types';
 import { InformationCategory } from '../../metabolism/types';
+import { EpistemicState, EpistemicStateSchema } from '../epistemic/types';
+import { EpistemicAdapter } from '../epistemic/adapter';
 import { v4 as uuidv4 } from 'uuid';
 import * as crypto from 'crypto';
 
@@ -43,6 +45,7 @@ export class CognitiveGraph {
   private readonly abstractions: Map<string, CognitiveAbstraction> = new Map();
   private readonly generalizations: Map<string, CognitiveGeneralization> = new Map();
   private readonly analogies: Map<string, CognitiveAnalogy> = new Map();
+  private readonly epistemicStates: Map<string, EpistemicState> = new Map();
 
   // Adjacency indices for rapid relationship lookups
   private readonly outgoingRelations: Map<string, Set<string>> = new Map();
@@ -278,6 +281,14 @@ export class CognitiveGraph {
     // Conflict metadata recorded on concepts without destroying them
     if (conceptA) {
       conceptA.verificationStatus = RepresentationVerificationStatus.CONTRADICTED;
+      if (conceptA.epistemicStateId) {
+        const esA = this.epistemicStates.get(conceptA.epistemicStateId);
+        if (esA) {
+          esA.status = EpistemicAdapter.evaluateStatus(RepresentationVerificationStatus.CONTRADICTED, esA.opinion);
+          esA.verificationStatus = RepresentationVerificationStatus.CONTRADICTED;
+          await this.insertEpistemicState(esA);
+        }
+      }
       conceptA.metadata = {
         ...conceptA.metadata,
         conflictingConceptIds: Array.from(
@@ -288,6 +299,14 @@ export class CognitiveGraph {
     }
     if (conceptB) {
       conceptB.verificationStatus = RepresentationVerificationStatus.CONTRADICTED;
+      if (conceptB.epistemicStateId) {
+        const esB = this.epistemicStates.get(conceptB.epistemicStateId);
+        if (esB) {
+          esB.status = EpistemicAdapter.evaluateStatus(RepresentationVerificationStatus.CONTRADICTED, esB.opinion);
+          esB.verificationStatus = RepresentationVerificationStatus.CONTRADICTED;
+          await this.insertEpistemicState(esB);
+        }
+      }
       conceptB.metadata = {
         ...conceptB.metadata,
         conflictingConceptIds: Array.from(
@@ -687,6 +706,17 @@ export class CognitiveGraph {
     return Array.from(this.analogies.values());
   }
 
+  public getEpistemicState(stateId: string): EpistemicState | undefined {
+    return this.epistemicStates.get(stateId);
+  }
+
+  public async insertEpistemicState(state: EpistemicState): Promise<EpistemicState> {
+    const validated = EpistemicStateSchema.parse(state);
+    this.epistemicStates.set(validated.stateId, validated);
+    await this.persistEntry(validated.stateId, 'EPISTEMIC_STATE', validated, validated.rawConfidence || 0, []);
+    return validated;
+  }
+
   public getAllConflicts(): CognitiveRelation[] {
     return this.getAllRelations().filter(r => r.predicate === CognitiveRelationPredicate.CONTRADICTS);
   }
@@ -758,6 +788,13 @@ export class CognitiveGraph {
             const parsed = CognitiveAnalogySchema.safeParse(entry.content);
             if (parsed.success) {
               this.analogies.set(parsed.data.analogyId, parsed.data);
+            }
+            break;
+          }
+          case 'EPISTEMIC_STATE': {
+            const parsed = EpistemicStateSchema.safeParse(entry.content);
+            if (parsed.success) {
+              this.epistemicStates.set(parsed.data.stateId, parsed.data);
             }
             break;
           }

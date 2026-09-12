@@ -414,6 +414,11 @@ export class MetabolismEngine {
               await this.graph.insertAnalogy(an);
               storedRepresentationIds.push(an.analogyId);
             }
+            if (rep.epistemicStates) {
+              for (const es of rep.epistemicStates) {
+                await this.graph.insertEpistemicState(es);
+              }
+            }
 
             this.audit.recordEvent(MetabolismEventType.REPRESENTATION_STORED, record.informationId, {
               storedCount: storedRepresentationIds.length,
@@ -638,6 +643,11 @@ export class MetabolismEngine {
           }
           for (const an of rep.analogies) {
             await this.graph.insertAnalogy(an);
+          }
+          if (rep.epistemicStates) {
+            for (const es of rep.epistemicStates) {
+              await this.graph.insertEpistemicState(es);
+            }
           }
         } catch (repErr: any) {
           logger.warn(this.component, 'assimilate_representation_derivation_failed', {

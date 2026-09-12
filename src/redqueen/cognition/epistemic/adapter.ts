@@ -14,8 +14,8 @@ export class EpistemicAdapter {
   ): EpistemicState {
     
     // If we only have confidence, we don't make up belief/disbelief/uncertainty.
-    // status = UNKNOWN because we don't have sufficient epistemic information (SubjectiveOpinion).
-    const status = EpistemicStatus.UNKNOWN;
+    // However, verificationStatus CAN determine the EpistemicStatus.
+    const status = this.evaluateStatus(verificationStatus);
 
     return {
       stateId: `epistemic_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,

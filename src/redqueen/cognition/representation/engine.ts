@@ -12,6 +12,8 @@ import {
   CognitiveRepresentationBudget,
   DEFAULT_REPRESENTATION_BUDGET
 } from './types';
+import { EpistemicAdapter } from '../epistemic/adapter';
+import { EpistemicState } from '../epistemic/types';
 import { CognitiveGraph } from './graph';
 
 export interface ExtractedRepresentation {
@@ -20,6 +22,7 @@ export interface ExtractedRepresentation {
   readonly abstractions: CognitiveAbstraction[];
   readonly generalizations: CognitiveGeneralization[];
   readonly analogies: CognitiveAnalogy[];
+  readonly epistemicStates: EpistemicState[];
 }
 
 /**
@@ -101,6 +104,7 @@ export class CognitiveRepresentationEngine {
     );
 
     const primaryConceptId = `concept_${uuidv4()}`;
+
     const primaryConcept: CognitiveConcept = {
       conceptId: primaryConceptId,
       canonicalName: knowledge.title,
@@ -283,12 +287,33 @@ export class CognitiveRepresentationEngine {
       analogies: analogies.length
     });
 
+    const finalEpistemicStates: EpistemicState[] = [];
+
+    const attachEpistemic = (rep: any, domainCategory: string) => {
+      // Create EpistemicState from the existing P5 representation state
+      const es = EpistemicAdapter.fromP5(
+        rep.confidence,
+        rep.verificationStatus,
+        { contextId: knowledge.knowledgeId, domain: domainCategory }
+      );
+      finalEpistemicStates.push(es);
+      // Bind the structural representation to its epistemic state
+      rep.epistemicStateId = es.stateId;
+    };
+
+    for (const c of concepts) attachEpistemic(c, c.category || knowledge.category);
+    for (const r of relations) attachEpistemic(r, knowledge.category);
+    for (const a of abstractions) attachEpistemic(a, knowledge.category);
+    for (const g of generalizations) attachEpistemic(g, knowledge.category);
+    for (const an of analogies) attachEpistemic(an, knowledge.category);
+
     return {
       concepts,
       relations,
       abstractions,
       generalizations,
-      analogies
+      analogies,
+      epistemicStates: finalEpistemicStates
     };
   }
 
