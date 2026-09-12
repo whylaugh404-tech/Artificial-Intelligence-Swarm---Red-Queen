@@ -19,6 +19,7 @@ import {
 } from './types';
 import { InformationCategory } from '../../metabolism/types';
 import { EpistemicState, EpistemicStateSchema } from '../epistemic/types';
+import { Evidence, EvidenceSchema, freezeEvidence } from '../evidence/types';
 import { EpistemicAdapter } from '../epistemic/adapter';
 import { v4 as uuidv4 } from 'uuid';
 import * as crypto from 'crypto';
@@ -46,6 +47,7 @@ export class CognitiveGraph {
   private readonly generalizations: Map<string, CognitiveGeneralization> = new Map();
   private readonly analogies: Map<string, CognitiveAnalogy> = new Map();
   private readonly epistemicStates: Map<string, EpistemicState> = new Map();
+  private readonly evidences: Map<string, Evidence> = new Map();
 
   // Adjacency indices for rapid relationship lookups
   private readonly outgoingRelations: Map<string, Set<string>> = new Map();
@@ -710,6 +712,22 @@ export class CognitiveGraph {
     return this.epistemicStates.get(stateId);
   }
 
+  public async insertEvidence(evidence: Evidence): Promise<Evidence> {
+    const validated = EvidenceSchema.parse(evidence);
+    const frozen = freezeEvidence(validated);
+    this.evidences.set(frozen.evidenceId, frozen);
+    await this.persistEntry(frozen.evidenceId, 'COGNITIVE_EVIDENCE', frozen, 1.0, []);
+    return frozen;
+  }
+
+  public getEvidence(evidenceId: string): Evidence | undefined {
+    return this.evidences.get(evidenceId);
+  }
+
+  public getAllEvidences(): Evidence[] {
+    return Array.from(this.evidences.values());
+  }
+
   public async insertEpistemicState(state: EpistemicState): Promise<EpistemicState> {
     const validated = EpistemicStateSchema.parse(state);
     this.epistemicStates.set(validated.stateId, validated);
@@ -727,7 +745,9 @@ export class CognitiveGraph {
       relations: this.relations.size,
       abstractions: this.abstractions.size,
       generalizations: this.generalizations.size,
-      analogies: this.analogies.size
+      analogies: this.analogies.size,
+      epistemicStates: this.epistemicStates.size,
+      evidences: this.evidences.size
     };
   }
 
@@ -788,6 +808,13 @@ export class CognitiveGraph {
             const parsed = CognitiveAnalogySchema.safeParse(entry.content);
             if (parsed.success) {
               this.analogies.set(parsed.data.analogyId, parsed.data);
+            }
+            break;
+          }
+          case 'COGNITIVE_EVIDENCE': {
+            const parsed = EvidenceSchema.safeParse(entry.content);
+            if (parsed.success) {
+              this.evidences.set(parsed.data.evidenceId, freezeEvidence(parsed.data));
             }
             break;
           }

@@ -58,6 +58,7 @@ export const CognitiveConceptSchema = z.object({
   updatedAt: z.string().datetime(),
   version: z.number().int().min(1),
   provenance: z.array(z.string().min(1)).min(1),
+  evidenceIds: z.array(z.string()).optional(),
   metadata: z.record(z.string(), z.any()).default({})
 });
 
@@ -79,6 +80,7 @@ export const CognitiveRelationSchema = z.object({
   epistemicStateId: z.string().min(1).optional(),
   createdAt: z.string().datetime(),
   originatingCellId: z.string().min(1).max(256),
+  evidenceIds: z.array(z.string()).optional(),
   metadata: z.record(z.string(), z.any()).default({})
 });
 
@@ -101,7 +103,8 @@ export const CognitiveAbstractionSchema = z.object({
   verificationStatus: RepresentationVerificationStatusSchema,
   epistemicStateId: z.string().min(1).optional(),
   version: z.number().int().min(1),
-  createdAt: z.string().datetime()
+  createdAt: z.string().datetime(),
+  evidenceIds: z.array(z.string()).optional()
 });
 
 export type CognitiveAbstraction = z.infer<typeof CognitiveAbstractionSchema>;
@@ -122,6 +125,7 @@ export const CognitiveGeneralizationSchema = z.object({
   epistemicStateId: z.string().min(1).optional(),
   provenance: z.array(z.string().min(1)).min(1),
   createdAt: z.string().datetime(),
+  evidenceIds: z.array(z.string()).optional(),
   originatingCellId: z.string().min(1).max(256)
 });
 
@@ -184,6 +188,7 @@ export const CognitiveAnalogySchema = z.object({
   verificationStatus: RepresentationVerificationStatusSchema,
   epistemicStateId: z.string().min(1).optional(),
   createdAt: z.string().datetime(),
+  evidenceIds: z.array(z.string()).optional(),
   originatingCellId: z.string().min(1).max(256)
 });
 
