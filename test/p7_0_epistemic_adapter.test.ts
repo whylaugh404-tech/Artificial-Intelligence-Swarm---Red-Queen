@@ -3,111 +3,174 @@ import { EpistemicAdapter } from '../src/redqueen/cognition/epistemic/adapter';
 import { EPSILON, SubjectiveOpinionSchema, EpistemicStatus } from '../src/redqueen/cognition/epistemic/types';
 import { RepresentationVerificationStatus } from '../src/redqueen/cognition/representation/types';
 
-describe('P7.0 Epistemic Adapter', () => {
-  
-  describe('1. CONFIDENCE MAPPING', () => {
-    test('Should not fabricate SubjectiveOpinion from P5.1 scalar confidence', () => {
-      const context = { contextId: 'ctx-1', domain: 'test' };
-      const state = EpistemicAdapter.fromP5(0.8, RepresentationVerificationStatus.PENDING, context);
-      
-      // Opinion should be undefined, not hallucinated
-      expect(state.opinion).toBeUndefined();
-      // Status should be UNKNOWN as requested when only scalar confidence exists
-      expect(state.status).toBe(EpistemicStatus.UNKNOWN);
-      // Raw confidence preserved
-      expect(state.rawConfidence).toBe(0.8);
-    });
+describe('P7.0 Epistemic Adapter Regression Suite (Step 1B)', () => {
+  const dummyContext = { contextId: 'ctx-test', domain: 'osint_domain' };
+  const validOpinion = { belief: 0.7, disbelief: 0.1, uncertainty: 0.2, baseRate: 0.5 };
+
+  // TEST 1: PENDING menghasilkan HYPOTHESIS
+  test('TEST 1: PENDING verification status produces HYPOTHESIS', () => {
+    expect(EpistemicAdapter.evaluateStatus(RepresentationVerificationStatus.PENDING)).toBe(EpistemicStatus.HYPOTHESIS);
+
+    const state = EpistemicAdapter.createWithOpinion(validOpinion, RepresentationVerificationStatus.PENDING, dummyContext);
+    expect(state.status).toBe(EpistemicStatus.HYPOTHESIS);
   });
 
-  describe('2. EPISTEMIC STATUS', () => {
-    test('Should derive status from verification criteria, not opinion thresholds', () => {
-      const context = { contextId: 'ctx-2', domain: 'test' };
-      const opinion = { belief: 0.9, disbelief: 0.05, uncertainty: 0.05, baseRate: 0.5 };
-      
-      // Even with high belief (0.9), if verification is PENDING, status is HYPOTHESIS, not VERIFIED
-      const statePending = EpistemicAdapter.createWithOpinion(opinion, RepresentationVerificationStatus.PENDING, context);
-      expect(statePending.status).toBe(EpistemicStatus.HYPOTHESIS);
+  // TEST 2: SUPPORTED menghasilkan BELIEVED, BUKAN KNOWN
+  test('TEST 2: SUPPORTED produces BELIEVED, NOT KNOWN', () => {
+    const status = EpistemicAdapter.evaluateStatus(RepresentationVerificationStatus.SUPPORTED);
+    expect(status).toBe(EpistemicStatus.BELIEVED);
+    expect(status).not.toBe(EpistemicStatus.KNOWN);
 
-      // Status becomes VERIFIED only when verification criteria is VERIFIED
-      const stateVerified = EpistemicAdapter.createWithOpinion(opinion, RepresentationVerificationStatus.VERIFIED, context);
-      expect(stateVerified.status).toBe(EpistemicStatus.VERIFIED);
-    });
+    const state = EpistemicAdapter.createWithOpinion(validOpinion, RepresentationVerificationStatus.SUPPORTED, dummyContext);
+    expect(state.status).toBe(EpistemicStatus.BELIEVED);
+    expect(state.status).not.toBe(EpistemicStatus.KNOWN);
   });
 
-  describe('3. CONTEXT IMMUTABILITY', () => {
-    test('Context should be deeply immutable', () => {
-      const context = { contextId: 'ctx-3', domain: 'test', temporalBounds: { start: 100 } };
-      const state = EpistemicAdapter.fromP5(0.5, RepresentationVerificationStatus.PENDING, context);
-      
-      // Attempt to mutate should fail in strict mode (TypeError) or silently fail.
-      expect(() => {
-        (state.context as any).domain = 'hacked';
-      }).toThrowError();
-      
-      expect(() => {
-        (state.context.temporalBounds as any).start = 999;
-      }).toThrowError();
-      
-      expect(state.context.domain).toBe('test');
-      expect(state.context.temporalBounds?.start).toBe(100);
-    });
+  // TEST 3: VERIFIED menghasilkan VERIFIED
+  test('TEST 3: VERIFIED verification status produces VERIFIED', () => {
+    expect(EpistemicAdapter.evaluateStatus(RepresentationVerificationStatus.VERIFIED)).toBe(EpistemicStatus.VERIFIED);
+
+    const state = EpistemicAdapter.createWithOpinion(validOpinion, RepresentationVerificationStatus.VERIFIED, dummyContext);
+    expect(state.status).toBe(EpistemicStatus.VERIFIED);
   });
 
-  describe('4. PERSISTENCE TEST', () => {
-    test('Should persist and reload valid epistemic state safely', () => {
-      const context = { contextId: 'ctx-4', domain: 'test' };
-      const original = EpistemicAdapter.createWithOpinion(
-        { belief: 0.5, disbelief: 0.3, uncertainty: 0.2, baseRate: 0.5 },
-        RepresentationVerificationStatus.SUPPORTED,
-        context
-      );
-      
-      const json = EpistemicAdapter.persist(original);
-      const reloaded = EpistemicAdapter.reload(json);
-      
-      expect(reloaded).not.toBeNull();
-      expect(reloaded?.stateId).toBe(original.stateId);
-      expect(reloaded?.status).toBe(EpistemicStatus.KNOWN);
-      
-      // Context should be immutable after reload
-      expect(() => {
-        (reloaded!.context as any).domain = 'hacked';
-      }).toThrowError();
-    });
-
-    test('Should safely reject malformed persisted state', () => {
-      // Malformed JSON
-      expect(EpistemicAdapter.reload('{ bad_json ')).toBeNull();
-      
-      // Missing required fields
-      expect(EpistemicAdapter.reload(JSON.stringify({ status: 'UNKNOWN' }))).toBeNull();
-      
-      // Invalid opinion sum
-      const badOpinionState = {
-        stateId: 'bad',
-        status: 'UNKNOWN',
-        verificationStatus: 'PENDING',
-        context: { contextId: 'c1', domain: 'd' },
-        opinion: { belief: 0.8, disbelief: 0.8, uncertainty: 0.8, baseRate: 0.5 } // sum = 2.4
-      };
-      expect(EpistemicAdapter.reload(JSON.stringify(badOpinionState))).toBeNull();
-    });
+  // TEST 4: UNKNOWN menghasilkan UNKNOWN
+  test('TEST 4: UNKNOWN or unsupported verification state produces UNKNOWN', () => {
+    expect(EpistemicAdapter.evaluateStatus('UNKNOWN')).toBe(EpistemicStatus.UNKNOWN);
+    expect(EpistemicAdapter.evaluateStatus(undefined)).toBe(EpistemicStatus.UNKNOWN);
+    expect(EpistemicAdapter.evaluateStatus('UNSUPPORTED_STATUS')).toBe(EpistemicStatus.UNKNOWN);
   });
 
-  describe('5. FLOATING POINT TEST', () => {
-    test('Should accept sum within EPSILON and reject outside EPSILON', () => {
-      // Valid exact sum
-      expect(SubjectiveOpinionSchema.safeParse({ belief: 0.5, disbelief: 0.2, uncertainty: 0.3, baseRate: 0.5 }).success).toBe(true);
-      
-      // Within EPSILON (1e-6)
-      // e.g. sum = 1.0 + 1e-7
-      const slightOver = { belief: 0.5, disbelief: 0.2, uncertainty: 0.3 + (EPSILON / 2), baseRate: 0.5 };
-      expect(SubjectiveOpinionSchema.safeParse(slightOver).success).toBe(true);
+  // TEST 5: Negative/rejected/contradicted verification status menghasilkan CONTRADICTED
+  test('TEST 5: Negative verification states (CONTRADICTED, REJECTED) produce CONTRADICTED', () => {
+    expect(EpistemicAdapter.evaluateStatus(RepresentationVerificationStatus.CONTRADICTED)).toBe(EpistemicStatus.CONTRADICTED);
+    expect(EpistemicAdapter.evaluateStatus(RepresentationVerificationStatus.REJECTED)).toBe(EpistemicStatus.CONTRADICTED);
 
-      // Outside EPSILON
-      // sum = 1.0 + 2e-6
-      const outsideEpsilon = { belief: 0.5, disbelief: 0.2, uncertainty: 0.3 + (EPSILON * 2), baseRate: 0.5 };
-      expect(SubjectiveOpinionSchema.safeParse(outsideEpsilon).success).toBe(false);
-    });
+    const stateContradicted = EpistemicAdapter.createWithOpinion(validOpinion, RepresentationVerificationStatus.CONTRADICTED, dummyContext);
+    expect(stateContradicted.status).toBe(EpistemicStatus.CONTRADICTED);
+
+    const stateRejected = EpistemicAdapter.createWithOpinion(validOpinion, RepresentationVerificationStatus.REJECTED, dummyContext);
+    expect(stateRejected.status).toBe(EpistemicStatus.CONTRADICTED);
+  });
+
+  // TEST 6: High confidence without opinion does not fabricate SubjectiveOpinion
+  test('TEST 6: High scalar confidence without opinion preserves rawConfidence and does not fabricate SubjectiveOpinion', () => {
+    const state = EpistemicAdapter.fromP5(0.99, RepresentationVerificationStatus.PENDING, dummyContext);
+    expect(state.opinion).toBeUndefined();
+    expect(state.rawConfidence).toBe(0.99);
+    expect(state.status).toBe(EpistemicStatus.UNKNOWN);
+  });
+
+  // TEST 7: Valid SubjectiveOpinion is preserved
+  test('TEST 7: Valid SubjectiveOpinion is strictly preserved in EpistemicState', () => {
+    const state = EpistemicAdapter.createWithOpinion(validOpinion, RepresentationVerificationStatus.VERIFIED, dummyContext);
+    expect(state.opinion).toEqual(validOpinion);
+    expect(state.opinion?.belief).toBe(0.7);
+    expect(state.opinion?.disbelief).toBe(0.1);
+    expect(state.opinion?.uncertainty).toBe(0.2);
+    expect(state.opinion?.baseRate).toBe(0.5);
+  });
+
+  // TEST 8: Opinion with belief + disbelief + uncertainty not summing to 1 within EPSILON is rejected
+  test('TEST 8: SubjectiveOpinion sum outside EPSILON is rejected, accepted within EPSILON', () => {
+    // Valid sum
+    expect(SubjectiveOpinionSchema.safeParse({ belief: 0.5, disbelief: 0.3, uncertainty: 0.2, baseRate: 0.5 }).success).toBe(true);
+
+    // Sum slightly off but within EPSILON (1e-6)
+    const withinEpsilon = { belief: 0.5, disbelief: 0.3, uncertainty: 0.2 + (EPSILON / 2), baseRate: 0.5 };
+    expect(SubjectiveOpinionSchema.safeParse(withinEpsilon).success).toBe(true);
+
+    // Sum outside EPSILON
+    const outsideEpsilon = { belief: 0.5, disbelief: 0.3, uncertainty: 0.2 + (EPSILON * 2), baseRate: 0.5 };
+    expect(SubjectiveOpinionSchema.safeParse(outsideEpsilon).success).toBe(false);
+
+    // Completely broken sum
+    expect(SubjectiveOpinionSchema.safeParse({ belief: 0.9, disbelief: 0.9, uncertainty: 0.9, baseRate: 0.5 }).success).toBe(false);
+  });
+
+  // TEST 9: Context remains immutable after state creation
+  test('TEST 9: Context remains immutable after EpistemicState creation', () => {
+    const ctx = { contextId: 'ctx-imm-9', domain: 'network' };
+    const state = EpistemicAdapter.fromP5(0.5, RepresentationVerificationStatus.SUPPORTED, ctx);
+
+    expect(() => {
+      (state.context as any).domain = 'mutated';
+    }).toThrowError();
+    expect(state.context.domain).toBe('network');
+  });
+
+  // TEST 10: Nested temporalBounds is also immutable
+  test('TEST 10: Nested temporalBounds is deeply immutable', () => {
+    const ctx = {
+      contextId: 'ctx-imm-10',
+      domain: 'intel',
+      temporalBounds: { start: 1000, end: 2000 }
+    };
+    const state = EpistemicAdapter.fromP5(0.5, RepresentationVerificationStatus.SUPPORTED, ctx);
+
+    expect(() => {
+      (state.context.temporalBounds as any).start = 9999;
+    }).toThrowError();
+    expect(() => {
+      (state.context.temporalBounds as any).end = 8888;
+    }).toThrowError();
+    expect(state.context.temporalBounds?.start).toBe(1000);
+    expect(state.context.temporalBounds?.end).toBe(2000);
+  });
+
+  // TEST 11: Persistence -> reload preserves all fields
+  test('TEST 11: Persistence -> reload maintains status, verificationStatus, context, opinion, rawConfidence', () => {
+    const stateOriginal = EpistemicAdapter.createWithOpinion(
+      validOpinion,
+      RepresentationVerificationStatus.SUPPORTED,
+      { contextId: 'ctx-p11', domain: 'persisted_domain', temporalBounds: { start: 123 } }
+    );
+    (stateOriginal as any).rawConfidence = 0.85;
+
+    const serialized = EpistemicAdapter.persist(stateOriginal);
+    const reloaded = EpistemicAdapter.reload(serialized);
+
+    expect(reloaded).not.toBeNull();
+    expect(reloaded?.status).toBe(EpistemicStatus.BELIEVED);
+    expect(reloaded?.verificationStatus).toBe(RepresentationVerificationStatus.SUPPORTED);
+    expect(reloaded?.context.contextId).toBe('ctx-p11');
+    expect(reloaded?.context.domain).toBe('persisted_domain');
+    expect(reloaded?.context.temporalBounds?.start).toBe(123);
+    expect(reloaded?.opinion).toEqual(validOpinion);
+    expect(reloaded?.rawConfidence).toBe(0.85);
+
+    // Deep immutability holds after reload
+    expect(() => {
+      (reloaded!.context as any).domain = 'modified';
+    }).toThrowError();
+    expect(() => {
+      (reloaded!.context.temporalBounds as any).start = 999;
+    }).toThrowError();
+  });
+
+  // TEST 12: Malformed persisted epistemic state is safely rejected
+  test('TEST 12: Malformed persisted epistemic state is safely rejected', () => {
+    // Malformed JSON string
+    expect(EpistemicAdapter.reload('NOT_JSON')).toBeNull();
+
+    // Incomplete payload
+    expect(EpistemicAdapter.reload(JSON.stringify({ status: 'UNKNOWN' }))).toBeNull();
+
+    // Invalid status string
+    expect(EpistemicAdapter.reload(JSON.stringify({
+      stateId: 'id-1',
+      status: 'INVALID_STATUS',
+      verificationStatus: 'PENDING',
+      context: { contextId: 'c', domain: 'd' }
+    }))).toBeNull();
+
+    // Invalid opinion inside payload
+    expect(EpistemicAdapter.reload(JSON.stringify({
+      stateId: 'id-2',
+      status: 'HYPOTHESIS',
+      verificationStatus: 'PENDING',
+      context: { contextId: 'c', domain: 'd' },
+      opinion: { belief: 0.9, disbelief: 0.9, uncertainty: 0.9, baseRate: 0.5 }
+    }))).toBeNull();
   });
 });

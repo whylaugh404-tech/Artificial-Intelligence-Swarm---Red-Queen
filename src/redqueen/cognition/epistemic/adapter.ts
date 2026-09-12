@@ -1,5 +1,5 @@
 import { RepresentationVerificationStatus } from '../representation/types';
-import { EpistemicState, EpistemicStatus, SubjectiveOpinion, Context, freezeContext, EpistemicStateSchema } from './types';
+import { EpistemicState, EpistemicStatus, SubjectiveOpinion, Context, freezeContext, EpistemicStateSchema, SubjectiveOpinionSchema } from './types';
 
 export class EpistemicAdapter {
   
@@ -27,14 +27,36 @@ export class EpistemicAdapter {
   }
 
   /**
-   * Evaluates EpistemicStatus without using magic threshold on opinion.
-   * KNOWN/VERIFIED comes from verification criteria.
+   * Evaluates EpistemicStatus conservatively from verification criteria.
+   * PENDING -> HYPOTHESIS
+   * SUPPORTED -> BELIEVED
+   * VERIFIED -> VERIFIED
+   * CONTRADICTED / REJECTED -> CONTRADICTED
+   * UNKNOWN / others -> UNKNOWN
+   * 
+   * Opinion strength alone does not determine verification.
    */
   public static evaluateStatus(
+    verificationStatus: RepresentationVerificationStatus | string | undefined,
+    opinion?: SubjectiveOpinion
+  ): EpistemicStatus;
+  public static evaluateStatus(
     opinion: SubjectiveOpinion | undefined,
-    verificationStatus: RepresentationVerificationStatus
+    verificationStatus: RepresentationVerificationStatus | string | undefined
+  ): EpistemicStatus;
+  public static evaluateStatus(
+    arg1: RepresentationVerificationStatus | string | SubjectiveOpinion | undefined,
+    arg2?: SubjectiveOpinion | RepresentationVerificationStatus | string | undefined
   ): EpistemicStatus {
-    if (!opinion) {
+    let verificationStatus: string | undefined;
+
+    if (typeof arg1 === 'string') {
+      verificationStatus = arg1;
+    } else if (typeof arg2 === 'string') {
+      verificationStatus = arg2;
+    }
+
+    if (!verificationStatus) {
       return EpistemicStatus.UNKNOWN;
     }
 
@@ -42,9 +64,12 @@ export class EpistemicAdapter {
       case RepresentationVerificationStatus.VERIFIED:
         return EpistemicStatus.VERIFIED;
       case RepresentationVerificationStatus.SUPPORTED:
-        return EpistemicStatus.KNOWN;
+        return EpistemicStatus.BELIEVED;
       case RepresentationVerificationStatus.PENDING:
         return EpistemicStatus.HYPOTHESIS;
+      case RepresentationVerificationStatus.CONTRADICTED:
+      case RepresentationVerificationStatus.REJECTED:
+        return EpistemicStatus.CONTRADICTED;
       default:
         return EpistemicStatus.UNKNOWN;
     }
@@ -55,9 +80,10 @@ export class EpistemicAdapter {
     verificationStatus: RepresentationVerificationStatus,
     contextParams: Context
   ): EpistemicState {
+    SubjectiveOpinionSchema.parse(opinion);
     return {
       stateId: `epistemic_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
-      status: this.evaluateStatus(opinion, verificationStatus),
+      status: this.evaluateStatus(verificationStatus, opinion),
       verificationStatus,
       context: freezeContext(contextParams),
       opinion

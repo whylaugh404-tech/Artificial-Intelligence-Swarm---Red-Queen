@@ -38,14 +38,18 @@ export function freezeContext(ctx: Context): Readonly<Context> {
 export enum EpistemicStatus {
   UNKNOWN = 'UNKNOWN',
   HYPOTHESIS = 'HYPOTHESIS',
+  BELIEVED = 'BELIEVED',
   KNOWN = 'KNOWN',
-  VERIFIED = 'VERIFIED'
+  VERIFIED = 'VERIFIED',
+  CONTRADICTED = 'CONTRADICTED'
 }
+
+export const EpistemicStatusSchema = z.nativeEnum(EpistemicStatus);
 
 export const EpistemicStateSchema = z.object({
   stateId: z.string().min(1),
   opinion: SubjectiveOpinionSchema.optional(),
-  status: z.nativeEnum(EpistemicStatus),
+  status: EpistemicStatusSchema,
   verificationStatus: RepresentationVerificationStatusSchema,
   context: ContextSchema,
   rawConfidence: z.number().min(0).max(1).optional()
