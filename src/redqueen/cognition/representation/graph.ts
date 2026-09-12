@@ -18,9 +18,10 @@ import {
   StructuralSignature
 } from './types';
 import { InformationCategory } from '../../metabolism/types';
-import { EpistemicState, EpistemicStateSchema } from '../epistemic/types';
+import { EpistemicState, EpistemicStateSchema, Context } from '../epistemic/types';
 import { Evidence, EvidenceSchema, freezeEvidence, EvidenceDependency, EvidenceDependencySchema } from '../evidence/types';
 import { EvidenceDependencyGraph } from '../evidence/graph';
+import { EpistemicFusionEngine, EpistemicFusionResult, AttributedEvidence } from '../epistemic/fusion';
 import { EpistemicAdapter } from '../epistemic/adapter';
 import { v4 as uuidv4 } from 'uuid';
 import * as crypto from 'crypto';
@@ -761,6 +762,21 @@ export class CognitiveGraph {
 
   public getEDG(): EvidenceDependencyGraph {
     return this.edg;
+  }
+
+  public async fuseEvidences(
+    evidences: Array<AttributedEvidence | Evidence>,
+    context: Context,
+    options?: {
+      targetRepresentationId?: string;
+      baseRate?: number;
+      fusionId?: string;
+    }
+  ): Promise<Readonly<EpistemicFusionResult>> {
+    const fusionEngine = new EpistemicFusionEngine();
+    const result = fusionEngine.fuse(evidences, context, this.edg, options);
+    await this.insertEpistemicState(result.fusedState);
+    return result;
   }
 
   public async insertEpistemicState(state: EpistemicState): Promise<EpistemicState> {
