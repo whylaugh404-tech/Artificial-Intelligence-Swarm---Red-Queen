@@ -89,6 +89,7 @@ export class JsonFileMemoryStore implements MemoryStore {
   private memoryMap: Map<string, MemoryEntry> = new Map();
   private readonly component = 'memory_store';
   private readonly normalizedOwningCellId?: string;
+  private lastMtimeMs: number = 0;
 
   constructor(
     private readonly storagePath: string,
@@ -99,8 +100,63 @@ export class JsonFileMemoryStore implements MemoryStore {
     }
   }
 
+  public getStoragePath(): string {
+    return this.storagePath;
+  }
+
   public getOwningCellId(): string | undefined {
     return this.owningCellId;
+  }
+
+  /**
+   * Re-synchronizes in-memory map with on-disk state if the file was modified externally.
+   * Merges external entries to avoid last-writer-wins clobbering across processes.
+   */
+  public async syncWithDisk(): Promise<void> {
+    try {
+      const stat = await fs.stat(this.storagePath);
+      if (stat.mtimeMs !== this.lastMtimeMs) {
+        const data = await fs.readFile(this.storagePath, 'utf8');
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) {
+          for (const entry of parsed) {
+            if (!entry || !entry.id) continue;
+            try {
+              validateMemoryId(entry.id);
+            } catch {
+              continue;
+            }
+
+            if (this.normalizedOwningCellId && entry.cellId) {
+              try {
+                const normalizedEntryCell = validateCellId(entry.cellId);
+                if (normalizedEntryCell !== this.normalizedOwningCellId) {
+                  continue;
+                }
+              } catch {
+                continue;
+              }
+            }
+
+            const existing = this.memoryMap.get(entry.id);
+            if (!existing) {
+              this.memoryMap.set(entry.id, entry);
+            } else {
+              const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+              const diskTime = entry.updatedAt ? new Date(entry.updatedAt).getTime() : 0;
+              if (diskTime >= existingTime) {
+                this.memoryMap.set(entry.id, entry);
+              }
+            }
+          }
+        }
+        this.lastMtimeMs = stat.mtimeMs;
+      }
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') {
+        logger.debug(this.component, 'sync_with_disk_ignored', { error: err.message });
+      }
+    }
   }
 
   async initialize(): Promise<void> {
@@ -143,6 +199,10 @@ export class JsonFileMemoryStore implements MemoryStore {
             this.memoryMap.set(entry.id, entry);
           }
         }
+        try {
+          const stat = await fs.stat(this.storagePath);
+          this.lastMtimeMs = stat.mtimeMs;
+        } catch {}
         logger.info(this.component, 'memory_loaded', { count: this.memoryMap.size, cellId: this.owningCellId });
       } catch (err: any) {
         if (err.code === 'ENOENT') {
@@ -223,9 +283,14 @@ export class JsonFileMemoryStore implements MemoryStore {
     const tempPath = `${this.storagePath}.tmp`;
     await fs.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf8');
     await fs.rename(tempPath, this.storagePath);
+    try {
+      const stat = await fs.stat(this.storagePath);
+      this.lastMtimeMs = stat.mtimeMs;
+    } catch {}
   }
 
   async put(entry: MemoryEntry): Promise<void> {
+    await this.syncWithDisk();
     const validId = validateMemoryId(entry.id);
     const clonedEntry = JSON.parse(JSON.stringify(entry)) as MemoryEntry;
     clonedEntry.id = validId;
@@ -284,6 +349,7 @@ export class JsonFileMemoryStore implements MemoryStore {
   }
 
   async get(id: string): Promise<MemoryEntry | null> {
+    await this.syncWithDisk();
     const validId = validateMemoryId(id);
     const entry = this.memoryMap.get(validId);
     if (!entry) return null;
@@ -297,6 +363,7 @@ export class JsonFileMemoryStore implements MemoryStore {
   }
 
   async search(query: Partial<MemoryEntry>): Promise<MemoryEntry[]> {
+    await this.syncWithDisk();
     if (query.cellId) {
       const normalizedQueryCell = validateCellId(query.cellId);
       if (this.normalizedOwningCellId && normalizedQueryCell !== this.normalizedOwningCellId) {
@@ -333,6 +400,7 @@ export class JsonFileMemoryStore implements MemoryStore {
   }
 
   async delete(id: string): Promise<boolean> {
+    await this.syncWithDisk();
     const validId = validateMemoryId(id);
     
     await this.acquireLock();

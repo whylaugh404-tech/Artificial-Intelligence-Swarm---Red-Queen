@@ -185,6 +185,120 @@ export async function validateChildIntegrity(
   }
 }
 
+export interface ChildEventValidationOptions {
+  childStoragePath: string;
+  expectedChildId?: string;
+  parentCellId: string;
+  parentGeneration: number;
+  eventId: string;
+  openRouterApiKey?: string;
+}
+
+export interface ChildEventValidationResult {
+  valid: boolean;
+  errors: string[];
+  childNodeId?: string;
+  reconstructedChild?: Cell;
+}
+
+/**
+ * Validates a persisted child cell storage against a specific reproduction event.
+ */
+export async function validatePersistedChildForEvent(
+  options: ChildEventValidationOptions
+): Promise<ChildEventValidationResult> {
+  const errors: string[] = [];
+  try {
+    const raw = await fs.readFile(options.childStoragePath, 'utf8');
+    if (!raw || raw.trim().length === 0) {
+      return { valid: false, errors: ['Child storage file is empty (0 bytes)'] };
+    }
+
+    let entries: any[];
+    try {
+      entries = JSON.parse(raw);
+    } catch (parseErr: any) {
+      return { valid: false, errors: [`Child storage JSON is malformed: ${parseErr.message}`] };
+    }
+
+    if (!Array.isArray(entries)) {
+      return { valid: false, errors: ['Child storage root is not a memory entries array'] };
+    }
+
+    // 1. Locate identity entry
+    const identityEntry = entries.find((e: any) => e.id && typeof e.id === 'string' && e.id.startsWith('cell_identity_'));
+    // Legacy support for fallback
+    let hasIdentity = !!identityEntry;
+    if (!hasIdentity) {
+      try {
+        await fs.access(`${options.childStoragePath}.identity`);
+        hasIdentity = true;
+      } catch {}
+    }
+    if (!hasIdentity) {
+      errors.push('Child storage lacks valid cell_identity memory entry');
+    } else if (identityEntry && identityEntry.content) {
+      const idContent = identityEntry.content;
+      if (!idContent.publicKey || typeof idContent.publicKey !== 'string') {
+        errors.push('Child identity lacks publicKey');
+      }
+    }
+
+    // 2. Locate genome entry
+    const genomeEntry = entries.find((e: any) => e.id && typeof e.id === 'string' && e.id.startsWith('cell_genome_'));
+    if (!genomeEntry || !genomeEntry.content) {
+      errors.push('Child storage lacks valid cell_genome memory entry');
+    } else {
+      const genome = genomeEntry.content;
+      const childNodeId = genomeEntry.cellId || genome.nodeId;
+      if (options.expectedChildId && childNodeId !== options.expectedChildId) {
+        errors.push(`Child node ID mismatch: expected '${options.expectedChildId}', found '${childNodeId}'`);
+      }
+      if (genome.parentCellId !== options.parentCellId) {
+        errors.push(`Child genome parentCellId mismatch: expected '${options.parentCellId}', found '${genome.parentCellId}'`);
+      }
+      if (genome.generation !== options.parentGeneration + 1) {
+        errors.push(`Child genome generation mismatch: expected ${options.parentGeneration + 1}, found ${genome.generation}`);
+      }
+      if (!genome.lineageId) {
+        errors.push('Child genome lacks lineageId');
+      }
+    }
+
+    // 3. Attempt clean reconstruction via Cell.loadFromStorage if openRouterApiKey is provided
+    let reconstructedChild: Cell | undefined;
+    if (errors.length === 0 && options.openRouterApiKey) {
+      try {
+        reconstructedChild = await Cell.loadFromStorage(
+          options.childStoragePath,
+          options.openRouterApiKey,
+          undefined,
+          {
+            parentCellId: options.parentCellId,
+            generation: options.parentGeneration + 1
+          }
+        );
+      } catch (loadErr: any) {
+        errors.push(`Child cell reconstruction from storage failed: ${loadErr.message}`);
+      }
+    }
+
+    const childNodeId = options.expectedChildId || (genomeEntry ? (genomeEntry.cellId || genomeEntry.content?.nodeId) : undefined);
+
+    return {
+      valid: errors.length === 0,
+      errors,
+      childNodeId,
+      reconstructedChild
+    };
+  } catch (err: any) {
+    return {
+      valid: false,
+      errors: [`Child storage file access failed: ${err.message}`]
+    };
+  }
+}
+
 /**
  * Audits reproduction consistency for an individual parent cell.
  * Detects:

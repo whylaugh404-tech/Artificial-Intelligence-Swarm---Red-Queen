@@ -1,4 +1,5 @@
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 import { identityCrypto } from '../crypto/identity';
 import { CellState, Lifecycle } from './lifecycle';
 import { JsonFileMemoryStore, MemoryStore, MemoryCategory } from '../memory/store';
@@ -79,6 +80,7 @@ export class Cell {
   public readonly cognitiveGraph: CognitiveGraph;
   public readonly representation: CognitiveRepresentationEngine;
 
+  public readonly storagePath: string;
   private _genome: CellGenome;
   private _lineage: CellLineage;
   public readonly cognitiveState: CognitiveStateManager;
@@ -92,7 +94,6 @@ export class Cell {
   }
 
   private syncIntervalTimer: NodeJS.Timeout | null = null;
-  private readonly storagePath: string;
 
   constructor(
     storagePath: string, 
@@ -111,12 +112,29 @@ export class Cell {
         throw new Error('Cell identity corruption: provided public and private keys do not match or are invalid');
       }
     } else {
-      if (cellOptions?.isRecovery) {
-        throw new Error('Cell recovery failed: missing existing identity keys');
+      const identityPath = `${storagePath}.identity`;
+      let loadedFromDisk = false;
+      if (fsSync.existsSync(identityPath)) {
+        try {
+          const idData = JSON.parse(fsSync.readFileSync(identityPath, 'utf8'));
+          if (idData.privateKey && idData.publicKey && identityCrypto.isValidKeyPair(idData.publicKey, idData.privateKey)) {
+            rawPrivateKey = idData.privateKey.trim();
+            this.publicKey = idData.publicKey.trim();
+            loadedFromDisk = true;
+          }
+        } catch {
+          // Ignore corrupt identity read
+        }
       }
-      const kp = identityCrypto.generateKeyPair();
-      rawPrivateKey = kp.privateKey.trim();
-      this.publicKey = kp.publicKey.trim();
+
+      if (!loadedFromDisk) {
+        if (cellOptions?.isRecovery) {
+          throw new Error('Cell recovery failed: missing existing identity keys');
+        }
+        const kp = identityCrypto.generateKeyPair();
+        rawPrivateKey = kp.privateKey.trim();
+        this.publicKey = kp.publicKey.trim();
+      }
     }
 
     // Mark privateKey non-enumerable to prevent accidental serialization leakage
@@ -315,7 +333,7 @@ export class Cell {
     });
   }
 
-  public async restoreOrPersistIdentity(storagePath: string): Promise<void> {
+  public async restoreOrPersistIdentity(storagePath: string = this.storagePath): Promise<void> {
     const identityPath = `${storagePath}.identity`;
     try {
       const data = await fs.readFile(identityPath, 'utf8');

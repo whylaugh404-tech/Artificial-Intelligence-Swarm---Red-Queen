@@ -53,6 +53,7 @@ describe('P6.3 Persistent Parent-Specific Cooldown (CD-01 to CD-07)', () => {
       { specialization: 'generalist_a' }
     );
     await parentA.memory.initialize();
+    await parentA.restoreOrPersistIdentity();
     await parentA.start();
 
     // Parent B
@@ -65,6 +66,7 @@ describe('P6.3 Persistent Parent-Specific Cooldown (CD-01 to CD-07)', () => {
       { specialization: 'generalist_b' }
     );
     await parentB.memory.initialize();
+    await parentB.restoreOrPersistIdentity();
     await parentB.start();
   });
 

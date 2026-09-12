@@ -237,7 +237,7 @@ describe('P6.3 100-Cell Concurrent Stress & Resilience Audit (Tests A - I)', () 
 
     // 0 child files created
     const files = await fs.readdir(TEST_DIR);
-    const childFiles = files.filter((f) => f.startsWith('cell_') && !f.includes('parent'));
+    const childFiles = files.filter((f) => f.startsWith('cell_') && f.endsWith('.json') && !f.includes('parent'));
     expect(childFiles.length).toBe(0);
 
     // 0 cooldown consumed
@@ -250,7 +250,7 @@ describe('P6.3 100-Cell Concurrent Stress & Resilience Audit (Tests A - I)', () 
     const governance = new GovernanceEnforcer(
       {
         populationCeiling: 100,
-        cooldownMs: 200, // 200ms cooldown
+        cooldownMs: 400, // 400ms cooldown ensures all 50 serialized burst requests fall within window
         requireAuthorization: true,
         minMemoryPressure: 0.0
       },
@@ -296,7 +296,7 @@ describe('P6.3 100-Cell Concurrent Stress & Resilience Audit (Tests A - I)', () 
     expect(burstResults.every((r) => !r.result.success)).toBe(true);
 
     // Wave 3: Wait for cooldown to expire
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 450));
 
     // Next request succeeds
     const res3 = await mitosis.reproduce(parent, {

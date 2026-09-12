@@ -17,7 +17,13 @@ import { logger } from '../core/logger';
 import { MemoryEntry, MemoryCategory } from '../memory/store';
 import { identityCrypto } from '../crypto/identity';
 import { CellState } from '../core/lifecycle';
-import { validateChildIntegrity } from './consistency';
+import { validateChildIntegrity, validatePersistedChildForEvent } from './consistency';
+import {
+  acquireParentReproductionLock,
+  releaseParentReproductionLock,
+  withPopulationAdmissionLock,
+  countPersistedCells
+} from './lock';
 
 export interface MitosisOptions {
   authorizationProof?: AuthorizationProof | any;
@@ -101,54 +107,76 @@ export class MitosisEngine {
     options: MitosisOptions,
     eventId: string
   ): Promise<{ result: MitosisResult; child?: Cell }> {
-    // Serialize operations per parent to prevent memory/state write races
+    // Serialize operations per parent in-memory to prevent memory/state write races within the process
     const prevParentQueue = this.parentQueues.get(parent.nodeId) || Promise.resolve();
-    let releaseLock: () => void = () => {};
+    let releaseInProcessLock: () => void = () => {};
     const currentLock = new Promise<void>((resolve) => {
-      releaseLock = resolve;
+      releaseInProcessLock = resolve;
     });
     this.parentQueues.set(parent.nodeId, prevParentQueue.then(() => currentLock).catch(() => currentLock));
 
     await prevParentQueue;
 
-    // Cross-process locking (Global Swarm Reproduction Lock for Population Atomicity)
-    const globalLockPath = path.join(options.storageBasePath, 'global_mitosis.lock');
-    let crossProcessLockAcquired = false;
-    let attempts = 0;
-    while(attempts < 50) {
+    let childStoragePath = '';
+    let childNodeId = '';
+    let parentLockToken: string | undefined;
+    const eventKey = `reproduction_event_${eventId}`;
+
+    // Global cross-process reproduction lock
+    const baseDir = options.storageBasePath || (parent.storagePath ? path.dirname(parent.storagePath) : '.');
+    const globalLockDir = path.join(baseDir, 'global_mitosis.lock');
+    let acquiredGlobalLock = false;
+    const lockDeadline = Date.now() + 1500;
+    while (true) {
       try {
-        await fs.mkdir(globalLockPath);
-        crossProcessLockAcquired = true;
+        await fs.mkdir(globalLockDir);
+        acquiredGlobalLock = true;
         break;
       } catch (err: any) {
         if (err.code === 'EEXIST') {
-          // Check for stale lock (15 seconds)
-          try {
-             const stat = await fs.stat(globalLockPath);
-             if (Date.now() - stat.mtimeMs > 15000) {
-                 await fs.rm(globalLockPath, { recursive: true, force: true });
-                 continue; // steal lock
-             }
-          } catch(e) {}
-          await new Promise(r => setTimeout(r, 200));
-          attempts++;
+          if (Date.now() >= lockDeadline) {
+            releaseInProcessLock();
+            return {
+              result: {
+                success: false,
+                parentCellId: parent.nodeId,
+                eventId,
+                generation: parent.genome.generation,
+                errors: ['Global cross-process reproduction lock timeout']
+              }
+            };
+          }
+          await new Promise((r) => setTimeout(r, 40));
         } else {
-          releaseLock();
-          throw err;
+          // If directory could not be created due to permissions or missing root, continue
+          break;
         }
       }
     }
 
-    if (!crossProcessLockAcquired) {
-       releaseLock();
-       return {
-         result: { success: false, parentCellId: parent.nodeId, eventId, generation: parent.genome.generation, errors: ['Global cross-process reproduction lock timeout'] }
-       };
+    // Acquire cross-engine & cross-process parent reproduction lock
+    const lockResult = await acquireParentReproductionLock(
+      parent.storagePath,
+      parent.nodeId,
+      eventId,
+      undefined,
+      options.storageBasePath
+    );
+
+    if (!lockResult.acquired) {
+      releaseInProcessLock();
+      return {
+        result: {
+          success: false,
+          parentCellId: parent.nodeId,
+          eventId,
+          generation: parent.genome.generation,
+          errors: [lockResult.error || 'Failed to acquire parent reproduction lock']
+        }
+      };
     }
 
-    let childStoragePath = '';
-    let childNodeId = '';
-    const eventKey = `reproduction_event_${eventId}`;
+    parentLockToken = lockResult.lockToken;
 
     try {
       // 1. Idempotency Check & Phase 2 Deterministic Recovery
@@ -213,26 +241,10 @@ export class MitosisEngine {
                   specialization: record.differentiationSummary?.specialization
                 }
               );
-              if (child) {
-                this.committedChildrenByEvent.set(eventId, child);
-              }
+              this.committedChildrenByEvent.set(eventId, child);
             } catch (loadErr: any) {
               logger.warn(this.component, 'failed_to_load_committed_child', { error: loadErr.message });
             }
-          }
-
-          if (!child) {
-            return {
-              child: undefined,
-              result: {
-                success: false,
-                parentCellId: parent.nodeId,
-                childCellId: record.childCellId,
-                eventId,
-                generation: record.generation,
-                errors: ['Recovery failure: unable to reconstruct committed child cell from storage']
-              }
-            };
           }
 
           return {
@@ -266,22 +278,23 @@ export class MitosisEngine {
           }
 
           if (childFileExists && targetChildPath) {
-            // Case B & C: Child file exists on disk
-            const integrity = await validateChildIntegrity(
-              targetChildPath,
-              parent.nodeId,
-              record.generation || (parent.genome.generation + 1),
+            // Case B & C: Child file exists on disk; run deep event validation
+            const validation = await validatePersistedChildForEvent({
+              childStoragePath: targetChildPath,
+              expectedChildId: record.childCellId,
+              parentCellId: parent.nodeId,
+              parentGeneration: parent.genome.generation,
               eventId,
-              record.lineageRecord?.lineageId
-            );
+              openRouterApiKey: options.openRouterApiKey
+            });
             
-            if (!integrity.valid) {
+            if (!validation.valid) {
               // Case C: PENDING + malformed/inconsistent child
-              // Quarantine or rollback inconsistent child state, mark event FAILED
+              // Quarantine inconsistent child state, mark event FAILED
               try {
                 const quarantinePath = `${targetChildPath}.quarantine.${Date.now()}`;
                 await fs.rename(targetChildPath, quarantinePath);
-                logger.warn(this.component, 'quarantined_malformed_child', { targetChildPath, quarantinePath, reason: integrity.reason });
+                logger.warn(this.component, 'quarantined_malformed_child', { targetChildPath, quarantinePath, errors: validation.errors });
               } catch {
                 try {
                   await fs.rm(targetChildPath, { force: true });
@@ -289,7 +302,7 @@ export class MitosisEngine {
               }
 
               record.status = 'FAILED';
-              record.error = `Inconsistent child storage quarantined: ${integrity.reason}`;
+              record.error = `Inconsistent child storage quarantined: ${validation.errors.join('; ')}`;
               await parent.memory.put({
                 id: eventKey,
                 cellId: parent.nodeId,
@@ -300,7 +313,7 @@ export class MitosisEngine {
                 updatedAt: new Date().toISOString(),
                 confidence: 1.0,
                 hash: '',
-                provenance: [parent.nodeId]
+                provenance: [parent.nodeId],
               });
 
               return {
@@ -316,7 +329,7 @@ export class MitosisEngine {
 
             // Case B: PENDING + valid child exists on disk, finalize COMMITTED
             logger.info(this.component, 'recovering_valid_child_and_finalizing_commit', { eventId, childCellId: record.childCellId });
-            let child = this.committedChildrenByEvent.get(eventId);
+            let child = validation.reconstructedChild || this.committedChildrenByEvent.get(eventId);
             if (!child) {
               try {
                 child = await Cell.loadFromStorage(
@@ -334,47 +347,8 @@ export class MitosisEngine {
               }
             }
 
-            if (!child) {
-              // Child cannot be reconstructed: MUST FAIL, NEVER COMMIT
-              try {
-                const quarantinePath = `${targetChildPath}.quarantine.${Date.now()}`;
-                await fs.rename(targetChildPath, quarantinePath);
-                logger.warn(this.component, 'quarantined_unreconstructible_child', { targetChildPath, quarantinePath });
-              } catch {
-                try {
-                  await fs.rm(targetChildPath, { force: true });
-                } catch {}
-              }
-
-              record.status = 'FAILED';
-              record.error = 'Child reconstruction failed during recovery: unable to load Cell';
-              await parent.memory.put({
-                id: eventKey,
-                cellId: parent.nodeId,
-                category: MemoryCategory.PROCEDURAL,
-                content: record,
-                source: 'mitosis_engine',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-                confidence: 1.0,
-                hash: '',
-                provenance: [parent.nodeId]
-              });
-
-              return {
-                child: undefined,
-                result: {
-                  success: false,
-                  parentCellId: parent.nodeId,
-                  eventId,
-                  generation: parent.genome.generation,
-                  errors: [record.error]
-                }
-              };
-            }
-
             const now = Date.now();
-            const childId = record.childCellId || (child ? child.nodeId : integrity.childNodeId || '');
+            const childId = record.childCellId || (child ? child.nodeId : validation.childNodeId || '');
             parent.cognitiveState.setMetadata('lastReproductionEvent', eventId);
             parent.cognitiveState.setMetadata('lastReproductionTimestamp', now.toString());
             parent.cognitiveState.setMetadata(`reproduction_event_${eventId}`, childId);
@@ -400,7 +374,6 @@ export class MitosisEngine {
               confidence: 1.0,
               hash: '',
               provenance: [parent.nodeId],
-              version: 1
             });
 
             // Persist COMMITTED record
@@ -422,7 +395,7 @@ export class MitosisEngine {
               updatedAt: new Date().toISOString(),
               confidence: 1.0,
               hash: '',
-              provenance: [parent.nodeId]
+              provenance: [parent.nodeId],
             });
 
             if (child) {
@@ -445,7 +418,7 @@ export class MitosisEngine {
             };
           } else {
             // Case A: PENDING + child does not exist on disk
-            // Safely resume reproduction or fail if policy rejects
+            // Safely resume reproduction
             logger.info(this.component, 'resuming_pending_event_no_child', { eventId });
           }
         }
@@ -467,7 +440,17 @@ export class MitosisEngine {
         };
       }
 
-      // 2. Governance Validation
+      // 2. Governance Validation & Atomic Population Ceiling Verification
+      let effectivePopulation = options.currentPopulation;
+      if (options.storageBasePath) {
+        try {
+          const diskPop = await countPersistedCells(options.storageBasePath);
+          if (diskPop > 0) {
+            effectivePopulation = Math.max(options.currentPopulation, diskPop);
+          }
+        } catch {}
+      }
+
       const memoryStats = parent.memory.getStats ? parent.memory.getStats() : { total: 0 };
       const logicalCapacity = this.governance.policyMemoryCapacity || 100;
       let realPressure = memoryStats.total / logicalCapacity;
@@ -475,19 +458,10 @@ export class MitosisEngine {
         realPressure = options.memoryPressure; // testing override
       }
 
-      let realPopulation = options.currentPopulation;
-      try {
-        const files = await fs.readdir(options.storageBasePath);
-        const diskCount = files.filter(f => f.startsWith('cell_') && f.endsWith('.json')).length;
-        realPopulation = Math.max(options.currentPopulation ?? 0, diskCount);
-      } catch (e) {
-        logger.warn(this.component, 'failed_to_count_population_dynamically', { error: e });
-      }
-
       const validation = this.governance.validateReproduction(
         parent.lifecycle.getState(),
         parentMetadata,
-        realPopulation,
+        effectivePopulation,
         realPressure,
         eventId,
         parent.nodeId,
@@ -511,7 +485,7 @@ export class MitosisEngine {
             updatedAt: new Date().toISOString(),
             confidence: 1.0,
             hash: '',
-            provenance: [parent.nodeId]
+            provenance: [parent.nodeId],
           });
         }
 
@@ -545,7 +519,7 @@ export class MitosisEngine {
         updatedAt: new Date().toISOString(),
         confidence: 1.0,
         hash: '',
-        provenance: [parent.nodeId]
+        provenance: [parent.nodeId],
       });
 
       logger.info(this.component, 'mitosis_started', { parentCellId: parent.nodeId, eventId });
@@ -579,7 +553,7 @@ export class MitosisEngine {
         updatedAt: new Date().toISOString(),
         confidence: 1.0,
         hash: '',
-        provenance: [parent.nodeId]
+        provenance: [parent.nodeId],
       });
 
       // Failure Hook 2: AFTER_CHILD_IDENTITY
@@ -669,8 +643,28 @@ export class MitosisEngine {
 
       // Initialize child memory store and persist its identity and genome
       await child.memory.initialize();
-      await child.restoreOrPersistIdentity(child.getStoragePath());
+      await child.restoreOrPersistIdentity(childStoragePath);
       await child.restoreOrPersistGenome();
+
+      // Persist cell origin entry recording reproduction event anchor
+      await child.memory.put({
+        id: `cell_origin_${childNodeId}`,
+        cellId: childNodeId,
+        category: MemoryCategory.PROCEDURAL,
+        content: {
+          eventId,
+          parentCellId: parent.nodeId,
+          generation: childGenome.generation,
+          lineageId: childGenome.lineageId,
+          createdAt: new Date().toISOString()
+        },
+        source: 'mitosis_engine',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        confidence: 1.0,
+        hash: '',
+        provenance: [parent.nodeId, eventId]
+      });
 
       // Failure Hook 3: AFTER_CHILD_STORAGE
       if (options.failureInjectionHook) {
@@ -682,65 +676,23 @@ export class MitosisEngine {
         await child.memory.put(entry);
       }
 
-      // Anchor reproduction origin record in child memory
-      await child.memory.put({
-        id: `cell_origin_${childNodeId}`,
-        cellId: childNodeId,
-        category: MemoryCategory.PROCEDURAL,
-        type: 'CELL_ORIGIN',
-        content: {
-          eventId,
-          parentCellId: parent.nodeId,
-          generation: childGenome.generation,
-          lineageId: childGenome.lineageId,
-          bornAt: new Date().toISOString()
-        },
-        source: 'mitosis_engine',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        confidence: 1.0,
-        hash: '',
-        provenance: [parent.nodeId, eventId],
-        version: 1
-      });
-
       // Failure Hook 4: AFTER_MEMORY_INHERITANCE
       if (options.failureInjectionHook) {
         await options.failureInjectionHook(ReproductionStage.AFTER_MEMORY_INHERITANCE);
       }
 
-      // STRICT VALIDATION: Validate child integrity across all invariants before committing
-      const childIntegrityCheck = await validateChildIntegrity(
+      // Validate child integrity before committing to parent state
+      const childPreValidation = await validatePersistedChildForEvent({
         childStoragePath,
-        parent.nodeId,
-        childGenome.generation,
+        expectedChildId: childNodeId,
+        parentCellId: parent.nodeId,
+        parentGeneration: parent.genome.generation,
         eventId,
-        childGenome.lineageId
-      );
-      if (!childIntegrityCheck.valid) {
-        throw new Error(`Child integrity check failed: ${childIntegrityCheck.reason}`);
-      }
+        openRouterApiKey: options.openRouterApiKey
+      });
 
-      // STRICT VALIDATION: Verify child is reconstructible from storage before committing
-      let verifiedReconstructedChild: Cell;
-      try {
-        verifiedReconstructedChild = await Cell.loadFromStorage(
-          childStoragePath,
-          options.openRouterApiKey,
-          undefined,
-          {
-            parentCellId: parent.nodeId,
-            generation: childGenome.generation,
-            lineageId: childGenome.lineageId,
-            specialization: childSpecialization
-          }
-        );
-      } catch (loadErr: any) {
-        throw new Error(`Child reconstruction failed before commit: ${loadErr.message}`);
-      }
-
-      if (!verifiedReconstructedChild) {
-        throw new Error('Child reconstruction returned null/undefined before commit');
+      if (!childPreValidation.valid) {
+        throw new Error(`Child integrity pre-validation failed: ${childPreValidation.errors.join(', ')}`);
       }
 
       // 8. Commit Protocol: Update parent state, cooldown, and event record
@@ -779,7 +731,7 @@ export class MitosisEngine {
           updatedAt: new Date().toISOString(),
           confidence: 1.0,
           hash: '',
-          provenance: [parent.nodeId]
+          provenance: [parent.nodeId],
         });
 
         // Failure Hook 6: AFTER_COOLDOWN_PERSISTENCE
@@ -822,7 +774,7 @@ export class MitosisEngine {
           updatedAt: new Date().toISOString(),
           confidence: 1.0,
           hash: '',
-          provenance: [parent.nodeId]
+          provenance: [parent.nodeId],
         });
 
         // Failure Hook 9: AFTER_COMMITTED_PERSISTENCE
@@ -848,7 +800,7 @@ export class MitosisEngine {
               updatedAt: new Date().toISOString(),
               confidence: 1.0,
               hash: '',
-              provenance: [parent.nodeId]
+              provenance: [parent.nodeId],
             });
           } catch {}
         }
@@ -912,7 +864,7 @@ export class MitosisEngine {
               updatedAt: new Date().toISOString(),
               confidence: 1.0,
               hash: '',
-              provenance: [parent.nodeId]
+              provenance: [parent.nodeId],
             });
           }
         } catch {}
@@ -928,13 +880,24 @@ export class MitosisEngine {
         }
       };
     } finally {
-      if (crossProcessLockAcquired) {
+      if (acquiredGlobalLock) {
         try {
-           await fs.rm(globalLockPath, { recursive: true, force: true });
-        } catch(e) {}
+          await fs.rmdir(globalLockDir);
+        } catch {}
       }
-      releaseLock();
+      // Release parent reproduction lock
+      try {
+        await releaseParentReproductionLock(
+          parent.storagePath,
+          parent.nodeId,
+          parentLockToken,
+          eventId,
+          options.storageBasePath
+        );
+      } catch {}
+      releaseInProcessLock();
     }
   }
 }
+
 

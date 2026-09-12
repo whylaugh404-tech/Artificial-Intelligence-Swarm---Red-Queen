@@ -1,0 +1,176 @@
+[
+  {
+    "id": "cell_genome_1af2832558dfc8a82bac55eb6771926d02d9cb9e77f57e1f0c73a5990d74db95",
+    "cellId": "1af2832558dfc8a82bac55eb6771926d02d9cb9e77f57e1f0c73a5990d74db95",
+    "category": "SEMANTIC",
+    "content": {
+      "genomeId": "9f142ffaf3a2470bb0aadafa0805fe92",
+      "parentGenomeId": null,
+      "parentCellId": null,
+      "generation": 0,
+      "lineageId": "9a68d7f940af424ca0f49a9a1dafbcad",
+      "createdAt": "2026-09-12T12:07:47.175Z",
+      "logicVersion": "1.0.0",
+      "traits": {
+        "mutationRate": 0.05,
+        "riskTolerance": 0.2,
+        "explorationVsExploitation": 0.5,
+        "maxCognitiveCycleDepth": 5
+      },
+      "capabilities": [
+        "OSINT_SCAN",
+        "INFO_PROCESSING",
+        "KNOWLEDGE_QUERY",
+        "COGNITIVE_REASONING",
+        "SWARM_COORDINATION"
+      ],
+      "specialization": null,
+      "genomeVersion": 1,
+      "ancestorGenomeIds": [],
+      "ancestorCellIds": []
+    },
+    "source": "cell_initialization",
+    "createdAt": "2026-09-12T12:07:47.188Z",
+    "updatedAt": "2026-09-12T12:07:47.188Z",
+    "confidence": 1,
+    "hash": "",
+    "provenance": [
+      "1af2832558dfc8a82bac55eb6771926d02d9cb9e77f57e1f0c73a5990d74db95"
+    ],
+    "version": 1
+  },
+  {
+    "id": "cognitive_state_1af2832558dfc8a82bac55eb6771926d02d9cb9e77f57e1f0c73a5990d74db95",
+    "cellId": "1af2832558dfc8a82bac55eb6771926d02d9cb9e77f57e1f0c73a5990d74db95",
+    "category": "SEMANTIC",
+    "content": {
+      "cellId": "1af2832558dfc8a82bac55eb6771926d02d9cb9e77f57e1f0c73a5990d74db95",
+      "lifecycleState": "ACTIVE",
+      "specialization": null,
+      "activeGoals": [],
+      "knowledgeReferences": [],
+      "conceptReferences": [],
+      "knowledgeGaps": [],
+      "operationalConfidence": 1,
+      "lastCognitiveUpdate": "2026-09-12T12:07:47.191Z",
+      "memoryStats": {
+        "total": 1,
+        "episodic": 0,
+        "semantic": 1,
+        "procedural": 0
+      },
+      "metadata": {}
+    },
+    "source": "cognitive_state_manager",
+    "createdAt": "2026-09-12T12:07:47.191Z",
+    "updatedAt": "2026-09-12T12:07:47.192Z",
+    "confidence": 1,
+    "hash": "",
+    "provenance": [
+      "1af2832558dfc8a82bac55eb6771926d02d9cb9e77f57e1f0c73a5990d74db95"
+    ],
+    "version": 1
+  },
+  {
+    "id": "membership_cert_1af2832558dfc8a82bac55eb6771926d02d9cb9e77f57e1f0c73a5990d74db95",
+    "content": {
+      "certificateId": "874b4e96-f0bf-4eb0-a1e7-7163329f417d",
+      "swarmId": "redqueen-swarm-e2e",
+      "memberNodeId": "1af2832558dfc8a82bac55eb6771926d02d9cb9e77f57e1f0c73a5990d74db95",
+      "memberPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA73m80q0sXYSuNtN8u7WhJ6Ob01N9CZAKJXHfVsntVqE=\n-----END PUBLIC KEY-----",
+      "issuerId": "b829aaa1aa858fbfa8166b4e481810937f0bc8d5b29c9757a3aee1da08d48e83",
+      "issuerPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAgTgMixZcq+lNEAsL9XVlOQ6a0O5Kx0HP479qBQpRN0M=\n-----END PUBLIC KEY-----",
+      "issuedAt": 1789214867199,
+      "expiresAt": 1789218467199,
+      "membershipVersion": 1,
+      "protocolVersion": 1,
+      "capabilities": [
+        "discovery",
+        "routing",
+        "computation",
+        "memory"
+      ],
+      "revocationEpoch": 0,
+      "signature": "ff22414b8624b02093e9e0fc93cb33939521b9422872294a030a3304a9002c95afac4ec8afabc5395a8a1d8e69d0289d24694d1f43503ad2ecfc6ad5c4bd120e"
+    },
+    "source": "swarm_membership",
+    "createdAt": "2026-09-12T12:07:47.199Z",
+    "updatedAt": "2026-09-12T12:07:47.203Z",
+    "confidence": 1,
+    "hash": "ff22414b8624b02093e9e0fc93cb33939521b9422872294a030a3304a9002c95afac4ec8afabc5395a8a1d8e69d0289d24694d1f43503ad2ecfc6ad5c4bd120e",
+    "provenance": [
+      "b829aaa1aa858fbfa8166b4e481810937f0bc8d5b29c9757a3aee1da08d48e83"
+    ],
+    "cellId": "1af2832558dfc8a82bac55eb6771926d02d9cb9e77f57e1f0c73a5990d74db95",
+    "category": "SEMANTIC",
+    "version": 1
+  },
+  {
+    "id": "membership_cert_58e63f183a5939ec72c28b2f8504f4567768ff3c3173ac8c1bd3600e144317d6",
+    "content": {
+      "certificateId": "fa6caad4-5643-4dd5-a443-c13f3b015e07",
+      "swarmId": "redqueen-swarm-e2e",
+      "memberNodeId": "58e63f183a5939ec72c28b2f8504f4567768ff3c3173ac8c1bd3600e144317d6",
+      "memberPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA9/klqWaEPsMF3UScF0NNaDnsBu7uzsMF2jFlDyH0PQo=\n-----END PUBLIC KEY-----",
+      "issuerId": "b829aaa1aa858fbfa8166b4e481810937f0bc8d5b29c9757a3aee1da08d48e83",
+      "issuerPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAgTgMixZcq+lNEAsL9XVlOQ6a0O5Kx0HP479qBQpRN0M=\n-----END PUBLIC KEY-----",
+      "issuedAt": 1789214867344,
+      "expiresAt": 1789218467344,
+      "membershipVersion": 1,
+      "protocolVersion": 1,
+      "capabilities": [
+        "discovery",
+        "routing",
+        "computation",
+        "memory"
+      ],
+      "revocationEpoch": 0,
+      "signature": "de2ea86d51c4e81a9864e02e66cdd940767f20a7dfea40ef4da514d126f16f14679ec1a79c6cfbf4e9d77d91802e42f1f40fe3546b2d5e7d971ade048b7f050d"
+    },
+    "source": "swarm_membership",
+    "createdAt": "2026-09-12T12:07:47.344Z",
+    "updatedAt": "2026-09-12T12:07:47.344Z",
+    "confidence": 1,
+    "hash": "de2ea86d51c4e81a9864e02e66cdd940767f20a7dfea40ef4da514d126f16f14679ec1a79c6cfbf4e9d77d91802e42f1f40fe3546b2d5e7d971ade048b7f050d",
+    "provenance": [
+      "b829aaa1aa858fbfa8166b4e481810937f0bc8d5b29c9757a3aee1da08d48e83"
+    ],
+    "cellId": "1af2832558dfc8a82bac55eb6771926d02d9cb9e77f57e1f0c73a5990d74db95",
+    "category": "SEMANTIC",
+    "version": 1
+  },
+  {
+    "id": "membership_cert_1827605d136061426d2db70efabebc3291fa8a0975862c8194869526cdced8d9",
+    "content": {
+      "certificateId": "1582bcea-63b6-4e47-ab9d-507b90d6b505",
+      "swarmId": "redqueen-swarm-e2e",
+      "memberNodeId": "1827605d136061426d2db70efabebc3291fa8a0975862c8194869526cdced8d9",
+      "memberPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAECTh9UmZerq39D9UsHRGtB/viXXTNv8/VfYvNbDGtWk=\n-----END PUBLIC KEY-----",
+      "issuerId": "b829aaa1aa858fbfa8166b4e481810937f0bc8d5b29c9757a3aee1da08d48e83",
+      "issuerPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAgTgMixZcq+lNEAsL9XVlOQ6a0O5Kx0HP479qBQpRN0M=\n-----END PUBLIC KEY-----",
+      "issuedAt": 1789214867351,
+      "expiresAt": 1789218467351,
+      "membershipVersion": 1,
+      "protocolVersion": 1,
+      "capabilities": [
+        "discovery",
+        "routing",
+        "computation",
+        "memory"
+      ],
+      "revocationEpoch": 0,
+      "signature": "f558a6e4367179d2b2ff880c66ee045ed86447710ddad0af7092a96339c497ebb0be74e173e85d77cef45d5801c35683742b2855b92567cfa4b464c7a018070b"
+    },
+    "source": "swarm_membership",
+    "createdAt": "2026-09-12T12:07:47.351Z",
+    "updatedAt": "2026-09-12T12:07:47.352Z",
+    "confidence": 1,
+    "hash": "f558a6e4367179d2b2ff880c66ee045ed86447710ddad0af7092a96339c497ebb0be74e173e85d77cef45d5801c35683742b2855b92567cfa4b464c7a018070b",
+    "provenance": [
+      "b829aaa1aa858fbfa8166b4e481810937f0bc8d5b29c9757a3aee1da08d48e83"
+    ],
+    "cellId": "1af2832558dfc8a82bac55eb6771926d02d9cb9e77f57e1f0c73a5990d74db95",
+    "category": "SEMANTIC",
+    "version": 1
+  }
+]
