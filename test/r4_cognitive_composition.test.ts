@@ -154,8 +154,24 @@ describe('R4: Cognitive Composition', () => {
     const res2 = composeCognitiveState({ ...baseParams, relations: customRelations2 });
 
     expect(res1.compositionId).not.toBe(res2.compositionId);
-    expect(res1.relationships[0].relationType).toBe('INFORMS');
-    expect(res2.relationships[0].relationType).toBe('OVERRULES');
+    
+    // Check that relationType was preserved structurally
+    const relationGraph1 = res1.resultingCognitiveState.relationGraph;
+    const relationGraph2 = res2.resultingCognitiveState.relationGraph;
+    
+    expect(relationGraph1).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ relationType: 'INFORMS', semantics: { weight: 0.8 } }),
+        expect.objectContaining({ relationType: 'MODULATES' })
+      ])
+    );
+
+    expect(relationGraph2).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ relationType: 'OVERRULES', semantics: { weight: 0.8 } }),
+        expect.objectContaining({ relationType: 'MODULATES' })
+      ])
+    );
   });
 
   it('5. changed topology → different identity', () => {

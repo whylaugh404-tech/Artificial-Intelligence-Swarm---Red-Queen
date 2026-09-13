@@ -112,19 +112,18 @@ export class CognitiveCompositionRule implements CompositionTransformationRule {
     const latencyBudget = latencies.length > 0 ? Math.min(...latencies) : 0;
     const effectiveCapacity = Math.round(totalCapacity * avgAvailability);
 
-    // 2. Relational Structural Graph
-    const relationGraph: Record<string, string[]> = {};
-    for (const rel of relations) {
-      if (!relationGraph[rel.sourceInputId]) {
-        relationGraph[rel.sourceInputId] = [];
-      }
-      relationGraph[rel.sourceInputId].push(rel.targetInputId);
-    }
-    // Sort keys and values for determinism
-    const sortedRelationGraph: Record<string, string[]> = {};
-    for (const key of Object.keys(relationGraph).sort()) {
-      sortedRelationGraph[key] = [...relationGraph[key]].sort();
-    }
+    // 2. Relational Structural Graph with Semantics
+    const relationGraph = relations.map(rel => ({
+      source: rel.sourceInputId,
+      target: rel.targetInputId,
+      relationType: rel.relationType,
+      semantics: rel.semantics
+    })).sort((a, b) => {
+      // Deterministic sort
+      const keyA = `${a.source}-${a.target}-${a.relationType}`;
+      const keyB = `${b.source}-${b.target}-${b.relationType}`;
+      return keyA.localeCompare(keyB);
+    });
 
     // 3. Specialization Alignment
     const specializations = computeInputs
@@ -152,7 +151,7 @@ export class CognitiveCompositionRule implements CompositionTransformationRule {
         memoryLimit: totalMemory,
         latencyBudget
       },
-      relationGraph: sortedRelationGraph,
+      relationGraph,
       specializationAlignment: uniqueSpecializations
     };
 

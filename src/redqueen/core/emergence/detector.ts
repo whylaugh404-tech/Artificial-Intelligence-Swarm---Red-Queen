@@ -150,7 +150,7 @@ export class EmergenceDetector {
       novelty,
       dependency,
       provenance: Array.from(combinedProvenance).sort(),
-      verificationStatus: 'VERIFIED',
+      verificationStatus: 'UNVERIFIED', // Default to UNVERIFIED pending external verification mechanism
       metadata: {
         detectionTimestamp: timestamp,
         ruleApplied: params.transformation.rule
@@ -184,7 +184,21 @@ export class EmergenceDetector {
 
     const obj = resultObj as Record<string, unknown>;
 
+    const EXCLUDED_KEYS = new Set([
+      'metadata',
+      'compositionTimestamp',
+      'traceId',
+      'compositionId',
+      'operationalBounds', // simple aggregation summary from R4, not genuine synthesis
+      'specializationAlignment',
+      'relationGraph',
+      'computeSummary'
+    ]);
+
     for (const [key, value] of Object.entries(obj)) {
+      if (EXCLUDED_KEYS.has(key)) {
+        continue;
+      }
       const fullPath = currentPath ? `${currentPath}.${key}` : key;
 
       // Check if this property exists in any input structure

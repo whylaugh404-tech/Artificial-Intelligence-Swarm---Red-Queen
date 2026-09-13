@@ -33,7 +33,12 @@ export const ResultingCognitiveStateSchema = z.object({
   contextDomain: z.string().min(1),
   integratedStructure: z.record(z.string(), z.unknown()),
   operationalBounds: OperationalBoundsSchema,
-  relationGraph: z.record(z.string(), z.array(z.string())),
+  relationGraph: z.array(z.object({
+    source: z.string().min(1),
+    target: z.string().min(1),
+    relationType: z.string().min(1),
+    semantics: z.record(z.string(), z.unknown()).optional()
+  })),
   specializationAlignment: z.array(z.string())
 });
 export type ResultingCognitiveState = z.infer<typeof ResultingCognitiveStateSchema>;

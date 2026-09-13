@@ -433,4 +433,24 @@ describe('R3: Digital Compute Partition', () => {
     expect(newState.computationalCapability.partitions).toHaveLength(2);
     expect(transition.changedFields).toEqual(['computationalCapability']);
   });
+
+  it('11. aggregation is explicitly derived summary and not composed performance', () => {
+    const p1 = createComputePartition({
+      cellIdentity: 'cell-alpha',
+      name: 'Partition 1',
+      architecture: 'neural',
+      capacity: 1000,
+      parallelism: 4,
+      memory: 8000,
+      specialization: 'graph',
+      availability: 1.0,
+      communicationProfile: { bandwidth: 100, latency: 10, topology: 'mesh', reliability: 0.9 }
+    });
+
+    const aggregate = aggregateCapabilities([p1]);
+    
+    // Check that communicationProfile indicates it is a derived summary
+    const commProfile = aggregate.communicationProfile as Record<string, unknown>;
+    expect(commProfile.isDerivedSummary).toBe(true);
+  });
 });

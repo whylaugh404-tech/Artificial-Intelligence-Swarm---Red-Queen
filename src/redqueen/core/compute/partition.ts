@@ -155,11 +155,14 @@ export function aggregateCapabilities(
   const avgReliability = sortedPartitions.reduce((sum, p) => sum + p.communicationProfile.reliability, 0) / sortedPartitions.length;
   const topologies = Array.from(new Set(sortedPartitions.map(p => p.communicationProfile.topology))).sort().join('+');
 
+  // Aggregate representasi adalah 'derived operational summary', 
+  // bukan jaminan 'actual composed performance' layaknya super CPU fisik.
   const communicationProfile: Record<string, unknown> = {
     bandwidth: totalBandwidth,
     latency: avgLatency,
     topology: topologies,
-    reliability: avgReliability
+    reliability: avgReliability,
+    isDerivedSummary: true
   };
 
   return {
