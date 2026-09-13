@@ -122,8 +122,10 @@ describe('P7.0 Step 5: Epistemic Fusion & Conflict Resolution', () => {
     // With effective mass = 2.0, W = 2.0: belief = 2/(2+2) = 0.50, uncertainty = 0.50
     expect(result.fusedState.opinion?.belief).toBeCloseTo(0.5, 4);
     expect(result.fusedState.opinion?.uncertainty).toBeCloseTo(0.5, 4);
-    expect(result.fusedState.status).toBe(EpistemicStatus.VERIFIED);
-    expect(result.fusedState.verificationStatus).toBe(RepresentationVerificationStatus.VERIFIED);
+    
+    // Fusion DOES NOT automatically VERIFY just because of independent mass.
+    expect(result.fusedState.status).toBe(EpistemicStatus.BELIEVED);
+    expect(result.fusedState.verificationStatus).toBe(RepresentationVerificationStatus.SUPPORTED);
   });
 
   // 3. CORRELATED → tidak double-count
@@ -139,9 +141,9 @@ describe('P7.0 Step 5: Epistemic Fusion & Conflict Resolution', () => {
 
     const resultCorrelated = fusionEngine.fuse([evA, evB], mockContext, edg);
 
-    // First evidence gives 1.0. Second is correlated (shared observation, confidence 0.85 in EDG)
-    // so it provides dynamically discounted mass: 1.0 - 0.85 = 0.15
-    expect(resultCorrelated.effectiveSupportMass).toBeCloseTo(1.15, 4);
+    // First evidence gives 1.0. Second is correlated (shared observation)
+    // so it provides exactly 0 independent mass.
+    expect(resultCorrelated.effectiveSupportMass).toBeCloseTo(1.0, 4);
     expect(resultCorrelated.effectiveSupportMass).toBeLessThan(2.0);
     expect(resultCorrelated.fusedState.opinion?.belief).toBeLessThan(0.5); // strictly less belief than independent
   });

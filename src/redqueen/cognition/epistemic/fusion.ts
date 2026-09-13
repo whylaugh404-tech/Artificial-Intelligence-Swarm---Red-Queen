@@ -255,12 +255,9 @@ export class EpistemicFusionEngine {
       verificationStatus = options?.previousState?.verificationStatus ?? RepresentationVerificationStatus.PENDING;
       epistemicStatus = options?.previousState?.status ?? EpistemicStatus.UNKNOWN;
     } else if (supportingItems.length > 0 && conflictingItems.length === 0) {
-      // Determine verificationStatus based on structural corroboration
-      // At least 2 independent fully-weighted items would result in mass >= 2.0
-      // Due to correlation, mass might be slightly less, but >= 1.5 indicates significant independent corroboration
-      const hasIndependentCorroboration = effectiveSupportMass >= 1.5;
-
-      if (hasIndependentCorroboration) {
+      // Fusion never escalates to VERIFIED merely based on mass or count of evidence.
+      // VERIFIED is only preserved if the representation was already VERIFIED.
+      if (options?.previousState?.verificationStatus === RepresentationVerificationStatus.VERIFIED) {
         verificationStatus = RepresentationVerificationStatus.VERIFIED;
       } else {
         verificationStatus = RepresentationVerificationStatus.SUPPORTED;
@@ -419,8 +416,8 @@ export class EpistemicFusionEngine {
             factor = 0.0; // Strictly zero additional mass
             break;
           case EvidenceDependencyType.CORRELATED:
-            // Dynamic discount based on confidence of correlation
-            factor = Math.max(0.0, 1.0 - (dep.confidence ?? 0.5));
+            // Correlated evidence does not provide independent additional support mass
+            factor = 0.0;
             break;
           case EvidenceDependencyType.UNKNOWN:
             // Conservative assumption: do not add independent mass if unknown
