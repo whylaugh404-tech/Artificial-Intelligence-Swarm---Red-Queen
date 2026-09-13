@@ -106,10 +106,21 @@ export class CompositionEngine {
     // Deterministic semantic hash generation for identities (does not include execution metadata like timestamp)
     const semanticPayload = {
       transformation: transformationType,
-      inputs: safeInputs.map(i => ({ type: i.type, structure: i.structure })), // actual content, not just ID
-      relations: safeRelations.map(r => ({ type: r.relationType, semantics: r.semantics })),
+      inputs: safeInputs.map(i => ({ inputId: i.inputId, type: i.type, structure: i.structure })), // actual content, not just ID
+      relations: safeRelations.map(r => ({
+        relationId: r.relationId,
+        sourceInputId: r.sourceInputId,
+        targetInputId: r.targetInputId,
+        type: r.relationType,
+        semantics: r.semantics
+      })),
       topology: safeTopology ? { arrangement: safeTopology.arrangementType, mapping: safeTopology.graphMapping } : null,
-      constraints: safeConstraints.map(c => ({ type: c.type, condition: c.condition })),
+      constraints: safeConstraints.map(c => ({
+        constraintId: c.constraintId,
+        targetInputId: c.targetInputId,
+        type: c.type,
+        condition: c.condition
+      })),
       context: { domain: safeContext.domain, parameters: safeContext.parameters }
     };
     

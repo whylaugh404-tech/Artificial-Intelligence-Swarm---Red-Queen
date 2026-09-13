@@ -218,6 +218,11 @@ describe('R1: Composition Primitive', () => {
     const rels: CompositionRelation[] = [{ relationId: 'r1', sourceInputId: '1', targetInputId: '2', relationType: 'LINK' }];
     const relResult = engine.compose('GRAPH_RULE', [i1, i2], rels, undefined, [], ctx);
     expect(relResult.resultId).not.toBe(baseResult.resultId);
+
+    // Relation direction changes (1->2 vs 2->1)
+    const relsReversed: CompositionRelation[] = [{ relationId: 'r1', sourceInputId: '2', targetInputId: '1', relationType: 'LINK' }];
+    const relReversedResult = engine.compose('GRAPH_RULE', [i1, i2], relsReversed, undefined, [], ctx);
+    expect(relReversedResult.resultId).not.toBe(relResult.resultId);
     
     // Topology changes
     const topology: CompositionTopology = { topologyId: 't1', arrangementType: 'CHAIN', graphMapping: { '1': ['2'] } };
@@ -228,6 +233,14 @@ describe('R1: Composition Primitive', () => {
     const constraints: CompositionConstraint[] = [{ constraintId: 'c1', type: 'LOGICAL', condition: { force: true } }];
     const constResult = engine.compose('GRAPH_RULE', [i1, i2], [], undefined, constraints, ctx);
     expect(constResult.resultId).not.toBe(baseResult.resultId);
+
+    // Constraint target changes
+    const constraintsTarget1: CompositionConstraint[] = [{ constraintId: 'c1', targetInputId: '1', type: 'LOGICAL', condition: { force: true } }];
+    const constraintsTarget2: CompositionConstraint[] = [{ constraintId: 'c1', targetInputId: '2', type: 'LOGICAL', condition: { force: true } }];
+    
+    const constTarget1Result = engine.compose('GRAPH_RULE', [i1, i2], [], undefined, constraintsTarget1, ctx);
+    const constTarget2Result = engine.compose('GRAPH_RULE', [i1, i2], [], undefined, constraintsTarget2, ctx);
+    expect(constTarget1Result.resultId).not.toBe(constTarget2Result.resultId);
   });
 
   it('should safely fail when rule cannot apply', () => {
