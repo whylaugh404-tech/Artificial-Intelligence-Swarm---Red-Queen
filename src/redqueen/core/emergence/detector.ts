@@ -92,7 +92,8 @@ export class EmergenceDetector {
     const interDependencies = (params.relationships ?? []).map(r => ({
       source: r.sourceInputId,
       target: r.targetInputId,
-      type: r.relationType
+      type: r.relationType,
+      semantics: r.semantics
     }));
 
     const dependency: EmergenceDependency = {
@@ -328,7 +329,8 @@ export function detectCognitiveEmergence(
     relationships: cognitiveResult.relationships.map(r => ({
       sourceInputId: r.sourceInputId,
       targetInputId: r.targetInputId,
-      relationType: r.relationType
+      relationType: r.relationType,
+      semantics: r.semantics
     })),
     provenance: cognitiveResult.provenance,
     deterministicTimestamp: options?.deterministicTimestamp

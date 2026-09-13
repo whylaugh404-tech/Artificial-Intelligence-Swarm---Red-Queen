@@ -36,7 +36,8 @@ export const EmergenceDependencySchema = z.object({
     z.object({
       source: z.string().min(1),
       target: z.string().min(1),
-      type: z.string().min(1)
+      type: z.string().min(1),
+      semantics: z.record(z.string(), z.unknown()).optional()
     })
   )
 });
@@ -100,6 +101,7 @@ export interface DetectEmergenceParams {
     sourceInputId: string;
     targetInputId: string;
     relationType: string;
+    semantics?: Record<string, unknown>;
   }>;
   provenance: string[];
   deterministicTimestamp?: string;

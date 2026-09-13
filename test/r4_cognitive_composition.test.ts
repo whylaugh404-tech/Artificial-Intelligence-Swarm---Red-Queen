@@ -138,7 +138,7 @@ describe('R4: Cognitive Composition', () => {
         relationId: 'rel-1',
         sourceInputId: 'input_knowledge_cell-alpha',
         targetInputId: 'input_reasoning_cell-alpha',
-        relationType: 'OVERRULES', // changed relation type
+        relationType: 'CONTRADICTS', // changed relation type to CONTRADICTS
         semantics: { weight: 0.8 }
       },
       {
@@ -168,7 +168,7 @@ describe('R4: Cognitive Composition', () => {
 
     expect(relationGraph2).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ relationType: 'OVERRULES', semantics: { weight: 0.8 } }),
+        expect.objectContaining({ relationType: 'CONTRADICTS', semantics: { weight: 0.8 } }),
         expect.objectContaining({ relationType: 'MODULATES' })
       ])
     );

@@ -198,4 +198,87 @@ describe('R5: Emergence Model & Detection', () => {
     expect(emergentState.provenance).toContain(sampleCognitiveComposition.transformation.traceId);
     expect(emergentState.provenance).toContain(basePartition.partitionId);
   });
+
+  it('9. metadata-only addition bukan otomatis emergence', () => {
+    const detector = new EmergenceDetector();
+
+    // Result only adds metadata / trace / observation fields to input_a
+    const metadataOnlyParams: DetectEmergenceParams = {
+      ...baseParams,
+      resultingStructure: {
+        mode: 'static',
+        level: 1,
+        metadata: { observation: 'monitored', inspector: 'agent-1' },
+        traceId: 'trace-meta-999',
+        compositionTimestamp: '2026-09-13T07:00:00.000Z'
+      }
+    };
+
+    const outcome = detector.detect(metadataOnlyParams);
+    expect(outcome.isEmergent).toBe(false);
+    expect(outcome.emergentState).toBeUndefined();
+  });
+
+  it('10. simple aggregation bukan otomatis emergence', () => {
+    const detector = new EmergenceDetector();
+
+    // Result only contains simple aggregate summary (e.g. operationalBounds, computeSummary)
+    const aggregateOnlyParams: DetectEmergenceParams = {
+      ...baseParams,
+      resultingStructure: {
+        mode: 'static',
+        level: 1,
+        operationalBounds: { allocatedParallelism: 4, effectiveCapacity: 1000 },
+        computeSummary: { totalNodes: 2 }
+      }
+    };
+
+    const outcome = detector.detect(aggregateOnlyParams);
+    expect(outcome.isEmergent).toBe(false);
+    expect(outcome.emergentState).toBeUndefined();
+  });
+
+  it('11. relation semantics memengaruhi emergence identity', () => {
+    const detector = new EmergenceDetector();
+
+    const outcomeInforms = detector.detect({
+      ...baseParams,
+      relationships: [
+        {
+          sourceInputId: 'input_a',
+          targetInputId: 'input_b',
+          relationType: 'INFORMS',
+          semantics: { confidence: 0.95 }
+        }
+      ]
+    });
+
+    const outcomeContradicts = detector.detect({
+      ...baseParams,
+      relationships: [
+        {
+          sourceInputId: 'input_a',
+          targetInputId: 'input_b',
+          relationType: 'CONTRADICTS',
+          semantics: { confidence: 0.95 }
+        }
+      ]
+    });
+
+    expect(outcomeInforms.isEmergent).toBe(true);
+    expect(outcomeContradicts.isEmergent).toBe(true);
+    expect(outcomeInforms.emergentState?.emergenceId).not.toBe(
+      outcomeContradicts.emergentState?.emergenceId
+    );
+  });
+
+  it('12. detector tidak mengklaim VERIFIED tanpa verification', () => {
+    const detector = new EmergenceDetector();
+    const outcome = detector.detect(baseParams);
+
+    expect(outcome.isEmergent).toBe(true);
+    // Must be UNVERIFIED because no verification engine has validated it yet
+    expect(outcome.emergentState?.verificationStatus).toBe('UNVERIFIED');
+    expect(outcome.emergentState?.verificationStatus).not.toBe('VERIFIED');
+  });
 });
