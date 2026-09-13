@@ -25,13 +25,17 @@ export class MitosisReconciler {
        mitosisId,
        parentId: parentState.stateId,
        partDist: spec.partitionDistribution,
-       memDist: spec.memoryDistribution
+       memDist: spec.memoryDistribution,
+       knowDist: spec.knowledgeDistribution,
+       cogDist: spec.cognitiveDistribution,
+       reasonDist: spec.reasoningDistribution,
+       expDist: spec.experienceDistribution
     }));
 
     const childAIdentity = `${parentState.cellIdentity}_A_${specSignature}`;
     const childBIdentity = `${parentState.cellIdentity}_B_${specSignature}`;
 
-    // Distribution helper for shallow state sections (Memory, Knowledge)
+    // Distribution helper for shallow state sections
     const distributeState = (source: Record<string, unknown>, distributionKeys: string[]) => {
       const result: Record<string, unknown> = {};
       const keySet = new Set(distributionKeys);
@@ -45,6 +49,18 @@ export class MitosisReconciler {
 
     const memoryA = distributeState(parentState.memoryState, spec.memoryDistribution.childA);
     const memoryB = distributeState(parentState.memoryState, spec.memoryDistribution.childB);
+
+    const knowledgeA = distributeState(parentState.knowledgeState, spec.knowledgeDistribution.childA);
+    const knowledgeB = distributeState(parentState.knowledgeState, spec.knowledgeDistribution.childB);
+
+    const cognitiveA = distributeState(parentState.cognitiveState, spec.cognitiveDistribution.childA);
+    const cognitiveB = distributeState(parentState.cognitiveState, spec.cognitiveDistribution.childB);
+
+    const reasoningA = distributeState(parentState.reasoningState, spec.reasoningDistribution.childA);
+    const reasoningB = distributeState(parentState.reasoningState, spec.reasoningDistribution.childB);
+
+    const experienceA = distributeState(parentState.experienceState, spec.experienceDistribution.childA);
+    const experienceB = distributeState(parentState.experienceState, spec.experienceDistribution.childB);
 
     // Compute partitions must be re-bound to the child's identity to maintain ownership determinism
     const parentPartitions = parentState.computationalCapability.partitions || [];
@@ -60,10 +76,10 @@ export class MitosisReconciler {
       cellIdentity: childAIdentity,
       genomeReference: parentState.genomeReference,
       memoryState: memoryA,
-      knowledgeState: parentState.knowledgeState, 
-      cognitiveState: parentState.cognitiveState,
-      reasoningState: parentState.reasoningState,
-      experienceState: parentState.experienceState,
+      knowledgeState: knowledgeA, 
+      cognitiveState: cognitiveA,
+      reasoningState: reasoningA,
+      experienceState: experienceA,
       computationalCapability: aggregateCapabilities(childAPartitions),
       specializations: spec.differentiationProfileA,
       lifecycle: parentState.lifecycle,
@@ -74,10 +90,10 @@ export class MitosisReconciler {
       cellIdentity: childBIdentity,
       genomeReference: parentState.genomeReference,
       memoryState: memoryB,
-      knowledgeState: parentState.knowledgeState, 
-      cognitiveState: parentState.cognitiveState,
-      reasoningState: parentState.reasoningState,
-      experienceState: parentState.experienceState,
+      knowledgeState: knowledgeB, 
+      cognitiveState: cognitiveB,
+      reasoningState: reasoningB,
+      experienceState: experienceB,
       computationalCapability: aggregateCapabilities(childBPartitions),
       specializations: spec.differentiationProfileB,
       lifecycle: parentState.lifecycle,
@@ -101,11 +117,19 @@ export class MitosisReconciler {
         childA: { 
           inheritedPartitions: childAPartitions.length, 
           inheritedMemoryKeys: Object.keys(memoryA).length,
+          inheritedKnowledgeKeys: Object.keys(knowledgeA).length,
+          inheritedCognitiveKeys: Object.keys(cognitiveA).length,
+          inheritedReasoningKeys: Object.keys(reasoningA).length,
+          inheritedExperienceKeys: Object.keys(experienceA).length,
           specializationFocus: spec.differentiationProfileA.map(s => s.domain)
         },
         childB: { 
           inheritedPartitions: childBPartitions.length, 
           inheritedMemoryKeys: Object.keys(memoryB).length,
+          inheritedKnowledgeKeys: Object.keys(knowledgeB).length,
+          inheritedCognitiveKeys: Object.keys(cognitiveB).length,
+          inheritedReasoningKeys: Object.keys(reasoningB).length,
+          inheritedExperienceKeys: Object.keys(experienceB).length,
           specializationFocus: spec.differentiationProfileB.map(s => s.domain)
         }
       },

@@ -1,6 +1,7 @@
 import { MitosisReconciliationResult } from '../mitosis_reconciliation/types';
 import { CompatibilityValidationResult } from './types';
 import { CellState } from '../state/types';
+import { CognitiveConceptSchema, CognitiveRelationSchema } from '../../cognition/representation/types';
 
 export class ArchitecturalCompatibilityValidator {
   
@@ -27,9 +28,50 @@ export class ArchitecturalCompatibilityValidator {
     this.validateProvenance(result.childB, result.mitosisId, anomalies);
 
     // 4. Cognitive & Memory Structure Continuity (R4 / P5)
-    // Children must inherit structures exactly without spontaneous mutations, 
-    // explicit differentiation metadata tracks the slicing.
+    this.validateCognitiveContinuity(result.childA, anomalies);
+    this.validateCognitiveContinuity(result.childB, anomalies);
+
+    return {
+      status: anomalies.length === 0 ? 'COMPATIBLE' : 'INCOMPATIBLE',
+      reasons: anomalies.map(a => `[${a.component}] ${a.issue}`),
+      anomalies
+    };
+  }
+
+  public validateP5Representation(payload: unknown, type: 'CONCEPT' | 'RELATION'): CompatibilityValidationResult {
+    const anomalies: Array<{component: string, issue: string}> = [];
     
+    try {
+      if (type === 'CONCEPT') {
+        CognitiveConceptSchema.parse(payload);
+      } else if (type === 'RELATION') {
+        CognitiveRelationSchema.parse(payload);
+      } else {
+        throw new Error('Unknown representation type');
+      }
+    } catch (error: any) {
+      // Fail closed
+      anomalies.push({
+        component: 'P5_REPRESENTATION',
+        issue: `Schema validation failed: ${error.message}`
+      });
+    }
+
+    // Explicit checking for fail-closed requirements
+    if (type === 'CONCEPT' && anomalies.length === 0) {
+      const concept = payload as any;
+      if (!concept.provenance || concept.provenance.length === 0) {
+         anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Concept missing provenance' });
+      }
+    }
+
+    if (type === 'RELATION' && anomalies.length === 0) {
+      const relation = payload as any;
+      if (!relation.subjectConceptId || !relation.objectConceptId) {
+         anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Relation missing subject or object' });
+      }
+    }
+
     return {
       status: anomalies.length === 0 ? 'COMPATIBLE' : 'INCOMPATIBLE',
       reasons: anomalies.map(a => `[${a.component}] ${a.issue}`),
@@ -57,6 +99,17 @@ export class ArchitecturalCompatibilityValidator {
         component: 'R5_EMERGENCE',
         issue: `Child ${child.cellIdentity} is missing mitosis provenance trace`
       });
+    }
+  }
+
+  private validateCognitiveContinuity(child: CellState, anomalies: Array<{component: string, issue: string}>) {
+    // If the child has any cognitive/knowledge keys, we assume they are valid if they exist, 
+    // but we want to ensure basic continuity (e.g., state objects are defined)
+    if (!child.knowledgeState || !child.cognitiveState || !child.reasoningState || !child.experienceState) {
+       anomalies.push({
+         component: 'R4_COGNITIVE',
+         issue: `Child ${child.cellIdentity} has missing cognitive structure sections`
+       });
     }
   }
 }

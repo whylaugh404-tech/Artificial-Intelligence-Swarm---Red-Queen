@@ -6,7 +6,7 @@ export const PartitionDistributionSchema = z.object({
   childB: z.array(z.string())
 });
 
-export const MemoryDistributionSchema = z.object({
+export const StateDistributionSchema = z.object({
   childA: z.array(z.string()),
   childB: z.array(z.string())
 });
@@ -17,7 +17,11 @@ export const MitosisSpecificationSchema = z.object({
   differentiationProfileA: z.array(CellSpecializationSchema),
   differentiationProfileB: z.array(CellSpecializationSchema),
   partitionDistribution: PartitionDistributionSchema,
-  memoryDistribution: MemoryDistributionSchema,
+  memoryDistribution: StateDistributionSchema,
+  knowledgeDistribution: StateDistributionSchema,
+  cognitiveDistribution: StateDistributionSchema,
+  reasoningDistribution: StateDistributionSchema,
+  experienceDistribution: StateDistributionSchema,
   deterministicTimestamp: z.string().datetime().optional()
 });
 
