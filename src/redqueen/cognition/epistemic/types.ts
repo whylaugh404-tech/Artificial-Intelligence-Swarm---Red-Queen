@@ -52,7 +52,60 @@ export const EpistemicStateSchema = z.object({
   status: EpistemicStatusSchema,
   verificationStatus: RepresentationVerificationStatusSchema,
   context: ContextSchema,
-  rawConfidence: z.number().min(0).max(1).optional()
+  rawConfidence: z.number().min(0).max(1).optional(),
+  previousStateId: z.string().optional(),
+  transitionReason: z.string().optional(),
+  evidenceIds: z.array(z.string()).optional(),
+  createdAt: z.string().datetime().optional()
 });
 
 export type EpistemicState = z.infer<typeof EpistemicStateSchema>;
+
+export function freezeEpistemicState(state: EpistemicState): Readonly<EpistemicState> {
+  const frozen = { ...state };
+  if (frozen.opinion) {
+    frozen.opinion = Object.freeze({ ...frozen.opinion });
+  }
+  if (frozen.context) {
+    frozen.context = freezeContext(frozen.context) as any;
+  }
+  if (frozen.evidenceIds) {
+    frozen.evidenceIds = Object.freeze([...frozen.evidenceIds]) as any;
+  }
+  return Object.freeze(frozen);
+}
+
+export enum EpistemicTransitionTrigger {
+  EVIDENCE_OBSERVED = 'EVIDENCE_OBSERVED',
+  FUSION_APPLIED = 'FUSION_APPLIED',
+  EXPLICIT_VERIFICATION = 'EXPLICIT_VERIFICATION',
+  CONTRADICTION_DETECTED = 'CONTRADICTION_DETECTED',
+  CONFLICT_FLAGGED = 'CONFLICT_FLAGGED',
+  CONTEXT_SHIFT = 'CONTEXT_SHIFT'
+}
+
+export const EpistemicTransitionTriggerSchema = z.nativeEnum(EpistemicTransitionTrigger);
+
+export const CognitiveTransitionRecordSchema = z.object({
+  transitionId: z.string().min(1),
+  targetRepresentationId: z.string().min(1),
+  previousStateId: z.string().optional(),
+  previousStatus: EpistemicStatusSchema.optional(),
+  nextStateId: z.string().min(1),
+  nextStatus: EpistemicStatusSchema,
+  context: ContextSchema,
+  trigger: EpistemicTransitionTriggerSchema,
+  reason: z.string().min(1),
+  evidenceIds: z.array(z.string()).default([]),
+  hasConflict: z.boolean().default(false),
+  timestamp: z.string().datetime()
+});
+
+export type CognitiveTransitionRecord = z.infer<typeof CognitiveTransitionRecordSchema>;
+
+export function freezeTransitionRecord(rec: CognitiveTransitionRecord): Readonly<CognitiveTransitionRecord> {
+  const frozen = { ...rec };
+  frozen.context = freezeContext(frozen.context) as any;
+  frozen.evidenceIds = Object.freeze([...frozen.evidenceIds]) as any;
+  return Object.freeze(frozen);
+}

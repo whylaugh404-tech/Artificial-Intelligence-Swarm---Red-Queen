@@ -18,7 +18,21 @@ import {
   StructuralSignature
 } from './types';
 import { InformationCategory } from '../../metabolism/types';
-import { EpistemicState, EpistemicStateSchema, Context } from '../epistemic/types';
+import {
+  EpistemicState,
+  EpistemicStateSchema,
+  Context,
+  EpistemicStatus,
+  EpistemicTransitionTrigger,
+  CognitiveTransitionRecord,
+  CognitiveTransitionRecordSchema,
+  freezeTransitionRecord
+} from '../epistemic/types';
+import {
+  CognitiveStateTransitionEngine,
+  TransitionInput,
+  TransitionOutput
+} from '../epistemic/transition';
 import { Evidence, EvidenceSchema, freezeEvidence, EvidenceDependency, EvidenceDependencySchema } from '../evidence/types';
 import { EvidenceDependencyGraph } from '../evidence/graph';
 import { EpistemicFusionEngine, EpistemicFusionResult, AttributedEvidence } from '../epistemic/fusion';
@@ -51,6 +65,9 @@ export class CognitiveGraph {
   private readonly epistemicStates: Map<string, EpistemicState> = new Map();
   private readonly evidences: Map<string, Evidence> = new Map();
   private readonly edg: EvidenceDependencyGraph = new EvidenceDependencyGraph();
+  private readonly transitions: Map<string, CognitiveTransitionRecord> = new Map();
+  private readonly repEpistemicIndex: Map<string, string> = new Map();
+  private readonly transitionEngine: CognitiveStateTransitionEngine = new CognitiveStateTransitionEngine();
 
   // Adjacency indices for rapid relationship lookups
   private readonly outgoingRelations: Map<string, Set<string>> = new Map();
@@ -283,41 +300,80 @@ export class CognitiveGraph {
     const conceptA = this.concepts.get(conceptIdA);
     const conceptB = this.concepts.get(conceptIdB);
 
-    // Conflict metadata recorded on concepts without destroying them
+    // Conflict metadata recorded on concepts without destroying them (non-destructive)
     if (conceptA) {
-      conceptA.verificationStatus = RepresentationVerificationStatus.CONTRADICTED;
-      if (conceptA.epistemicStateId) {
-        const esA = this.epistemicStates.get(conceptA.epistemicStateId);
-        if (esA) {
-          esA.status = EpistemicAdapter.evaluateStatus(RepresentationVerificationStatus.CONTRADICTED, esA.opinion);
-          esA.verificationStatus = RepresentationVerificationStatus.CONTRADICTED;
-          await this.insertEpistemicState(esA);
-        }
-      }
       conceptA.metadata = {
         ...conceptA.metadata,
         conflictingConceptIds: Array.from(
           new Set([...((conceptA.metadata?.conflictingConceptIds as string[]) || []), conceptIdB])
         )
       };
+
+      const esA = conceptA.epistemicStateId ? this.epistemicStates.get(conceptA.epistemicStateId) : undefined;
+      const ctxA: Context = esA?.context || {
+        contextId: `ctx_conflict_${conceptIdA}`,
+        domain: 'CONFLICT_RESOLUTION'
+      };
+
+      const outputA = this.transitionEngine.transition({
+        targetRepresentationId: conceptIdA,
+        previousState: esA,
+        context: ctxA,
+        trigger: EpistemicTransitionTrigger.CONFLICT_FLAGGED,
+        reason: `Preserved conflict with concept ${conceptIdB}: ${reason}`
+      });
+
+      await this.insertEpistemicState(outputA.nextState);
+      this.transitions.set(outputA.transitionRecord.transitionId, outputA.transitionRecord);
+      await this.persistEntry(
+        outputA.transitionRecord.transitionId,
+        'COGNITIVE_STATE_TRANSITION',
+        outputA.transitionRecord,
+        1.0,
+        [this.cellId]
+      );
+      this.repEpistemicIndex.set(`${conceptIdA}::${ctxA.contextId}`, outputA.nextState.stateId);
+
+      conceptA.epistemicStateId = outputA.nextState.stateId;
+      conceptA.verificationStatus = outputA.nextState.verificationStatus;
       await this.persistEntry(conceptA.conceptId, 'COGNITIVE_CONCEPT', conceptA, conceptA.confidence, conceptA.provenance);
     }
+
     if (conceptB) {
-      conceptB.verificationStatus = RepresentationVerificationStatus.CONTRADICTED;
-      if (conceptB.epistemicStateId) {
-        const esB = this.epistemicStates.get(conceptB.epistemicStateId);
-        if (esB) {
-          esB.status = EpistemicAdapter.evaluateStatus(RepresentationVerificationStatus.CONTRADICTED, esB.opinion);
-          esB.verificationStatus = RepresentationVerificationStatus.CONTRADICTED;
-          await this.insertEpistemicState(esB);
-        }
-      }
       conceptB.metadata = {
         ...conceptB.metadata,
         conflictingConceptIds: Array.from(
           new Set([...((conceptB.metadata?.conflictingConceptIds as string[]) || []), conceptIdA])
         )
       };
+
+      const esB = conceptB.epistemicStateId ? this.epistemicStates.get(conceptB.epistemicStateId) : undefined;
+      const ctxB: Context = esB?.context || {
+        contextId: `ctx_conflict_${conceptIdB}`,
+        domain: 'CONFLICT_RESOLUTION'
+      };
+
+      const outputB = this.transitionEngine.transition({
+        targetRepresentationId: conceptIdB,
+        previousState: esB,
+        context: ctxB,
+        trigger: EpistemicTransitionTrigger.CONFLICT_FLAGGED,
+        reason: `Preserved conflict with concept ${conceptIdA}: ${reason}`
+      });
+
+      await this.insertEpistemicState(outputB.nextState);
+      this.transitions.set(outputB.transitionRecord.transitionId, outputB.transitionRecord);
+      await this.persistEntry(
+        outputB.transitionRecord.transitionId,
+        'COGNITIVE_STATE_TRANSITION',
+        outputB.transitionRecord,
+        1.0,
+        [this.cellId]
+      );
+      this.repEpistemicIndex.set(`${conceptIdB}::${ctxB.contextId}`, outputB.nextState.stateId);
+
+      conceptB.epistemicStateId = outputB.nextState.stateId;
+      conceptB.verificationStatus = outputB.nextState.verificationStatus;
       await this.persistEntry(conceptB.conceptId, 'COGNITIVE_CONCEPT', conceptB, conceptB.confidence, conceptB.provenance);
     }
 
@@ -786,6 +842,195 @@ export class CognitiveGraph {
     return validated;
   }
 
+  /**
+   * P7.0 Step 6: Cognitive State Transition Execution
+   * 
+   * Deterministically transitions a cognitive representation's epistemic state:
+   * S(t+1) = Transition(S(t), E(t), F(t), C(t))
+   */
+  public async transitionRepresentationState(
+    targetRepresentationId: string,
+    evidences: Array<AttributedEvidence | Evidence>,
+    context: Context,
+    options?: {
+      explicitVerification?: {
+        status: RepresentationVerificationStatus;
+        verifiedBy?: string;
+        proof?: string;
+      };
+      trigger?: EpistemicTransitionTrigger;
+      reason?: string;
+      customStateId?: string;
+      customTransitionId?: string;
+      deterministicTimestamp?: string;
+      fusionResult?: EpistemicFusionResult;
+    }
+  ): Promise<{
+    nextState: Readonly<EpistemicState>;
+    transitionRecord: Readonly<CognitiveTransitionRecord>;
+    fusionResult?: Readonly<EpistemicFusionResult>;
+  }> {
+    // 1. Locate previous epistemic state for target representation in this context
+    const previousState = this.getEpistemicStateForRepresentation(
+      targetRepresentationId,
+      context.contextId
+    );
+
+    // 2. Execute deterministic transition via transition engine
+    const output = this.transitionEngine.transition({
+      targetRepresentationId,
+      previousState,
+      evidences,
+      fusionResult: options?.fusionResult,
+      context,
+      edg: this.edg,
+      explicitVerification: options?.explicitVerification,
+      trigger: options?.trigger,
+      reason: options?.reason,
+      customStateId: options?.customStateId,
+      customTransitionId: options?.customTransitionId,
+      deterministicTimestamp: options?.deterministicTimestamp
+    });
+
+    // 3. Persist new epistemic state
+    await this.insertEpistemicState(output.nextState);
+
+    // 4. Record and persist transition record
+    this.transitions.set(output.transitionRecord.transitionId, output.transitionRecord);
+    await this.persistEntry(
+      output.transitionRecord.transitionId,
+      'COGNITIVE_STATE_TRANSITION',
+      output.transitionRecord,
+      1.0,
+      [this.cellId]
+    );
+
+    // 5. Index representation to state in this context
+    this.repEpistemicIndex.set(
+      `${targetRepresentationId}::${context.contextId}`,
+      output.nextState.stateId
+    );
+
+    // 6. Update structural representation in the graph
+    await this.updateRepresentationEpistemicBinding(
+      targetRepresentationId,
+      output.nextState.stateId,
+      output.nextState.verificationStatus,
+      output.nextState.rawConfidence
+    );
+
+    return output;
+  }
+
+  private async updateRepresentationEpistemicBinding(
+    representationId: string,
+    stateId: string,
+    verificationStatus: RepresentationVerificationStatus,
+    confidence?: number
+  ): Promise<void> {
+    const concept = this.concepts.get(representationId);
+    if (concept) {
+      concept.epistemicStateId = stateId;
+      concept.verificationStatus = verificationStatus;
+      if (confidence !== undefined) concept.confidence = confidence;
+      await this.persistEntry(concept.conceptId, 'COGNITIVE_CONCEPT', concept, concept.confidence, concept.provenance);
+      return;
+    }
+
+    const relation = this.relations.get(representationId);
+    if (relation) {
+      relation.epistemicStateId = stateId;
+      relation.verificationStatus = verificationStatus;
+      if (confidence !== undefined) relation.confidence = confidence;
+      await this.persistEntry(relation.relationId, 'COGNITIVE_RELATION', relation, relation.confidence, relation.provenance);
+      return;
+    }
+
+    const abstraction = this.abstractions.get(representationId);
+    if (abstraction) {
+      abstraction.epistemicStateId = stateId;
+      abstraction.verificationStatus = verificationStatus;
+      if (confidence !== undefined) abstraction.confidence = confidence;
+      await this.persistEntry(abstraction.abstractionId, 'COGNITIVE_ABSTRACTION', abstraction, abstraction.confidence, abstraction.provenance);
+      return;
+    }
+
+    const generalization = this.generalizations.get(representationId);
+    if (generalization) {
+      generalization.epistemicStateId = stateId;
+      generalization.verificationStatus = verificationStatus;
+      if (confidence !== undefined) generalization.confidence = confidence;
+      await this.persistEntry(generalization.generalizationId, 'COGNITIVE_GENERALIZATION', generalization, generalization.confidence, generalization.provenance);
+      return;
+    }
+
+    const analogy = this.analogies.get(representationId);
+    if (analogy) {
+      analogy.epistemicStateId = stateId;
+      analogy.verificationStatus = verificationStatus;
+      if (confidence !== undefined) analogy.confidence = confidence;
+      await this.persistEntry(analogy.analogyId, 'COGNITIVE_ANALOGY', analogy, analogy.confidence, analogy.provenance);
+      return;
+    }
+  }
+
+  public getTransition(transitionId: string): CognitiveTransitionRecord | undefined {
+    return this.transitions.get(transitionId);
+  }
+
+  public getAllTransitions(): CognitiveTransitionRecord[] {
+    return Array.from(this.transitions.values());
+  }
+
+  public getTransitionsForRepresentation(targetRepresentationId: string): CognitiveTransitionRecord[] {
+    return Array.from(this.transitions.values()).filter(
+      t => t.targetRepresentationId === targetRepresentationId
+    );
+  }
+
+  public getEpistemicStateForRepresentation(
+    representationId: string,
+    contextId?: string
+  ): EpistemicState | undefined {
+    if (contextId) {
+      const indexedStateId = this.repEpistemicIndex.get(`${representationId}::${contextId}`);
+      if (indexedStateId) {
+        return this.epistemicStates.get(indexedStateId);
+      }
+    }
+
+    const rep =
+      this.concepts.get(representationId) ||
+      this.relations.get(representationId) ||
+      this.abstractions.get(representationId) ||
+      this.generalizations.get(representationId) ||
+      this.analogies.get(representationId);
+
+    if (rep && (rep as any).epistemicStateId) {
+      const state = this.epistemicStates.get((rep as any).epistemicStateId);
+      if (state && (!contextId || state.context.contextId === contextId)) {
+        return state;
+      }
+    }
+
+    const transitions = this.getTransitionsForRepresentation(representationId);
+    if (transitions.length > 0) {
+      const filtered = contextId
+        ? transitions.filter(t => t.context.contextId === contextId)
+        : transitions;
+      if (filtered.length > 0) {
+        const latest = filtered[filtered.length - 1];
+        return this.epistemicStates.get(latest.nextStateId);
+      }
+    }
+
+    return undefined;
+  }
+
+  public getTransitionEngine(): CognitiveStateTransitionEngine {
+    return this.transitionEngine;
+  }
+
   public getAllConflicts(): CognitiveRelation[] {
     return this.getAllRelations().filter(r => r.predicate === CognitiveRelationPredicate.CONTRADICTS);
   }
@@ -799,7 +1044,8 @@ export class CognitiveGraph {
       analogies: this.analogies.size,
       epistemicStates: this.epistemicStates.size,
       evidences: this.evidences.size,
-      dependencies: this.edg.getAllDependencies().length
+      dependencies: this.edg.getAllDependencies().length,
+      transitions: this.transitions.size
     };
   }
 
@@ -891,6 +1137,18 @@ export class CognitiveGraph {
             const parsed = EpistemicStateSchema.safeParse(entry.content);
             if (parsed.success) {
               this.epistemicStates.set(parsed.data.stateId, parsed.data);
+            }
+            break;
+          }
+          case 'COGNITIVE_STATE_TRANSITION': {
+            const parsed = CognitiveTransitionRecordSchema.safeParse(entry.content);
+            if (parsed.success) {
+              const frozen = freezeTransitionRecord(parsed.data);
+              this.transitions.set(frozen.transitionId, frozen);
+              this.repEpistemicIndex.set(
+                `${frozen.targetRepresentationId}::${frozen.context.contextId}`,
+                frozen.nextStateId
+              );
             }
             break;
           }
