@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ComputePartitionSchema } from '../compute/types';
 
 export enum LifecycleState {
   INITIALIZING = 'INITIALIZING',
@@ -20,7 +21,8 @@ export const CellComputationalCapabilitySchema = z.object({
   parallelism: z.number(),
   memoryLimit: z.number(),
   availability: z.number().min(0).max(1),
-  communicationProfile: z.record(z.string(), z.unknown())
+  communicationProfile: z.record(z.string(), z.unknown()),
+  partitions: z.array(ComputePartitionSchema).optional()
 });
 export type CellComputationalCapability = z.infer<typeof CellComputationalCapabilitySchema>;
 
