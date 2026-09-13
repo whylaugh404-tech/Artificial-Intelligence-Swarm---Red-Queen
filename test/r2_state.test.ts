@@ -137,4 +137,78 @@ describe('R2: Cell Cognitive-Computational State', () => {
     expect(cellBState.knowledgeState).toEqual(baseStateData.knowledgeState);
     expect(newCellA.stateId).not.toBe(cellBState.stateId);
   });
+
+  it('should enforce transition provenance ordering determinism', () => {
+    const state1 = stateManager.createInitialState(baseStateData);
+
+    const { transition: transition1 } = stateManager.applyTransition(
+      state1,
+      'UPDATE',
+      { knowledgeState: { core: 'physics' } },
+      ['prov-B', 'prov-A']
+    );
+
+    const { transition: transition2 } = stateManager.applyTransition(
+      state1,
+      'UPDATE',
+      { knowledgeState: { core: 'physics' } },
+      ['prov-A', 'prov-B']
+    );
+
+    expect(transition1.transitionId).toBe(transition2.transitionId);
+  });
+
+  it('should verify timestamp does not affect state or transition semantic identity', () => {
+    const state1 = stateManager.createInitialState(baseStateData);
+
+    const { newState: newState1, transition: transition1 } = stateManager.applyTransition(
+      state1,
+      'LIFECYCLE_CHANGE',
+      { lifecycle: LifecycleState.DORMANT },
+      ['cmd-sleep'],
+      '2026-01-01T00:00:00.000Z'
+    );
+
+    const { newState: newState2, transition: transition2 } = stateManager.applyTransition(
+      state1,
+      'LIFECYCLE_CHANGE',
+      { lifecycle: LifecycleState.DORMANT },
+      ['cmd-sleep'],
+      '2026-12-31T23:59:59.999Z'
+    );
+
+    // Metadata is different
+    expect(transition1.timestamp).not.toBe(transition2.timestamp);
+    
+    // Semantic identity MUST be exactly the same
+    expect(newState1.stateId).toBe(newState2.stateId);
+    expect(transition1.transitionId).toBe(transition2.transitionId);
+  });
+
+  it('should perform nested object updates as explicit replacements', () => {
+    const state1 = stateManager.createInitialState({
+      ...baseStateData,
+      knowledgeState: {
+        core: 'math',
+        algorithms: ['graph']
+      }
+    });
+
+    // We apply an update that omits "algorithms"
+    const { newState } = stateManager.applyTransition(
+      state1,
+      'KNOWLEDGE_UPDATE',
+      {
+        knowledgeState: {
+          core: 'physics'
+        }
+      },
+      ['event-1']
+    );
+
+    // The entire object is replaced based on existing semantics,
+    // which aligns with standard spread operator behavior.
+    expect(newState.knowledgeState).toEqual({ core: 'physics' });
+    expect((newState.knowledgeState as any).algorithms).toBeUndefined();
+  });
 });

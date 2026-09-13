@@ -19,8 +19,8 @@ export function computeHash(content: string): string {
 
 function deepFreeze<T>(obj: T): T {
   if (obj && typeof obj === 'object') {
-    Object.keys(obj).forEach(prop => {
-      deepFreeze((obj as any)[prop]);
+    Object.keys(obj as Record<string, unknown>).forEach(prop => {
+      deepFreeze((obj as Record<string, unknown>)[prop]);
     });
     Object.freeze(obj);
   }
@@ -61,32 +61,35 @@ export class CellStateManager {
     deterministicTimestamp?: string
   ): { newState: CellState; transition: StateTransition } {
     
+    // Note: R2 architecture defines nested object updates as shallow replacement. 
+    // Top-level properties are fully replaced by the contents of `updates`.
     const updatedData = {
       ...currentState,
       ...updates
     };
 
-    const safeNewData = structuredClone(updatedData) as any;
+    const safeNewData: Partial<CellState> = structuredClone(updatedData);
     delete safeNewData.stateId; // ensure we generate a new one
     
     const combinedProvenance = new Set([...currentState.provenance, ...provenanceSource]);
     safeNewData.provenance = Array.from(combinedProvenance).sort();
 
-    const targetStateId = this.generateStateId(safeNewData);
+    const targetStateId = this.generateStateId(safeNewData as Omit<CellState, 'stateId'>);
     
     const newState: CellState = deepFreeze({
-      ...safeNewData,
+      ...(safeNewData as Omit<CellState, 'stateId'>),
       stateId: targetStateId
     });
 
     const changedFields = Object.keys(updates).sort();
+    const sortedProvenanceSource = Array.from(new Set(provenanceSource)).sort();
     
     const transitionSignature = canonicalSerialize({
       sourceStateId: currentState.stateId,
       targetStateId: targetStateId,
       transitionType,
       changedFields,
-      provenance: provenanceSource
+      provenance: sortedProvenanceSource
     });
 
     const transitionId = `trans_${computeHash(transitionSignature)}`;
