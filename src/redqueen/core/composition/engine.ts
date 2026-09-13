@@ -12,6 +12,17 @@ import {
 } from './types';
 import { logger } from '../logger';
 
+export function canonicalSerialize(obj: unknown): string {
+  if (obj === null || obj === undefined) return 'null';
+  if (typeof obj !== 'object') return JSON.stringify(obj);
+  if (Array.isArray(obj)) {
+    return `[${obj.map(canonicalSerialize).join(',')}]`;
+  }
+  const keys = Object.keys(obj as Record<string, unknown>).sort();
+  const parts = keys.map(k => `${JSON.stringify(k)}:${canonicalSerialize((obj as Record<string, unknown>)[k])}`);
+  return `{${parts.join(',')}}`;
+}
+
 export class CompositionError extends Error {
   constructor(message: string) {
     super(message);
@@ -61,13 +72,20 @@ export class CompositionEngine {
     }
 
     // 1. Validation phase
-    this.validateInputs(inputs);
+    this.validateInputs(inputs, rule);
     this.validateRelations(inputs, relations);
     this.validateTopology(inputs, topology);
     this.validateConstraints(inputs, constraints);
 
+    // Deep clone to guarantee immutability before handing off to the rule and before hashing
+    const safeInputs = structuredClone(inputs);
+    const safeRelations = structuredClone(relations);
+    const safeTopology = structuredClone(topology);
+    const safeConstraints = structuredClone(constraints);
+    const safeContext = structuredClone(context);
+
     // 2. Applicability check
-    if (!rule.canApply(inputs, relations, topology, constraints, context)) {
+    if (!rule.canApply(safeInputs, safeRelations, safeTopology, safeConstraints, safeContext)) {
       throw new CompositionError(
         `Rule '${transformationType}' cannot be applied to the provided structures and context.`
       );
@@ -75,49 +93,52 @@ export class CompositionEngine {
 
     // 3. Transformation execution (Deterministic)
     const { derivedStructure, reasoningTrace } = rule.apply(
-      inputs,
-      relations,
-      topology,
-      constraints,
-      context
+      safeInputs,
+      safeRelations,
+      safeTopology,
+      safeConstraints,
+      safeContext
     );
 
     // 4. Trace generation
     const timestamp = deterministicTimestamp || new Date().toISOString();
     
-    // Deterministic hash generation for identities
-    const compositionSignature = JSON.stringify({
-      transformationType,
-      inputIds: inputs.map(i => i.inputId).sort(),
-      relationIds: relations.map(r => r.relationId).sort(),
-      topologyId: topology?.topologyId,
-      constraintIds: constraints.map(c => c.constraintId).sort(),
-      contextId: context.contextId
-    });
-    const traceId = `trace_${this.computeHash(compositionSignature)}`;
+    // Deterministic semantic hash generation for identities (does not include execution metadata like timestamp)
+    const semanticPayload = {
+      transformation: transformationType,
+      inputs: safeInputs.map(i => ({ type: i.type, structure: i.structure })), // actual content, not just ID
+      relations: safeRelations.map(r => ({ type: r.relationType, semantics: r.semantics })),
+      topology: safeTopology ? { arrangement: safeTopology.arrangementType, mapping: safeTopology.graphMapping } : null,
+      constraints: safeConstraints.map(c => ({ type: c.type, condition: c.condition })),
+      context: { domain: safeContext.domain, parameters: safeContext.parameters }
+    };
+    
+    const traceId = `trace_${this.computeHash(canonicalSerialize(semanticPayload))}`;
     
     const trace: CompositionTrace = {
       traceId,
-      timestamp,
+      timestamp, // execution metadata
       transformationType,
-      inputIds: inputs.map(i => i.inputId),
-      relationIds: relations.map(r => r.relationId),
-      topologyId: topology?.topologyId,
-      constraintIds: constraints.map(c => c.constraintId),
-      contextId: context.contextId,
+      inputIds: safeInputs.map(i => i.inputId),
+      relationIds: safeRelations.map(r => r.relationId),
+      topologyId: safeTopology?.topologyId,
+      constraintIds: safeConstraints.map(c => c.constraintId),
+      contextId: safeContext.contextId,
       reasoningTrace
     };
 
     // 5. Provenance preservation
     const combinedProvenance = new Set<string>();
-    inputs.forEach(input => {
+    safeInputs.forEach(input => {
       input.provenance.forEach(p => combinedProvenance.add(p));
     });
     combinedProvenance.add(traceId); // Adding the current composition to provenance
 
     // 6. Result structuring
-    const resultType = this.inferResultType(rule.supportedTypes, inputs);
-    const resultId = `comp_${this.computeHash(traceId + JSON.stringify(derivedStructure))}`;
+    const resultType = this.inferResultType(rule.supportedTypes, safeInputs);
+    
+    // resultId also uses canonical serialization of derivedStructure
+    const resultId = `comp_${this.computeHash(traceId + canonicalSerialize(derivedStructure))}`;
     
     const result: CompositionResult = {
       resultId,
@@ -126,7 +147,7 @@ export class CompositionEngine {
       trace,
       provenance: Array.from(combinedProvenance).sort(), // Sorted for determinism
       metadata: {
-        compositionTimestamp: timestamp,
+        compositionTimestamp: timestamp, // metadata only
         ruleApplied: transformationType
       }
     };
@@ -134,22 +155,27 @@ export class CompositionEngine {
     logger.debug(
       'CompositionEngine',
       'composition_executed',
-      { inputs: inputs.length, rule: transformationType, resultId: result.resultId }
+      { inputs: safeInputs.length, rule: transformationType, resultId: result.resultId }
     );
 
     return result;
   }
 
-  private validateInputs(inputs: CompositionInput[]): void {
+  private validateInputs(inputs: CompositionInput[], rule: CompositionTransformationRule): void {
     if (inputs.length === 0) {
       throw new CompositionError('Composition requires at least one input structure.');
     }
     const ids = new Set<string>();
+    const hasGenericSupport = rule.supportedTypes.includes(CompositionType.GENERIC_STRUCTURE);
     for (const input of inputs) {
       if (ids.has(input.inputId)) {
         throw new CompositionError(`Duplicate input ID detected: ${input.inputId}`);
       }
       ids.add(input.inputId);
+      
+      if (!hasGenericSupport && !rule.supportedTypes.includes(input.type)) {
+        throw new CompositionError(`Rule '${rule.transformationType}' does not support input type: ${input.type}`);
+      }
     }
   }
 

@@ -18,7 +18,7 @@ export const CompositionTypeSchema = z.nativeEnum(CompositionType);
 export const CompositionInputSchema = z.object({
   inputId: z.string().min(1),
   type: CompositionTypeSchema,
-  structure: z.record(z.string(), z.any()), // Heterogeneous structure
+  structure: z.record(z.string(), z.unknown()), // Heterogeneous structure
   provenance: z.array(z.string()).min(1)
 });
 
@@ -32,7 +32,7 @@ export const CompositionRelationSchema = z.object({
   sourceInputId: z.string().min(1),
   targetInputId: z.string().min(1),
   relationType: z.string().min(1),
-  semantics: z.record(z.string(), z.any()).optional()
+  semantics: z.record(z.string(), z.unknown()).optional()
 });
 
 export type CompositionRelation = z.infer<typeof CompositionRelationSchema>;
@@ -55,7 +55,7 @@ export const CompositionConstraintSchema = z.object({
   constraintId: z.string().min(1),
   type: z.enum(['REQUIREMENT', 'EXCLUSION', 'CAPACITY', 'PRECONDITION', 'LOGICAL']),
   targetInputId: z.string().optional(),
-  condition: z.record(z.string(), z.any())
+  condition: z.record(z.string(), z.unknown())
 });
 
 export type CompositionConstraint = z.infer<typeof CompositionConstraintSchema>;
@@ -66,7 +66,7 @@ export type CompositionConstraint = z.infer<typeof CompositionConstraintSchema>;
 export const CompositionContextSchema = z.object({
   contextId: z.string().min(1),
   domain: z.string().min(1),
-  parameters: z.record(z.string(), z.any()).default({})
+  parameters: z.record(z.string(), z.unknown()).default({})
 });
 
 export type CompositionContext = z.infer<typeof CompositionContextSchema>;
@@ -94,10 +94,10 @@ export type CompositionTrace = z.infer<typeof CompositionTraceSchema>;
 export const CompositionResultSchema = z.object({
   resultId: z.string().min(1),
   type: CompositionTypeSchema,
-  derivedStructure: z.record(z.string(), z.any()),
+  derivedStructure: z.record(z.string(), z.unknown()),
   trace: CompositionTraceSchema,
   provenance: z.array(z.string()).min(1), // Combined provenance + traceId
-  metadata: z.record(z.string(), z.any()).default({}) // e.g., deterministic hash
+  metadata: z.record(z.string(), z.unknown()).default({}) // e.g., deterministic hash
 });
 
 export type CompositionResult = z.infer<typeof CompositionResultSchema>;
