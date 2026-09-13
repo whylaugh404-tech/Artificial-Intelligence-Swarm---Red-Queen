@@ -247,29 +247,17 @@ export class CognitiveStateTransitionEngine {
 
       switch (previousStatus) {
         case EpistemicStatus.UNKNOWN:
-          // UNKNOWN + evidence -> HYPOTHESIS or BELIEVED
-          if ((effectiveFusionResult?.effectiveSupportMass ?? 0) >= 1.0) {
-            nextStatus = EpistemicStatus.BELIEVED;
-            nextVerStatus = RepresentationVerificationStatus.SUPPORTED;
-            determinedReason = determinedReason || 'Substantial supporting evidence: transitioned from UNKNOWN to BELIEVED.';
-          } else {
-            nextStatus = EpistemicStatus.HYPOTHESIS;
-            nextVerStatus = RepresentationVerificationStatus.PENDING;
-            determinedReason = determinedReason || 'Initial supporting evidence observed: formed HYPOTHESIS.';
-          }
+          // UNKNOWN + supporting evidence -> HYPOTHESIS
+          nextStatus = EpistemicStatus.HYPOTHESIS;
+          nextVerStatus = RepresentationVerificationStatus.PENDING;
+          determinedReason = determinedReason || 'Supporting evidence observed: transitioned from UNKNOWN to HYPOTHESIS.';
           break;
 
         case EpistemicStatus.HYPOTHESIS:
-          // HYPOTHESIS + valid supporting evidence -> BELIEVED
-          if ((effectiveFusionResult?.effectiveSupportMass ?? 0) >= 1.0) {
-            nextStatus = EpistemicStatus.BELIEVED;
-            nextVerStatus = RepresentationVerificationStatus.SUPPORTED;
-            determinedReason = determinedReason || 'Corroborating supporting evidence: upgraded HYPOTHESIS to BELIEVED.';
-          } else {
-            nextStatus = EpistemicStatus.HYPOTHESIS;
-            nextVerStatus = RepresentationVerificationStatus.PENDING;
-            determinedReason = determinedReason || 'Supporting evidence observed: maintained HYPOTHESIS.';
-          }
+          // HYPOTHESIS + supporting evidence -> BELIEVED
+          nextStatus = EpistemicStatus.BELIEVED;
+          nextVerStatus = RepresentationVerificationStatus.SUPPORTED;
+          determinedReason = determinedReason || 'Supporting evidence observed: transitioned from HYPOTHESIS to BELIEVED.';
           break;
 
         case EpistemicStatus.BELIEVED:
