@@ -201,15 +201,15 @@ describe('R7: Compatibility Validation (P5/P6)', () => {
     const result = reconciler.reconcile(baseSpec);
     
     // Add a valid graph (concept-1 and concept-2 exist, relation between them)
-    const concept2 = { ...validConcept, conceptId: 'concept-2' };
+    const concept2 = { ...validConcept, conceptId: 'concept-2', currentHolderCellId: result.childA.cellIdentity };
     const validGraphState = {
       ...result,
       childA: {
         ...result.childA,
         knowledgeState: {
-          'c1': validConcept,
+          'c1': { ...validConcept, currentHolderCellId: result.childA.cellIdentity },
           'c2': concept2,
-          'r1': validRelation
+          'r1': { ...validRelation, currentHolderCellId: result.childA.cellIdentity }
         }
       }
     };
@@ -222,13 +222,108 @@ describe('R7: Compatibility Validation (P5/P6)', () => {
       childA: {
         ...result.childA,
         knowledgeState: {
-          'c1': validConcept,
-          'r1': validRelation
+          'c1': { ...validConcept, currentHolderCellId: result.childA.cellIdentity },
+          'r1': { ...validRelation, currentHolderCellId: result.childA.cellIdentity }
         }
       }
     };
     const brokenGraphValidation = validator.validateMitosisResult(brokenGraphState);
     expect(brokenGraphValidation.status).toBe('INCOMPATIBLE');
     expect(brokenGraphValidation.anomalies.some(a => a.component === 'P5_GRAPH')).toBe(true);
+  });
+
+  describe('R7 Lineage & Origin/Holder Verification', () => {
+    it('18. valid child -> mitosis -> parent lineage passes strictly', () => {
+      const result = reconciler.reconcile(baseSpec);
+      const validation = validator.validateMitosisResult(result);
+      expect(validation.status).toBe('COMPATIBLE');
+      expect(validation.anomalies.some(a => a.component === 'R7_LINEAGE')).toBe(false);
+    });
+
+    it('19. detects tampered parentStateId in result (FAIL FAST)', () => {
+      const result = reconciler.reconcile(baseSpec);
+      const tampered = { ...result, parentStateId: 'tampered-parent-999' };
+      const validation = validator.validateMitosisResult(tampered);
+      expect(validation.status).toBe('INCOMPATIBLE');
+      expect(validation.anomalies.some(a => a.component === 'R7_LINEAGE' && a.issue.includes('parentStateId'))).toBe(true);
+    });
+
+    it('20. detects tampered mitosisId in result (FAIL FAST)', () => {
+      const result = reconciler.reconcile(baseSpec);
+      const tampered = { ...result, mitosisId: 'tampered-mitosis-999' };
+      const validation = validator.validateMitosisResult(tampered);
+      expect(validation.status).toBe('INCOMPATIBLE');
+      expect(validation.anomalies.some(a => a.component === 'R7_LINEAGE' && a.issue.includes('mitosisId'))).toBe(true);
+    });
+
+    it('21. detects broken lineage provenance on child (FAIL FAST)', () => {
+      const result = reconciler.reconcile(baseSpec);
+      const tampered = {
+        ...result,
+        childA: {
+          ...result.childA,
+          provenance: [...result.childA.provenance.slice(0, -1), 'mitosis:wrong-mitosis-id:childA']
+        }
+      };
+      const validation = validator.validateMitosisResult(tampered);
+      expect(validation.status).toBe('INCOMPATIBLE');
+      expect(validation.anomalies.some(a => a.component === 'R7_LINEAGE' && a.issue.includes('broken lineage'))).toBe(true);
+    });
+
+    const conceptWithOrigin = {
+      ...validConcept,
+      originatingCellId: parentState.cellIdentity,
+      currentHolderCellId: parentState.cellIdentity
+    };
+
+    const parentWithRep = stateManager.createInitialState({
+      cellIdentity: 'parent-cell-alpha',
+      genomeReference: 'genome-v1',
+      memoryState: {},
+      knowledgeState: { c1: conceptWithOrigin },
+      cognitiveState: {},
+      reasoningState: {},
+      experienceState: {},
+      computationalCapability: aggregateCapabilities([p1]),
+      specializations: [{ domain: 'logic', focusAreas: ['rules'], level: 1.0 }],
+      lifecycle: LifecycleState.ACTIVE,
+      provenance: ['genesis']
+    });
+
+    const repSpec = {
+      ...baseSpec,
+      parentState: parentWithRep,
+      knowledgeDistribution: { childA: ['c1'], childB: [] }
+    };
+
+    it('22. origin parent + currentHolder child passes validation cleanly', () => {
+      const result = reconciler.reconcile(repSpec);
+      const validation = validator.validateMitosisResult(result);
+      expect(validation.status).toBe('COMPATIBLE');
+      
+      const childConcept = result.childA.knowledgeState['c1'] as any;
+      expect(childConcept.originatingCellId).toBe('parent-cell-alpha');
+      expect(childConcept.currentHolderCellId).toBe(result.childA.cellIdentity);
+    });
+
+    it('23. origin incorrectly changed to child fails validation (FAIL FAST)', () => {
+      const result = reconciler.reconcile(repSpec);
+      const tamperedChildA = {
+        ...result.childA,
+        knowledgeState: {
+          ...result.childA.knowledgeState,
+          c1: {
+            ...(result.childA.knowledgeState['c1'] as any),
+            originatingCellId: result.childA.cellIdentity // Incorrectly mutated to child!
+          }
+        }
+      };
+      const tamperedResult = { ...result, childA: tamperedChildA };
+      const validation = validator.validateMitosisResult(tamperedResult);
+      expect(validation.status).toBe('INCOMPATIBLE');
+      expect(validation.anomalies.some(
+        a => a.component === 'P5_REPRESENTATION' && a.issue.includes('originatingCellId incorrectly overwritten')
+      )).toBe(true);
+    });
   });
 });

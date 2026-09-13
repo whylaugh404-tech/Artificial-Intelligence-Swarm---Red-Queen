@@ -189,4 +189,128 @@ describe('R6: Mitosis Reconciliation', () => {
     // Because knowledgeDistribution differs, the signature in cellIdentity should differ
     expect(result1.childA.cellIdentity).not.toBe(result2.childA.cellIdentity);
   });
+
+  it('17. nonexistent partition ID throws error (FAIL FAST)', () => {
+    const spec = { 
+      ...baseSpec, 
+      partitionDistribution: { childA: ['non_existent_part'], childB: [p2.partitionId] } 
+    };
+    expect(() => reconciler.reconcile(spec)).toThrow(/Partition ID 'non_existent_part' not found/);
+  });
+
+  it('18. overlapping partition IDs default fails (FAIL FAST)', () => {
+    const spec = { 
+      ...baseSpec, 
+      partitionDistribution: { childA: [p1.partitionId], childB: [p1.partitionId] } 
+    };
+    expect(() => reconciler.reconcile(spec)).toThrow(/Overlapping inheritance in partitionDistribution/);
+  });
+
+  it('19. overlapping partition IDs pass with allowSharedInheritance=true', () => {
+    const spec = { 
+      ...baseSpec, 
+      allowSharedInheritance: true, 
+      partitionDistribution: { childA: [p1.partitionId], childB: [p1.partitionId] } 
+    };
+    const result = reconciler.reconcile(spec);
+    expect(result.childA.computationalCapability.partitions![0].name).toBe('P1');
+    expect(result.childB.computationalCapability.partitions![0].name).toBe('P1');
+    expect(result.childA.computationalCapability.partitions![0].cellIdentity).toBe(result.childA.cellIdentity);
+    expect(result.childB.computationalCapability.partitions![0].cellIdentity).toBe(result.childB.cellIdentity);
+  });
+
+  describe('Cognitive Representation Ownership & Immutability', () => {
+    const conceptRepA = {
+      conceptId: 'concept-geom',
+      canonicalName: 'Geometry',
+      category: 'abstract',
+      attributes: {},
+      originatingCellId: 'parent-cell-alpha',
+      currentHolderCellId: 'parent-cell-alpha',
+      provenance: ['genesis'],
+      createdAt: new Date().toISOString(),
+      confidence: 0.95,
+      verificationStatus: 'VERIFIED',
+      version: 1
+    };
+
+    const conceptRepB = {
+      conceptId: 'concept-alg',
+      canonicalName: 'Algebra',
+      category: 'abstract',
+      attributes: {},
+      originatingCellId: 'parent-cell-alpha',
+      currentHolderCellId: 'parent-cell-alpha',
+      provenance: ['genesis'],
+      createdAt: new Date().toISOString(),
+      confidence: 0.92,
+      verificationStatus: 'VERIFIED',
+      version: 1
+    };
+
+    const parentWithRep = stateManager.createInitialState({
+      cellIdentity: 'parent-cell-alpha',
+      genomeReference: 'genome-v1',
+      memoryState: {},
+      knowledgeState: { cA: conceptRepA, cB: conceptRepB },
+      cognitiveState: {},
+      reasoningState: {},
+      experienceState: {},
+      computationalCapability: aggregateCapabilities([p1, p2]),
+      specializations: [{ domain: 'math', focusAreas: ['core'], level: 1.0 }],
+      lifecycle: LifecycleState.ACTIVE,
+      provenance: ['genesis']
+    });
+
+    const repSpec = {
+      mitosisId: 'mitosis-rep-test',
+      parentState: parentWithRep,
+      differentiationProfileA: [{ domain: 'geometry', focusAreas: ['spatial'], level: 0.9 }],
+      differentiationProfileB: [{ domain: 'algebra', focusAreas: ['symbolic'], level: 0.9 }],
+      partitionDistribution: { childA: [p1.partitionId], childB: [p2.partitionId] },
+      memoryDistribution: { childA: [], childB: [] },
+      knowledgeDistribution: { childA: ['cA'], childB: ['cB'] },
+      cognitiveDistribution: { childA: [], childB: [] },
+      reasoningDistribution: { childA: [], childB: [] },
+      experienceDistribution: { childA: [], childB: [] }
+    };
+
+    it('20. inherited representation keeps original originatingCellId', () => {
+      const result = reconciler.reconcile(repSpec);
+      const inheritedA = result.childA.knowledgeState['cA'] as any;
+      const inheritedB = result.childB.knowledgeState['cB'] as any;
+
+      expect(inheritedA.originatingCellId).toBe('parent-cell-alpha');
+      expect(inheritedB.originatingCellId).toBe('parent-cell-alpha');
+      expect(inheritedA.originatingCellId).not.toBe(result.childA.cellIdentity);
+      expect(inheritedB.originatingCellId).not.toBe(result.childB.cellIdentity);
+    });
+
+    it('21. inherited representation gets correct currentHolderCellId', () => {
+      const result = reconciler.reconcile(repSpec);
+      const inheritedA = result.childA.knowledgeState['cA'] as any;
+      const inheritedB = result.childB.knowledgeState['cB'] as any;
+
+      expect(inheritedA.currentHolderCellId).toBe(result.childA.cellIdentity);
+      expect(inheritedB.currentHolderCellId).toBe(result.childB.cellIdentity);
+    });
+
+    it('22. Child A and Child B partition and representation ownership are distinct and correct', () => {
+      const result = reconciler.reconcile(repSpec);
+      
+      // Partition ownership verification
+      expect(result.childA.computationalCapability.partitions![0].cellIdentity).toBe(result.childA.cellIdentity);
+      expect(result.childB.computationalCapability.partitions![0].cellIdentity).toBe(result.childB.cellIdentity);
+      expect(result.childA.computationalCapability.partitions![0].cellIdentity).not.toBe(
+        result.childB.computationalCapability.partitions![0].cellIdentity
+      );
+
+      // Representation ownership verification
+      const inheritedA = result.childA.knowledgeState['cA'] as any;
+      const inheritedB = result.childB.knowledgeState['cB'] as any;
+      expect(inheritedA.currentHolderCellId).toBe(result.childA.cellIdentity);
+      expect(inheritedB.currentHolderCellId).toBe(result.childB.cellIdentity);
+      expect(inheritedA.currentHolderCellId).not.toBe(inheritedB.currentHolderCellId);
+    });
+  });
 });

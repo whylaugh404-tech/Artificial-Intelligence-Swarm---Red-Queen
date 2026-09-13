@@ -46,6 +46,7 @@ export class MitosisReconciler {
       }
     };
 
+    checkOverlap(spec.partitionDistribution.childA, spec.partitionDistribution.childB, 'partitionDistribution');
     checkOverlap(spec.memoryDistribution.childA, spec.memoryDistribution.childB, 'memoryDistribution');
     checkOverlap(spec.knowledgeDistribution.childA, spec.knowledgeDistribution.childB, 'knowledgeDistribution');
     checkOverlap(spec.cognitiveDistribution.childA, spec.cognitiveDistribution.childB, 'cognitiveDistribution');
@@ -53,40 +54,67 @@ export class MitosisReconciler {
     checkOverlap(spec.experienceDistribution.childA, spec.experienceDistribution.childB, 'experienceDistribution');
 
     // Distribution helper for shallow state sections
-    const distributeState = (source: Record<string, unknown>, distributionKeys: string[], context: string) => {
+    const distributeState = (
+      source: Record<string, unknown>, 
+      distributionKeys: string[], 
+      context: string,
+      targetCellIdentity: string
+    ) => {
       const result: Record<string, unknown> = {};
       for (const key of distributionKeys) {
         if (!(key in source)) {
           throw new Error(`Mitosis Reconciliation Failed: Key '${key}' not found in parent ${context}`);
         }
-        result[key] = source[key];
+        const val = source[key];
+        if (val && typeof val === 'object') {
+          const item = val as Record<string, unknown>;
+          if ('originatingCellId' in item) {
+            result[key] = {
+              ...item,
+              currentHolderCellId: targetCellIdentity
+            };
+            continue;
+          }
+        }
+        result[key] = val;
       }
       return result;
     };
 
-    const memoryA = distributeState(parentState.memoryState, spec.memoryDistribution.childA, 'memoryState');
-    const memoryB = distributeState(parentState.memoryState, spec.memoryDistribution.childB, 'memoryState');
+    const memoryA = distributeState(parentState.memoryState, spec.memoryDistribution.childA, 'memoryState', childAIdentity);
+    const memoryB = distributeState(parentState.memoryState, spec.memoryDistribution.childB, 'memoryState', childBIdentity);
 
-    const knowledgeA = distributeState(parentState.knowledgeState, spec.knowledgeDistribution.childA, 'knowledgeState');
-    const knowledgeB = distributeState(parentState.knowledgeState, spec.knowledgeDistribution.childB, 'knowledgeState');
+    const knowledgeA = distributeState(parentState.knowledgeState, spec.knowledgeDistribution.childA, 'knowledgeState', childAIdentity);
+    const knowledgeB = distributeState(parentState.knowledgeState, spec.knowledgeDistribution.childB, 'knowledgeState', childBIdentity);
 
-    const cognitiveA = distributeState(parentState.cognitiveState, spec.cognitiveDistribution.childA, 'cognitiveState');
-    const cognitiveB = distributeState(parentState.cognitiveState, spec.cognitiveDistribution.childB, 'cognitiveState');
+    const cognitiveA = distributeState(parentState.cognitiveState, spec.cognitiveDistribution.childA, 'cognitiveState', childAIdentity);
+    const cognitiveB = distributeState(parentState.cognitiveState, spec.cognitiveDistribution.childB, 'cognitiveState', childBIdentity);
 
-    const reasoningA = distributeState(parentState.reasoningState, spec.reasoningDistribution.childA, 'reasoningState');
-    const reasoningB = distributeState(parentState.reasoningState, spec.reasoningDistribution.childB, 'reasoningState');
+    const reasoningA = distributeState(parentState.reasoningState, spec.reasoningDistribution.childA, 'reasoningState', childAIdentity);
+    const reasoningB = distributeState(parentState.reasoningState, spec.reasoningDistribution.childB, 'reasoningState', childBIdentity);
 
-    const experienceA = distributeState(parentState.experienceState, spec.experienceDistribution.childA, 'experienceState');
-    const experienceB = distributeState(parentState.experienceState, spec.experienceDistribution.childB, 'experienceState');
+    const experienceA = distributeState(parentState.experienceState, spec.experienceDistribution.childA, 'experienceState', childAIdentity);
+    const experienceB = distributeState(parentState.experienceState, spec.experienceDistribution.childB, 'experienceState', childBIdentity);
 
-    // Compute partitions must be re-bound to the child's identity to maintain ownership determinism
+    // Compute partitions must be validated and re-bound to the child's identity to maintain ownership determinism
     const parentPartitions = parentState.computationalCapability.partitions || [];
-    
-    const rawPartitionsA = parentPartitions.filter(p => spec.partitionDistribution.childA.includes(p.partitionId));
-    const rawPartitionsB = parentPartitions.filter(p => spec.partitionDistribution.childB.includes(p.partitionId));
+    const partitionMap = new Map<string, typeof parentPartitions[0]>();
+    for (const p of parentPartitions) {
+      partitionMap.set(p.partitionId, p);
+    }
 
-    const childAPartitions = rawPartitionsA.map(p => updateComputePartition(p, { cellIdentity: childAIdentity }));
-    const childBPartitions = rawPartitionsB.map(p => updateComputePartition(p, { cellIdentity: childBIdentity }));
+    const distributePartitions = (partitionIds: string[], targetChildIdentity: string, childName: string) => {
+      return partitionIds.map(partitionId => {
+        const partition = partitionMap.get(partitionId);
+        if (!partition) {
+          throw new Error(`Mitosis Reconciliation Failed: Partition ID '${partitionId}' not found in parent compute partitions for ${childName}`);
+        }
+        return updateComputePartition(partition, { cellIdentity: targetChildIdentity });
+      });
+    };
+
+    const childAPartitions = distributePartitions(spec.partitionDistribution.childA, childAIdentity, 'childA');
+    const childBPartitions = distributePartitions(spec.partitionDistribution.childB, childBIdentity, 'childB');
 
     // Inherited states
     const childAData: Omit<CellState, 'stateId'> = {
@@ -150,7 +178,7 @@ export class MitosisReconciler {
           specializationFocus: spec.differentiationProfileB.map(s => s.domain)
         }
       },
-      provenance: [`mitosis:${mitosisId}`, `parent:${parentState.stateId}`].sort()
+      provenance: [`parent:${parentState.stateId}`, `mitosis:${mitosisId}`]
     };
   }
 }

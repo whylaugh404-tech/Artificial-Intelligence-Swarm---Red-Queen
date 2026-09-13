@@ -102,6 +102,7 @@ export const CognitiveAbstractionSchema = z.object({
   confidence: z.number().min(0).max(1),
   provenance: z.array(z.string().min(1)).min(1),
   originatingCellId: z.string().min(1).max(256),
+  currentHolderCellId: z.string().min(1).max(256).optional(),
   verificationStatus: RepresentationVerificationStatusSchema,
   epistemicStateId: z.string().min(1).optional(),
   version: z.number().int().min(1),
@@ -128,7 +129,8 @@ export const CognitiveGeneralizationSchema = z.object({
   provenance: z.array(z.string().min(1)).min(1),
   createdAt: z.string().datetime(),
   evidenceIds: z.array(z.string()).optional(),
-  originatingCellId: z.string().min(1).max(256)
+  originatingCellId: z.string().min(1).max(256),
+  currentHolderCellId: z.string().min(1).max(256).optional()
 });
 
 export type CognitiveGeneralization = z.infer<typeof CognitiveGeneralizationSchema>;
@@ -191,7 +193,8 @@ export const CognitiveAnalogySchema = z.object({
   epistemicStateId: z.string().min(1).optional(),
   createdAt: z.string().datetime(),
   evidenceIds: z.array(z.string()).optional(),
-  originatingCellId: z.string().min(1).max(256)
+  originatingCellId: z.string().min(1).max(256),
+  currentHolderCellId: z.string().min(1).max(256).optional()
 });
 
 export type CognitiveAnalogy = z.infer<typeof CognitiveAnalogySchema>;
