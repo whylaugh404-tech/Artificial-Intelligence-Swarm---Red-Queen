@@ -367,8 +367,8 @@ export class EpistemicFusionEngine {
    * 1. First evidence in cluster provides its full weight.
    * 2. For each subsequent evidence:
    *    - DEPENDENT to any prior evidence: 0 additional mass (strict anti-double-counting).
-   *    - CORRELATED to any prior evidence: scaled down by correlationDiscount (0.35).
-   *    - UNKNOWN with prior evidence: scaled down by unknownDiscount (0.50).
+   *    - CORRELATED to any prior evidence: 0 additional mass (avoids confirmation bias from shared sources).
+   *    - UNKNOWN with prior evidence: 0 additional mass (conservative refusal to count uncorroborated evidence).
    *    - INDEPENDENT of all prior evidence: full weight (1.0).
    */
   private calculateClusterMass(
