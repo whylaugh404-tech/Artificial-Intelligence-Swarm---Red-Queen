@@ -60,7 +60,7 @@ describe('R6: Mitosis Reconciliation', () => {
     differentiationProfileB: [{ domain: 'creative', focusAreas: ['abductive'], level: 0.9 }],
     partitionDistribution: { childA: [p1.partitionId], childB: [p2.partitionId] },
     memoryDistribution: { childA: ['mem1', 'mem3'], childB: ['mem2'] },
-    knowledgeDistribution: { childA: ['core', 'concept1'], childB: ['core', 'concept2'] },
+    knowledgeDistribution: { childA: ['concept1'], childB: ['core', 'concept2'] },
     cognitiveDistribution: { childA: ['mode', 'bias'], childB: ['speed'] },
     reasoningDistribution: { childA: ['depth', 'strategy'], childB: ['heuristics'] },
     experienceDistribution: { childA: ['encounters', 'successRate'], childB: ['failures'] }
@@ -112,7 +112,7 @@ describe('R6: Mitosis Reconciliation', () => {
 
   it('6. differentiated knowledge state distribution', () => {
     const result = reconciler.reconcile(baseSpec);
-    expect(Object.keys(result.childA.knowledgeState)).toEqual(['core', 'concept1']);
+    expect(Object.keys(result.childA.knowledgeState)).toEqual(['concept1']);
     expect(Object.keys(result.childB.knowledgeState)).toEqual(['core', 'concept2']);
   });
 
@@ -134,36 +134,33 @@ describe('R6: Mitosis Reconciliation', () => {
     expect(Object.keys(result.childB.experienceState)).toEqual(['failures']);
   });
 
-  it('10. missing keys in knowledge distribution are dropped', () => {
+  it('10. missing keys in knowledge distribution throws error', () => {
     const spec = { ...baseSpec, knowledgeDistribution: { childA: ['non_existent'], childB: [] } };
-    const result = reconciler.reconcile(spec);
-    expect(Object.keys(result.childA.knowledgeState)).toEqual([]);
-    expect(Object.keys(result.childB.knowledgeState)).toEqual([]);
+    expect(() => reconciler.reconcile(spec)).toThrow(/Key 'non_existent' not found/);
   });
 
-  it('11. missing keys in cognitive distribution are dropped', () => {
+  it('11. missing keys in cognitive distribution throws error', () => {
     const spec = { ...baseSpec, cognitiveDistribution: { childA: [], childB: ['non_existent'] } };
-    const result = reconciler.reconcile(spec);
-    expect(Object.keys(result.childA.cognitiveState)).toEqual([]);
-    expect(Object.keys(result.childB.cognitiveState)).toEqual([]);
+    expect(() => reconciler.reconcile(spec)).toThrow(/Key 'non_existent' not found/);
   });
 
-  it('12. missing keys in reasoning distribution are dropped', () => {
+  it('12. missing keys in reasoning distribution throws error', () => {
     const spec = { ...baseSpec, reasoningDistribution: { childA: ['non_existent'], childB: ['also_missing'] } };
-    const result = reconciler.reconcile(spec);
-    expect(Object.keys(result.childA.reasoningState)).toEqual([]);
-    expect(Object.keys(result.childB.reasoningState)).toEqual([]);
+    expect(() => reconciler.reconcile(spec)).toThrow(/Key 'non_existent' not found/);
   });
 
-  it('13. missing keys in experience distribution are dropped', () => {
-    const spec = { ...baseSpec, experienceDistribution: { childA: [], childB: [] } };
-    const result = reconciler.reconcile(spec);
-    expect(Object.keys(result.childA.experienceState)).toEqual([]);
-    expect(Object.keys(result.childB.experienceState)).toEqual([]);
+  it('13. missing keys in experience distribution throws error', () => {
+    const spec = { ...baseSpec, experienceDistribution: { childA: ['non_existent'], childB: [] } };
+    expect(() => reconciler.reconcile(spec)).toThrow(/Key 'non_existent' not found/);
   });
 
-  it('14. overlapping keys in distributions are allowed', () => {
+  it('14. overlapping keys in distributions fail by default', () => {
     const spec = { ...baseSpec, knowledgeDistribution: { childA: ['core'], childB: ['core'] } };
+    expect(() => reconciler.reconcile(spec)).toThrow(/Overlapping inheritance/);
+  });
+
+  it('14b. overlapping keys in distributions pass with allowSharedInheritance', () => {
+    const spec = { ...baseSpec, allowSharedInheritance: true, knowledgeDistribution: { childA: ['core'], childB: ['core'] } };
     const result = reconciler.reconcile(spec);
     expect(Object.keys(result.childA.knowledgeState)).toEqual(['core']);
     expect(Object.keys(result.childB.knowledgeState)).toEqual(['core']);

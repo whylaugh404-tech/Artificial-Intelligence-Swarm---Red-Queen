@@ -22,6 +22,7 @@ export const MitosisSpecificationSchema = z.object({
   cognitiveDistribution: StateDistributionSchema,
   reasoningDistribution: StateDistributionSchema,
   experienceDistribution: StateDistributionSchema,
+  allowSharedInheritance: z.boolean().optional(),
   deterministicTimestamp: z.string().datetime().optional()
 });
 

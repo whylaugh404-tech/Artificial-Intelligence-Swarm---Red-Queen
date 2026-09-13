@@ -35,32 +35,49 @@ export class MitosisReconciler {
     const childAIdentity = `${parentState.cellIdentity}_A_${specSignature}`;
     const childBIdentity = `${parentState.cellIdentity}_B_${specSignature}`;
 
-    // Distribution helper for shallow state sections
-    const distributeState = (source: Record<string, unknown>, distributionKeys: string[]) => {
-      const result: Record<string, unknown> = {};
-      const keySet = new Set(distributionKeys);
-      for (const [key, val] of Object.entries(source)) {
-        if (keySet.has(key)) {
-          result[key] = val; 
+    // Rule: Check overlapping distributions
+    const checkOverlap = (distA: string[], distB: string[], context: string) => {
+      if (spec.allowSharedInheritance) return;
+      const setA = new Set(distA);
+      for (const key of distB) {
+        if (setA.has(key)) {
+          throw new Error(`Mitosis Reconciliation Failed: Overlapping inheritance in ${context} not allowed without explicit flag (Key: ${key})`);
         }
+      }
+    };
+
+    checkOverlap(spec.memoryDistribution.childA, spec.memoryDistribution.childB, 'memoryDistribution');
+    checkOverlap(spec.knowledgeDistribution.childA, spec.knowledgeDistribution.childB, 'knowledgeDistribution');
+    checkOverlap(spec.cognitiveDistribution.childA, spec.cognitiveDistribution.childB, 'cognitiveDistribution');
+    checkOverlap(spec.reasoningDistribution.childA, spec.reasoningDistribution.childB, 'reasoningDistribution');
+    checkOverlap(spec.experienceDistribution.childA, spec.experienceDistribution.childB, 'experienceDistribution');
+
+    // Distribution helper for shallow state sections
+    const distributeState = (source: Record<string, unknown>, distributionKeys: string[], context: string) => {
+      const result: Record<string, unknown> = {};
+      for (const key of distributionKeys) {
+        if (!(key in source)) {
+          throw new Error(`Mitosis Reconciliation Failed: Key '${key}' not found in parent ${context}`);
+        }
+        result[key] = source[key];
       }
       return result;
     };
 
-    const memoryA = distributeState(parentState.memoryState, spec.memoryDistribution.childA);
-    const memoryB = distributeState(parentState.memoryState, spec.memoryDistribution.childB);
+    const memoryA = distributeState(parentState.memoryState, spec.memoryDistribution.childA, 'memoryState');
+    const memoryB = distributeState(parentState.memoryState, spec.memoryDistribution.childB, 'memoryState');
 
-    const knowledgeA = distributeState(parentState.knowledgeState, spec.knowledgeDistribution.childA);
-    const knowledgeB = distributeState(parentState.knowledgeState, spec.knowledgeDistribution.childB);
+    const knowledgeA = distributeState(parentState.knowledgeState, spec.knowledgeDistribution.childA, 'knowledgeState');
+    const knowledgeB = distributeState(parentState.knowledgeState, spec.knowledgeDistribution.childB, 'knowledgeState');
 
-    const cognitiveA = distributeState(parentState.cognitiveState, spec.cognitiveDistribution.childA);
-    const cognitiveB = distributeState(parentState.cognitiveState, spec.cognitiveDistribution.childB);
+    const cognitiveA = distributeState(parentState.cognitiveState, spec.cognitiveDistribution.childA, 'cognitiveState');
+    const cognitiveB = distributeState(parentState.cognitiveState, spec.cognitiveDistribution.childB, 'cognitiveState');
 
-    const reasoningA = distributeState(parentState.reasoningState, spec.reasoningDistribution.childA);
-    const reasoningB = distributeState(parentState.reasoningState, spec.reasoningDistribution.childB);
+    const reasoningA = distributeState(parentState.reasoningState, spec.reasoningDistribution.childA, 'reasoningState');
+    const reasoningB = distributeState(parentState.reasoningState, spec.reasoningDistribution.childB, 'reasoningState');
 
-    const experienceA = distributeState(parentState.experienceState, spec.experienceDistribution.childA);
-    const experienceB = distributeState(parentState.experienceState, spec.experienceDistribution.childB);
+    const experienceA = distributeState(parentState.experienceState, spec.experienceDistribution.childA, 'experienceState');
+    const experienceB = distributeState(parentState.experienceState, spec.experienceDistribution.childB, 'experienceState');
 
     // Compute partitions must be re-bound to the child's identity to maintain ownership determinism
     const parentPartitions = parentState.computationalCapability.partitions || [];
@@ -83,7 +100,7 @@ export class MitosisReconciler {
       computationalCapability: aggregateCapabilities(childAPartitions),
       specializations: spec.differentiationProfileA,
       lifecycle: parentState.lifecycle,
-      provenance: [...parentState.provenance, `mitosis:${mitosisId}:childA`].sort()
+      provenance: [...parentState.provenance, `mitosis:${mitosisId}:childA`]
     };
 
     const childBData: Omit<CellState, 'stateId'> = {
@@ -97,7 +114,7 @@ export class MitosisReconciler {
       computationalCapability: aggregateCapabilities(childBPartitions),
       specializations: spec.differentiationProfileB,
       lifecycle: parentState.lifecycle,
-      provenance: [...parentState.provenance, `mitosis:${mitosisId}:childB`].sort()
+      provenance: [...parentState.provenance, `mitosis:${mitosisId}:childB`]
     };
 
     const childA = this.stateManager.createInitialState(childAData);

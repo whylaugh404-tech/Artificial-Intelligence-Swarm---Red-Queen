@@ -51,6 +51,7 @@ export const CognitiveConceptSchema = z.object({
   sourceKnowledgeIds: z.array(z.string().min(1)).min(1),
   sourceExperienceIds: z.array(z.string().min(1)).default([]),
   originatingCellId: z.string().min(1).max(256),
+  currentHolderCellId: z.string().min(1).max(256).optional(),
   confidence: z.number().min(0).max(1), // Explicit representation confidence
   verificationStatus: RepresentationVerificationStatusSchema,
   epistemicStateId: z.string().min(1).optional(),
@@ -80,6 +81,7 @@ export const CognitiveRelationSchema = z.object({
   epistemicStateId: z.string().min(1).optional(),
   createdAt: z.string().datetime(),
   originatingCellId: z.string().min(1).max(256),
+  currentHolderCellId: z.string().min(1).max(256).optional(),
   evidenceIds: z.array(z.string()).optional(),
   metadata: z.record(z.string(), z.any()).default({})
 });

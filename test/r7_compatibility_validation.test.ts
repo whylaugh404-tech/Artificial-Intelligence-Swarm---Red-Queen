@@ -58,6 +58,7 @@ describe('R7: Compatibility Validation (P5/P6)', () => {
     sourceKnowledgeIds: ['k1'],
     sourceExperienceIds: [],
     originatingCellId: 'cell-alpha',
+    currentHolderCellId: 'child-cell-a',
     confidence: 1.0,
     verificationStatus: RepresentationVerificationStatus.VERIFIED,
     createdAt: new Date().toISOString(),
@@ -75,7 +76,8 @@ describe('R7: Compatibility Validation (P5/P6)', () => {
     provenance: ['genesis', 'eval-1'],
     verificationStatus: RepresentationVerificationStatus.VERIFIED,
     createdAt: new Date().toISOString(),
-    originatingCellId: 'cell-alpha'
+    originatingCellId: 'cell-alpha',
+    currentHolderCellId: 'child-cell-a'
   };
 
   it('1. validates a successful and compliant mitosis reconciliation', () => {
@@ -94,13 +96,13 @@ describe('R7: Compatibility Validation (P5/P6)', () => {
     expect(validation.anomalies.some(a => a.component === 'R3_COMPUTE')).toBe(true);
   });
 
-  it('3. detects missing mitosis provenance (R5 emergence incompatibility)', () => {
+  it('3. detects missing mitosis provenance (R7 lineage incompatibility)', () => {
     const result = reconciler.reconcile(baseSpec);
     const tamperedChildB = { ...result.childB, provenance: ['genesis'] };
     const tamperedResult = { ...result, childB: tamperedChildB };
     const validation = validator.validateMitosisResult(tamperedResult);
     expect(validation.status).toBe('INCOMPATIBLE');
-    expect(validation.anomalies.some(a => a.component === 'R5_EMERGENCE')).toBe(true);
+    expect(validation.anomalies.some(a => a.component === 'R7_LINEAGE')).toBe(true);
   });
 
   it('4. detects identical child stateIds (R2 incompatibility)', () => {
@@ -179,5 +181,54 @@ describe('R7: Compatibility Validation (P5/P6)', () => {
     const validation = validator.validateP5Representation(validConcept, 'UNKNOWN' as any);
     expect(validation.status).toBe('INCOMPATIBLE');
     expect(validation.anomalies.some(a => a.component === 'P5_REPRESENTATION' && a.issue.includes('Unknown'))).toBe(true);
+  });
+
+  it('15. rejects P5 Concept with missing currentHolderCellId', () => {
+    const { currentHolderCellId, ...invalidConcept } = validConcept;
+    const validation = validator.validateP5Representation(invalidConcept, 'CONCEPT');
+    expect(validation.status).toBe('INCOMPATIBLE');
+    expect(validation.anomalies.some(a => a.component === 'P5_REPRESENTATION')).toBe(true);
+  });
+
+  it('16. rejects P5 Relation with missing currentHolderCellId', () => {
+    const { currentHolderCellId, ...invalidRelation } = validRelation;
+    const validation = validator.validateP5Representation(invalidRelation, 'RELATION');
+    expect(validation.status).toBe('INCOMPATIBLE');
+    expect(validation.anomalies.some(a => a.component === 'P5_REPRESENTATION')).toBe(true);
+  });
+
+  it('17. validates cognitive graph integrity at graph level', () => {
+    const result = reconciler.reconcile(baseSpec);
+    
+    // Add a valid graph (concept-1 and concept-2 exist, relation between them)
+    const concept2 = { ...validConcept, conceptId: 'concept-2' };
+    const validGraphState = {
+      ...result,
+      childA: {
+        ...result.childA,
+        knowledgeState: {
+          'c1': validConcept,
+          'c2': concept2,
+          'r1': validRelation
+        }
+      }
+    };
+    const validGraphValidation = validator.validateMitosisResult(validGraphState);
+    expect(validGraphValidation.status).toBe('COMPATIBLE');
+
+    // Break the graph: remove concept-2
+    const brokenGraphState = {
+      ...result,
+      childA: {
+        ...result.childA,
+        knowledgeState: {
+          'c1': validConcept,
+          'r1': validRelation
+        }
+      }
+    };
+    const brokenGraphValidation = validator.validateMitosisResult(brokenGraphState);
+    expect(brokenGraphValidation.status).toBe('INCOMPATIBLE');
+    expect(brokenGraphValidation.anomalies.some(a => a.component === 'P5_GRAPH')).toBe(true);
   });
 });

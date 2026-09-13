@@ -24,8 +24,7 @@ export class ArchitecturalCompatibilityValidator {
     this.validateComputeOwnership(result.childB, anomalies);
 
     // 3. Provenance Chain (R5 + P5)
-    this.validateProvenance(result.childA, result.mitosisId, anomalies);
-    this.validateProvenance(result.childB, result.mitosisId, anomalies);
+    this.validateLineage(result, anomalies);
 
     // 4. Cognitive & Memory Structure Continuity (R4 / P5)
     this.validateCognitiveContinuity(result.childA, anomalies);
@@ -63,12 +62,18 @@ export class ArchitecturalCompatibilityValidator {
       if (!concept.provenance || concept.provenance.length === 0) {
          anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Concept missing provenance' });
       }
+      if (!concept.currentHolderCellId) {
+         anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Concept missing currentHolderCellId' });
+      }
     }
 
     if (type === 'RELATION' && anomalies.length === 0) {
       const relation = payload as any;
       if (!relation.subjectConceptId || !relation.objectConceptId) {
          anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Relation missing subject or object' });
+      }
+      if (!relation.currentHolderCellId) {
+         anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Relation missing currentHolderCellId' });
       }
     }
 
@@ -84,32 +89,84 @@ export class ArchitecturalCompatibilityValidator {
       for (const part of child.computationalCapability.partitions) {
         if (part.cellIdentity !== child.cellIdentity) {
           anomalies.push({ 
-            component: 'R3_COMPUTE', 
-            issue: `Compute partition ${part.partitionId} owned by ${part.cellIdentity}, but cell is ${child.cellIdentity}` 
-          });
+             component: 'R3_COMPUTE', 
+             issue: `Compute partition ${part.partitionId} owned by ${part.cellIdentity}, but cell is ${child.cellIdentity}` 
+           });
         }
       }
     }
   }
 
-  private validateProvenance(child: CellState, mitosisId: string, anomalies: Array<{component: string, issue: string}>) {
-    const hasMitosisProvenance = child.provenance.some(p => p.includes(`mitosis:${mitosisId}`));
-    if (!hasMitosisProvenance) {
-      anomalies.push({
-        component: 'R5_EMERGENCE',
-        issue: `Child ${child.cellIdentity} is missing mitosis provenance trace`
-      });
-    }
+  private validateLineage(result: MitosisReconciliationResult, anomalies: Array<{component: string, issue: string}>) {
+    const validateChildLineage = (child: CellState, childName: string) => {
+      // The child's provenance must have the parent's mitosis record at the end
+      const lastProv = child.provenance[child.provenance.length - 1];
+      if (!lastProv || !lastProv.includes(`mitosis:${result.mitosisId}:${childName}`)) {
+        anomalies.push({
+          component: 'R7_LINEAGE',
+          issue: `Child ${child.cellIdentity} broken lineage: missing or invalid mitosis record`
+        });
+      }
+      // Note: We can't strictly check the parentStateId in the child's provenance array if we didn't append it there,
+      // but we do append `mitosis:${mitosisId}:${childName}` which confirms the link.
+    };
+
+    validateChildLineage(result.childA, 'childA');
+    validateChildLineage(result.childB, 'childB');
   }
 
   private validateCognitiveContinuity(child: CellState, anomalies: Array<{component: string, issue: string}>) {
-    // If the child has any cognitive/knowledge keys, we assume they are valid if they exist, 
-    // but we want to ensure basic continuity (e.g., state objects are defined)
     if (!child.knowledgeState || !child.cognitiveState || !child.reasoningState || !child.experienceState) {
        anomalies.push({
          component: 'R4_COGNITIVE',
          issue: `Child ${child.cellIdentity} has missing cognitive structure sections`
        });
+       return;
+    }
+
+    // P5 Validation integration and graph-level validation
+    const concepts = new Set<string>();
+    const relations: any[] = [];
+
+    // Scan all state sections for concepts and relations
+    const sections = [child.knowledgeState, child.cognitiveState, child.reasoningState, child.experienceState];
+    for (const section of sections) {
+      for (const [key, value] of Object.entries(section)) {
+        if (!value || typeof value !== 'object') continue;
+        const obj = value as any;
+        
+        if (obj.conceptId) {
+          const res = this.validateP5Representation(obj, 'CONCEPT');
+          if (res.status === 'INCOMPATIBLE') {
+            anomalies.push(...res.anomalies);
+          } else {
+            concepts.add(obj.conceptId);
+          }
+        } else if (obj.relationId) {
+          const res = this.validateP5Representation(obj, 'RELATION');
+          if (res.status === 'INCOMPATIBLE') {
+            anomalies.push(...res.anomalies);
+          } else {
+            relations.push(obj);
+          }
+        }
+      }
+    }
+
+    // Graph-level validation
+    for (const relation of relations) {
+      if (!concepts.has(relation.subjectConceptId)) {
+        anomalies.push({
+          component: 'P5_GRAPH',
+          issue: `Relation ${relation.relationId} references missing subjectConceptId ${relation.subjectConceptId}`
+        });
+      }
+      if (!concepts.has(relation.objectConceptId)) {
+        anomalies.push({
+          component: 'P5_GRAPH',
+          issue: `Relation ${relation.relationId} references missing objectConceptId ${relation.objectConceptId}`
+        });
+      }
     }
   }
 }
