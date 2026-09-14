@@ -104,15 +104,6 @@ async function startServer() {
     }
   });
 
-  app.get('/api/cell/verification/conflicts', (req, res) => {
-    try {
-      const openConflicts = cell.verification.getAllOpenConflicts();
-      res.json({ conflicts: openConflicts });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
   app.get('/api/cell/knowledge', async (req, res) => {
     try {
       const entries = await cell.memory.search({ category: 'SEMANTIC' as any });

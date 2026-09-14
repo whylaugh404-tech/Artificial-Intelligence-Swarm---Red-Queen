@@ -4,7 +4,6 @@ export * from './representation';
 export * from './understanding';
 export * from './worldmodel';
 export * from './reasoning';
-export * from './verification';
 export * from './state';
 export * from './pipeline';
 export * from './ai-provider';
