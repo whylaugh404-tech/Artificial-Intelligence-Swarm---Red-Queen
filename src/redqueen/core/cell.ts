@@ -45,6 +45,8 @@ import {
 } from '../cognition/representation';
 import { UnderstandingEngine } from '../cognition/understanding';
 import { WorldModelEngine } from '../cognition/worldmodel';
+import { ReasoningEngine } from '../cognition/reasoning';
+import { VerificationEngine } from '../cognition/verification';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -81,6 +83,8 @@ export class Cell {
   public readonly representation: CognitiveRepresentationEngine;
   public readonly understanding: UnderstandingEngine;
   public readonly worldModel: WorldModelEngine;
+  public readonly reasoning: ReasoningEngine;
+  public readonly verification: VerificationEngine;
 
   private _genome: CellGenome;
   private _lineage: CellLineage;
@@ -170,6 +174,8 @@ export class Cell {
     // Initialize Understanding and World Model Subsystems
     this.understanding = new UnderstandingEngine();
     this.worldModel = new WorldModelEngine(this.cognitiveGraph);
+    this.reasoning = new ReasoningEngine(this.cognitiveGraph);
+    this.verification = new VerificationEngine(this.cognitiveGraph);
 
     // Initialize Information Metabolism Subsystem
     this.metabolism = new MetabolismEngine(

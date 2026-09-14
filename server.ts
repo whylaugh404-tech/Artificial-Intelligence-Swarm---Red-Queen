@@ -92,6 +92,27 @@ async function startServer() {
     }
   });
 
+  app.get('/api/cell/reasoning/:chainId', (req, res) => {
+    try {
+      const chain = cell.reasoning.getChain(req.params.chainId);
+      if (!chain) {
+        return res.status(404).json({ error: 'Chain not found' });
+      }
+      res.json({ chain });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/cell/verification/conflicts', (req, res) => {
+    try {
+      const openConflicts = cell.verification.getAllOpenConflicts();
+      res.json({ conflicts: openConflicts });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/cell/knowledge', async (req, res) => {
     try {
       const entries = await cell.memory.search({ category: 'SEMANTIC' as any });
