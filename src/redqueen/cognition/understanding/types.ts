@@ -18,7 +18,7 @@ export const CognitiveUnderstandingSchema = z.object({
   understandingId: z.string().min(1).max(256),
   
   // Semantic structure
-  summary: z.string().min(1).max(4096),
+  summary: z.string().min(1).max(4096).optional(),
   
   // Explicit relations back to the base concepts/relations/evidences
   dependencies: z.array(UnderstandingDependencySchema).min(1),

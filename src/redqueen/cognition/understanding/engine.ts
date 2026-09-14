@@ -9,12 +9,24 @@ import { Context } from '../epistemic/types';
 import { Evidence } from '../evidence/types';
 
 export interface UnderstandingCompositionInput {
-  summary: string;
+  summary?: string;
   concepts?: CognitiveConcept[];
   relations?: CognitiveRelation[];
   evidences?: Evidence[];
   context: Context;
   originatingCellId: string;
+}
+
+function stringifyDeterministic(obj: any): string {
+  if (Array.isArray(obj)) {
+    return `[${obj.map(stringifyDeterministic).join(',')}]`;
+  }
+  if (typeof obj === 'object' && obj !== null) {
+    const keys = Object.keys(obj).sort();
+    const props = keys.map(k => `"${k}":${stringifyDeterministic(obj[k])}`);
+    return `{${props.join(',')}}`;
+  }
+  return JSON.stringify(obj);
 }
 
 export class UnderstandingEngine {
@@ -101,13 +113,13 @@ export class UnderstandingEngine {
     });
 
     // Hash to create deterministic ID
-    const hashInput = JSON.stringify({
-      summary: input.summary,
+    // We only hash semantic components to remain deterministic across non-semantic changes.
+    const semanticPayload = {
       context: input.context,
-      dependencies,
-      originatingCellId: input.originatingCellId
-    });
+      dependencies
+    };
     
+    const hashInput = stringifyDeterministic(semanticPayload);
     const understandingId = `und_${createHash('sha256').update(hashInput).digest('hex').substring(0, 16)}`;
 
     // Determine verification status

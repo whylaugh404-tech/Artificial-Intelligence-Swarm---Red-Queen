@@ -153,4 +153,87 @@ describe('P7.0 Step 7: Native Understanding Engine', () => {
       (understanding as any).summary = 'Changed';
     }).toThrow();
   });
+
+  test('Semantic ID should ignore summary changes', () => {
+    const und1 = engine.compose({
+      summary: 'Summary A',
+      concepts: [concept1],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+    
+    const und2 = engine.compose({
+      summary: 'Summary B', // Different summary
+      concepts: [concept1],
+      context: mockContext,
+      originatingCellId: 'cell_Y' // Different originating cell
+    });
+
+    expect(und1.understandingId).toBe(und2.understandingId);
+  });
+
+  test('Semantic ID should ignore order of inputs', () => {
+    const und1 = engine.compose({
+      concepts: [concept1, concept2], // concept1 then concept2
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+    
+    const und2 = engine.compose({
+      concepts: [concept2, concept1], // concept2 then concept1
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+
+    expect(und1.understandingId).toBe(und2.understandingId);
+  });
+
+  test('Semantic ID should change when semantic inputs change', () => {
+    const und1 = engine.compose({
+      concepts: [concept1],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+    
+    const und2 = engine.compose({
+      concepts: [concept1, concept2], // Additional concept
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+
+    expect(und1.understandingId).not.toBe(und2.understandingId);
+  });
+
+  test('Semantic ID should change when semantic context changes', () => {
+    const und1 = engine.compose({
+      concepts: [concept1],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+    
+    const diffContext = { ...mockContext, domain: 'DIFFERENT' };
+    const und2 = engine.compose({
+      concepts: [concept1],
+      context: diffContext,
+      originatingCellId: 'cell_X'
+    });
+
+    expect(und1.understandingId).not.toBe(und2.understandingId);
+  });
+
+  test('Semantic ID should remain same even if object keys are reordered in context', () => {
+    const und1 = engine.compose({
+      concepts: [concept1],
+      context: { contextId: 'ctx_001', domain: 'TEST' },
+      originatingCellId: 'cell_X'
+    });
+    
+    const und2 = engine.compose({
+      concepts: [concept1],
+      context: { domain: 'TEST', contextId: 'ctx_001' },
+      originatingCellId: 'cell_X'
+    });
+
+    expect(und1.understandingId).toBe(und2.understandingId);
+  });
 });
