@@ -76,6 +76,7 @@ export class MitosisEngine {
     parent: Cell,
     options: MitosisOptions
   ): Promise<{ result: MitosisResult; child?: Cell }> {
+    const admissionTimestamp = Date.now();
     const eventId = options.reproductionSeed || `mitosis_${randomUUID()}`;
     const flightKey = `${parent.nodeId}:${eventId}`;
 
@@ -86,7 +87,7 @@ export class MitosisEngine {
       return await existingInFlight;
     }
 
-    const executionPromise = this.executeReproduction(parent, options, eventId);
+    const executionPromise = this.executeReproduction(parent, options, eventId, admissionTimestamp);
     this.inFlightReproductions.set(flightKey, executionPromise);
 
     try {
@@ -99,7 +100,8 @@ export class MitosisEngine {
   private async executeReproduction(
     parent: Cell,
     options: MitosisOptions,
-    eventId: string
+    eventId: string,
+    admissionTimestamp: number = Date.now()
   ): Promise<{ result: MitosisResult; child?: Cell }> {
     // Serialize operations per parent to prevent memory/state write races
     const prevParentQueue = this.parentQueues.get(parent.nodeId) || Promise.resolve();
@@ -113,6 +115,7 @@ export class MitosisEngine {
 
     let childStoragePath = '';
     let childNodeId = '';
+    let isCommittedOnDisk = false;
     const eventKey = `reproduction_event_${eventId}`;
 
     try {
@@ -358,7 +361,19 @@ export class MitosisEngine {
       }
 
       // Also check in-memory cognitive state metadata fallback
-      const parentMetadata = parent.cognitiveState.getState().metadata || {};
+      let parentMetadata = parent.cognitiveState.getState().metadata || {};
+      if (!parentMetadata['lastReproductionTimestamp']) {
+        try {
+          const cooldownEntry = await parent.memory.get(`reproduction_cooldown_${parent.nodeId}`);
+          if (cooldownEntry && cooldownEntry.content && (cooldownEntry.content as any).lastSuccessfulReproductionAt) {
+            parentMetadata = {
+              ...parentMetadata,
+              lastReproductionTimestamp: String((cooldownEntry.content as any).lastSuccessfulReproductionAt)
+            };
+          }
+        } catch {}
+      }
+
       if (parentMetadata[eventKey] && !existingEventEntry) {
         const cachedChildId = parentMetadata[eventKey];
         return {
@@ -388,7 +403,8 @@ export class MitosisEngine {
         realPressure,
         eventId,
         parent.nodeId,
-        options.authorizationProof
+        options.authorizationProof,
+        admissionTimestamp
       );
 
       if (!validation.allowed) {
@@ -670,6 +686,7 @@ export class MitosisEngine {
           provenance: [parent.nodeId],
           version: 1
         });
+        isCommittedOnDisk = true;
 
         // Failure Hook 9: AFTER_COMMITTED_PERSISTENCE
         if (options.failureInjectionHook) {
@@ -678,26 +695,31 @@ export class MitosisEngine {
 
         this.committedChildrenByEvent.set(eventId, child);
       } catch (persistError: any) {
-        // Cooldown or event persistence failed: rollback parent cognitive state and re-throw
-        parent.cognitiveState.restoreFromSnapshot(cognitiveSnapshot);
-        if (!options.simulateAbruptCrash) {
+        if (!isCommittedOnDisk) {
+          // Cooldown or event persistence failed: rollback parent cognitive state and re-throw
+          parent.cognitiveState.restoreFromSnapshot(cognitiveSnapshot);
           try {
-            eventRecord.status = 'FAILED';
-            eventRecord.error = persistError.message;
-            await parent.memory.put({
-              id: eventKey,
-              cellId: parent.nodeId,
-              category: MemoryCategory.PROCEDURAL,
-              content: eventRecord,
-              source: 'mitosis_engine',
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-              confidence: 1.0,
-              hash: '',
-              provenance: [parent.nodeId],
-              version: 1
-            });
+            await parent.cognitiveState.persist(parent.memory);
           } catch {}
+          if (!options.simulateAbruptCrash) {
+            try {
+              eventRecord.status = 'FAILED';
+              eventRecord.error = persistError.message;
+              await parent.memory.put({
+                id: eventKey,
+                cellId: parent.nodeId,
+                category: MemoryCategory.PROCEDURAL,
+                content: eventRecord,
+                source: 'mitosis_engine',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                confidence: 1.0,
+                hash: '',
+                provenance: [parent.nodeId],
+                version: 1
+              });
+            } catch {}
+          }
         }
         throw persistError;
       }
@@ -730,7 +752,7 @@ export class MitosisEngine {
     } catch (error: any) {
       // Compensating action: remove partially created child storage if it exists,
       // unless simulating an abrupt crash where uncommitted files are left behind
-      if (childStoragePath && !options.simulateAbruptCrash) {
+      if (childStoragePath && !options.simulateAbruptCrash && !isCommittedOnDisk) {
         try {
           await fs.rm(childStoragePath, { force: true });
         } catch (rmErr) {

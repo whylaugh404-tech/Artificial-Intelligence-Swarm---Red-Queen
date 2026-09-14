@@ -319,7 +319,11 @@ export class CognitiveGraph {
         targetRepresentationId: conceptIdA,
         previousState: esA,
         context: ctxA,
-        trigger: EpistemicTransitionTrigger.CONFLICT_FLAGGED,
+        trigger: EpistemicTransitionTrigger.CONTRADICTION_DETECTED,
+        explicitVerification: {
+          status: RepresentationVerificationStatus.CONTRADICTED,
+          verifiedBy: this.cellId
+        },
         reason: `Preserved conflict with concept ${conceptIdB}: ${reason}`
       });
 
@@ -357,7 +361,11 @@ export class CognitiveGraph {
         targetRepresentationId: conceptIdB,
         previousState: esB,
         context: ctxB,
-        trigger: EpistemicTransitionTrigger.CONFLICT_FLAGGED,
+        trigger: EpistemicTransitionTrigger.CONTRADICTION_DETECTED,
+        explicitVerification: {
+          status: RepresentationVerificationStatus.CONTRADICTED,
+          verifiedBy: this.cellId
+        },
         reason: `Preserved conflict with concept ${conceptIdA}: ${reason}`
       });
 

@@ -162,7 +162,8 @@ export class GovernanceEnforcer {
     memoryPressure: number,
     eventId: string,
     parentId: string,
-    proof?: AuthorizationProof | any
+    proof?: AuthorizationProof | any,
+    requestTimestamp?: number
   ): { allowed: boolean; reason?: string; verificationState?: AuthorizationVerificationState } {
     if (parentState !== CellState.ACTIVE) {
       return { allowed: false, reason: 'Parent cell is not ACTIVE' };
@@ -184,11 +185,14 @@ export class GovernanceEnforcer {
     }
 
     const now = Date.now();
+    const reqTime = requestTimestamp || (proof && (proof as any).payload && typeof (proof as any).payload.timestamp === 'number' ? (proof as any).payload.timestamp : now);
     const lastReproStr = parentMetadata['lastReproductionTimestamp'];
     if (lastReproStr) {
       const lastRepro = parseInt(lastReproStr, 10);
-      if (!isNaN(lastRepro) && (now - lastRepro < this.policy.cooldownMs)) {
-        return { allowed: false, reason: 'Reproduction cooldown active' };
+      if (!isNaN(lastRepro)) {
+        if ((reqTime - lastRepro < this.policy.cooldownMs) || (now - lastRepro < this.policy.cooldownMs)) {
+          return { allowed: false, reason: 'Reproduction cooldown active' };
+        }
       }
     }
 

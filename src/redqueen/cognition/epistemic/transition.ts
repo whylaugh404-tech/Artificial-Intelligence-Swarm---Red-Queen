@@ -206,8 +206,15 @@ export class CognitiveStateTransitionEngine {
         nextVerStatus = ver.status;
       }
     }
-    // 4B. Evidence Conflict Detected (Rule 4: Non-destructive conflict)
-    else if (hasConflict) {
+    // 4B. Explicit Contradiction Trigger
+    else if (input.trigger === EpistemicTransitionTrigger.CONTRADICTION_DETECTED) {
+      nextStatus = EpistemicStatus.CONTRADICTED;
+      nextVerStatus = RepresentationVerificationStatus.CONTRADICTED;
+      determinedTrigger = EpistemicTransitionTrigger.CONTRADICTION_DETECTED;
+      determinedReason = determinedReason || 'Representation contradicted by explicit contradictory relation or finding.';
+    }
+    // 4C. Evidence Conflict Detected (Rule 4: Non-destructive conflict)
+    else if (hasConflict || input.trigger === EpistemicTransitionTrigger.CONFLICT_FLAGGED) {
       determinedTrigger = EpistemicTransitionTrigger.CONFLICT_FLAGGED;
       nextVerStatus = RepresentationVerificationStatus.PENDING;
 
@@ -231,7 +238,7 @@ export class CognitiveStateTransitionEngine {
         determinedReason = determinedReason || 'Unresolved conflict: evidence clusters contradict each other.';
       }
     }
-    // 4C. Pure Contradiction (hasContradicting && !hasSupporting)
+    // 4D. Pure Contradiction (hasContradicting && !hasSupporting)
     else if (hasContradicting && !hasSupporting) {
       nextStatus = EpistemicStatus.CONTRADICTED;
       nextVerStatus = RepresentationVerificationStatus.CONTRADICTED;
