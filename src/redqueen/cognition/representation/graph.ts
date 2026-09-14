@@ -759,6 +759,10 @@ export class CognitiveGraph {
     return Array.from(this.concepts.values());
   }
 
+  public getBudget(): Readonly<CognitiveRepresentationBudget> {
+    return this.budget;
+  }
+
   public getAllRelations(): CognitiveRelation[] {
     return Array.from(this.relations.values());
   }

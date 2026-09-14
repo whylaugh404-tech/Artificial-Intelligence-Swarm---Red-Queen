@@ -79,6 +79,19 @@ async function startServer() {
     }
   });
 
+  app.get('/api/cell/cognitive-graph', (req, res) => {
+    try {
+      res.json({
+        concepts: cell.cognitiveGraph.getAllConcepts(),
+        relations: cell.cognitiveGraph.getAllRelations(),
+        evidences: cell.cognitiveGraph.getAllEvidences(),
+        budget: cell.cognitiveGraph.getBudget()
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get('/api/cell/knowledge', async (req, res) => {
     try {
       const entries = await cell.memory.search({ category: 'SEMANTIC' as any });

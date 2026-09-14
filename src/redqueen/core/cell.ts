@@ -43,6 +43,8 @@ import {
   CognitiveRepresentationEngine,
   CognitiveRepresentationBudget
 } from '../cognition/representation';
+import { UnderstandingEngine } from '../cognition/understanding';
+import { WorldModelEngine } from '../cognition/worldmodel';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -77,6 +79,8 @@ export class Cell {
   public readonly exchange: ExchangeManager;
   public readonly cognitiveGraph: CognitiveGraph;
   public readonly representation: CognitiveRepresentationEngine;
+  public readonly understanding: UnderstandingEngine;
+  public readonly worldModel: WorldModelEngine;
 
   private _genome: CellGenome;
   private _lineage: CellLineage;
@@ -162,6 +166,10 @@ export class Cell {
       this.nodeId,
       cellOptions?.representationBudget
     );
+
+    // Initialize Understanding and World Model Subsystems
+    this.understanding = new UnderstandingEngine();
+    this.worldModel = new WorldModelEngine(this.cognitiveGraph);
 
     // Initialize Information Metabolism Subsystem
     this.metabolism = new MetabolismEngine(

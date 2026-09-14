@@ -500,7 +500,7 @@ Red Queen harus mampu membedakan:
 ---
 
 # 🌎 P7.2 — Internal World Model
-STATUS: PLANNED
+STATUS: COMPLETE ✅
 
 Membangun model internal mengenai dunia atau lingkungan yang sedang dipahami.
 
@@ -798,8 +798,8 @@ P5.1     COMPLETE / FROZEN ✅
 P6       COMPLETE / HARDENED ✅
 
 P7.0     IN PROGRESS 🚧
-P7.1     PLANNED
-P7.2     PLANNED
+P7.1     COMPLETE ✅
+P7.2     COMPLETE ✅
 P7.3     PLANNED
 P7.4     PLANNED
 P7.5     PLANNED
