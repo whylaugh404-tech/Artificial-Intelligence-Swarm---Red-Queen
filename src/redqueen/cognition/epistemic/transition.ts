@@ -39,6 +39,8 @@ export interface TransitionInput {
   reason?: string;
   customTransitionId?: string;
   customStateId?: string;
+  customConfidence?: number;
+  customVerificationStatus?: RepresentationVerificationStatus;
   deterministicTimestamp?: string;
 }
 
@@ -309,6 +311,10 @@ export class CognitiveStateTransitionEngine {
       }
     }
 
+    if (input.customVerificationStatus !== undefined) {
+      nextVerStatus = input.customVerificationStatus;
+    }
+
     // Step 5: Derive Subjective Opinion and Confidence
     let nextOpinion: SubjectiveOpinion | undefined;
     let nextConfidence: number | undefined;
@@ -336,6 +342,10 @@ export class CognitiveStateTransitionEngine {
     // Validate subjective opinion sum = 1.0 within EPSILON
     if (nextOpinion) {
       SubjectiveOpinionSchema.parse(nextOpinion);
+    }
+    
+    if (input.customConfidence !== undefined) {
+      nextConfidence = input.customConfidence;
     }
 
     // Step 6: Deterministic ID generation (Rule 8: Determinism)

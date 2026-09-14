@@ -49,6 +49,7 @@ import { ReasoningEngine } from '../cognition/reasoning';
 
 import { VerificationEngine } from '../cognition/verification';
 import { CollectiveCognitionEngine } from '../cognition/collective/engine';
+import { CognitiveDevelopmentEngine } from '../cognition/development/engine';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -88,7 +89,7 @@ export class Cell {
   public readonly worldModel: WorldModelEngine;
   public readonly reasoning: ReasoningEngine;
   public readonly verification: VerificationEngine;
-  public readonly collectiveCognition: CollectiveCognitionEngine;
+  public readonly cognitiveDevelopment: CognitiveDevelopmentEngine;
 
   private _genome: CellGenome;
   private _lineage: CellLineage;
@@ -182,6 +183,7 @@ export class Cell {
     this.verification = new VerificationEngine();
     this.verification.setGraph(this.cognitiveGraph);
     this.collectiveCognition = new CollectiveCognitionEngine(this);
+    this.cognitiveDevelopment = new CognitiveDevelopmentEngine(this);
 
     // Initialize Information Metabolism Subsystem
     this.metabolism = new MetabolismEngine(

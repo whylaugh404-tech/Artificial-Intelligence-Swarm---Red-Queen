@@ -87,6 +87,20 @@ export class CognitiveGraph {
   /**
    * Inserts a concept into the graph and persists to MemoryStore.
    */
+  public async updateConcept(concept: CognitiveConcept): Promise<CognitiveConcept> {
+    const validated = CognitiveConceptSchema.parse(concept);
+    this.concepts.set(validated.conceptId, validated);
+    await this.persistEntry(validated.conceptId, 'COGNITIVE_CONCEPT', validated, validated.confidence, validated.provenance);
+    return validated;
+  }
+
+  public async updateRelation(relation: CognitiveRelation): Promise<CognitiveRelation> {
+    const validated = CognitiveRelationSchema.parse(relation);
+    this.relations.set(validated.relationId, validated);
+    await this.persistEntry(validated.relationId, 'COGNITIVE_RELATION', validated, validated.confidence, validated.provenance);
+    return validated;
+  }
+
   public async insertConcept(candidate: CognitiveConcept): Promise<CognitiveConcept> {
     const validated = CognitiveConceptSchema.parse(candidate);
 
@@ -876,6 +890,8 @@ export class CognitiveGraph {
       customTransitionId?: string;
       deterministicTimestamp?: string;
       fusionResult?: EpistemicFusionResult;
+      customConfidence?: number;
+      customVerificationStatus?: RepresentationVerificationStatus;
     }
   ): Promise<{
     nextState: Readonly<EpistemicState>;
@@ -901,7 +917,9 @@ export class CognitiveGraph {
       reason: options?.reason,
       customStateId: options?.customStateId,
       customTransitionId: options?.customTransitionId,
-      deterministicTimestamp: options?.deterministicTimestamp
+      deterministicTimestamp: options?.deterministicTimestamp,
+      customConfidence: options?.customConfidence,
+      customVerificationStatus: options?.customVerificationStatus
     });
 
     // 3. Persist new epistemic state
