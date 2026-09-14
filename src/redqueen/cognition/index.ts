@@ -5,6 +5,7 @@ export * from './understanding';
 export * from './worldmodel';
 export * from './reasoning';
 export * from './verification';
+export * from './computation';
 export * from './state';
 export * from './pipeline';
 export * from './ai-provider';
