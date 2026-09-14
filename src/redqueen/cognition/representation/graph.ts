@@ -37,6 +37,7 @@ import { Evidence, EvidenceSchema, freezeEvidence, EvidenceDependency, EvidenceD
 import { EvidenceDependencyGraph } from '../evidence/graph';
 import { EpistemicFusionEngine, EpistemicFusionResult, AttributedEvidence } from '../epistemic/fusion';
 import { EpistemicAdapter } from '../epistemic/adapter';
+import { CognitiveUnderstanding, CognitiveUnderstandingSchema } from '../understanding/types';
 import { v4 as uuidv4 } from 'uuid';
 import * as crypto from 'crypto';
 
@@ -62,6 +63,7 @@ export class CognitiveGraph {
   private readonly abstractions: Map<string, CognitiveAbstraction> = new Map();
   private readonly generalizations: Map<string, CognitiveGeneralization> = new Map();
   private readonly analogies: Map<string, CognitiveAnalogy> = new Map();
+  private readonly understandings: Map<string, CognitiveUnderstanding> = new Map();
   private readonly epistemicStates: Map<string, EpistemicState> = new Map();
   private readonly evidences: Map<string, Evidence> = new Map();
   private readonly edg: EvidenceDependencyGraph = new EvidenceDependencyGraph();
@@ -299,6 +301,27 @@ export class CognitiveGraph {
 
     await this.persistEntry(validated.analogyId, 'COGNITIVE_ANALOGY', validated, validated.confidence, validated.provenance);
     return validated;
+  }
+
+  public async insertUnderstanding(candidate: CognitiveUnderstanding): Promise<CognitiveUnderstanding> {
+    const validated = CognitiveUnderstandingSchema.parse(candidate);
+    this.understandings.set(validated.understandingId, validated);
+    await this.persistEntry(
+      validated.understandingId,
+      'COGNITIVE_UNDERSTANDING',
+      validated,
+      1.0,
+      validated.provenance
+    );
+    return validated;
+  }
+
+  public getUnderstanding(understandingId: string): CognitiveUnderstanding | undefined {
+    return this.understandings.get(understandingId);
+  }
+
+  public getAllUnderstandings(): CognitiveUnderstanding[] {
+    return Array.from(this.understandings.values());
   }
 
   /**
@@ -1018,6 +1041,103 @@ export class CognitiveGraph {
     );
   }
 
+  /**
+   * Replays development transitions for a given representation deterministically.
+   */
+  public replayDevelopmentHistory(
+    targetRepresentationId: string,
+    upToTransitionId?: string
+  ): {
+    replayedCount: number;
+    finalState?: EpistemicState;
+    history: CognitiveTransitionRecord[];
+    isDeterministic: boolean;
+  } {
+    const transitions = this.getTransitionsForRepresentation(targetRepresentationId)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    const history: CognitiveTransitionRecord[] = [];
+    let finalState: EpistemicState | undefined;
+
+    for (const tr of transitions) {
+      history.push(tr);
+      const state = this.epistemicStates.get(tr.nextStateId);
+      if (state) finalState = state;
+      if (upToTransitionId && tr.transitionId === upToTransitionId) {
+        break;
+      }
+    }
+
+    return {
+      replayedCount: history.length,
+      finalState,
+      history,
+      isDeterministic: history.every(h => !!h.transitionId && !!h.nextStateId)
+    };
+  }
+
+  /**
+   * Performs an atomic developmental transition.
+   * If any step fails, rolls back in-memory and persisted state to ensure consistency.
+   */
+  public async executeAtomicDevelopmentUpdate<T extends CognitiveConcept | CognitiveRelation>(
+    representationId: string,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const prevConcept = this.concepts.get(representationId) ? { ...this.concepts.get(representationId)! } : undefined;
+    const prevRelation = this.relations.get(representationId) ? { ...this.relations.get(representationId)! } : undefined;
+    const prevTransitions = Array.from(this.transitions.entries());
+    const prevStates = Array.from(this.epistemicStates.entries());
+    const prevIndex = Array.from(this.repEpistemicIndex.entries());
+
+    try {
+      return await operation();
+    } catch (error) {
+      logger.error(this.component, 'atomic_development_update_failed_rolling_back', { representationId, error });
+
+      if (prevConcept) {
+        this.concepts.set(representationId, prevConcept);
+        await this.persistEntry(representationId, 'COGNITIVE_CONCEPT', prevConcept, prevConcept.confidence, prevConcept.provenance).catch(() => {});
+      } else if (prevRelation) {
+        this.relations.set(representationId, prevRelation);
+        await this.persistEntry(representationId, 'COGNITIVE_RELATION', prevRelation, prevRelation.confidence, prevRelation.provenance).catch(() => {});
+      }
+
+      this.transitions.clear();
+      for (const [k, v] of prevTransitions) this.transitions.set(k, v);
+
+      this.epistemicStates.clear();
+      for (const [k, v] of prevStates) this.epistemicStates.set(k, v);
+
+      this.repEpistemicIndex.clear();
+      for (const [k, v] of prevIndex) this.repEpistemicIndex.set(k, v);
+
+      throw error;
+    }
+  }
+
+  /**
+   * Recovers a representation to its latest valid, consistent epistemic state from transition history.
+   */
+  public async recoverConsistentState(representationId: string): Promise<boolean> {
+    const transitions = this.getTransitionsForRepresentation(representationId)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    if (transitions.length === 0) return false;
+
+    const latestTransition = transitions[transitions.length - 1];
+    const latestState = this.epistemicStates.get(latestTransition.nextStateId);
+    if (!latestState) return false;
+
+    await this.updateRepresentationEpistemicBinding(
+      representationId,
+      latestState.stateId,
+      latestState.verificationStatus,
+      latestState.rawConfidence
+    );
+    return true;
+  }
+
   public getEpistemicStateForRepresentation(
     representationId: string,
     contextId?: string
@@ -1140,6 +1260,13 @@ export class CognitiveGraph {
             const parsed = CognitiveAnalogySchema.safeParse(entry.content);
             if (parsed.success) {
               this.analogies.set(parsed.data.analogyId, parsed.data);
+            }
+            break;
+          }
+          case 'COGNITIVE_UNDERSTANDING': {
+            const parsed = CognitiveUnderstandingSchema.safeParse(entry.content);
+            if (parsed.success) {
+              this.understandings.set(parsed.data.understandingId, parsed.data);
             }
             break;
           }
