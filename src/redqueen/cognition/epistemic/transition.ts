@@ -111,7 +111,7 @@ export class CognitiveStateTransitionEngine {
       effectiveFusionResult = this.fusionEngine.fuse(
         input.evidences,
         validatedContext,
-        input.edg,
+        input.edg || new EvidenceDependencyGraph(),
         {
           targetRepresentationId: input.targetRepresentationId,
           previousState: input.previousState
