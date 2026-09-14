@@ -113,10 +113,43 @@ export class UnderstandingEngine {
     });
 
     // Hash to create deterministic ID
-    // We only hash semantic components to remain deterministic across non-semantic changes.
+    // We hash semantic components and their canonical semantic representations
+    // to remain deterministic across non-semantic changes.
+    const semanticConcepts = (input.concepts || []).map(c => ({
+      conceptId: c.conceptId,
+      canonicalName: c.canonicalName,
+      description: c.description,
+      category: c.category,
+      sourceKnowledgeIds: [...c.sourceKnowledgeIds].sort(),
+      sourceExperienceIds: [...(c.sourceExperienceIds || [])].sort(),
+      verificationStatus: c.verificationStatus
+    })).sort((a, b) => a.conceptId.localeCompare(b.conceptId));
+
+    const semanticRelations = (input.relations || []).map(r => ({
+      relationId: r.relationId,
+      subjectConceptId: r.subjectConceptId,
+      predicate: r.predicate,
+      objectConceptId: r.objectConceptId,
+      verificationStatus: r.verificationStatus
+    })).sort((a, b) => a.relationId.localeCompare(b.relationId));
+
+    const semanticEvidences = (input.evidences || []).map(e => ({
+      evidenceId: e.evidenceId,
+      sourceId: e.sourceId,
+      provenance: {
+        sourceId: e.provenance.sourceId,
+        derivedFrom: e.provenance.derivedFrom ? [...e.provenance.derivedFrom].sort() : undefined,
+        supportingRepresentationIds: e.provenance.supportingRepresentationIds ? [...e.provenance.supportingRepresentationIds].sort() : undefined,
+        contradictingRepresentationIds: e.provenance.contradictingRepresentationIds ? [...e.provenance.contradictingRepresentationIds].sort() : undefined
+      }
+    })).sort((a, b) => a.evidenceId.localeCompare(b.evidenceId));
+
     const semanticPayload = {
       context: input.context,
-      dependencies
+      dependencies,
+      semanticConcepts,
+      semanticRelations,
+      semanticEvidences
     };
     
     const hashInput = stringifyDeterministic(semanticPayload);

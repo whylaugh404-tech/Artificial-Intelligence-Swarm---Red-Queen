@@ -221,6 +221,112 @@ describe('P7.0 Step 7: Native Understanding Engine', () => {
     expect(und1.understandingId).not.toBe(und2.understandingId);
   });
 
+  test('Semantic ID should change when concept description changes', () => {
+    const und1 = engine.compose({
+      concepts: [concept1],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+    
+    const diffConcept = { ...concept1, description: 'A different description' };
+    const und2 = engine.compose({
+      concepts: [diffConcept],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+
+    expect(und1.understandingId).not.toBe(und2.understandingId);
+  });
+
+  test('Semantic ID should change when concept canonicalName changes', () => {
+    const und1 = engine.compose({
+      concepts: [concept1],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+    
+    const diffConcept = { ...concept1, canonicalName: 'Pear' };
+    const und2 = engine.compose({
+      concepts: [diffConcept],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+
+    expect(und1.understandingId).not.toBe(und2.understandingId);
+  });
+
+  test('Semantic ID should change when relation predicate changes', () => {
+    const und1 = engine.compose({
+      concepts: [concept1, concept2],
+      relations: [relation],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+    
+    const diffRelation = { ...relation, predicate: CognitiveRelationPredicate.CAUSES };
+    const und2 = engine.compose({
+      concepts: [concept1, concept2],
+      relations: [diffRelation],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+
+    expect(und1.understandingId).not.toBe(und2.understandingId);
+  });
+
+  test('Semantic ID should change when relation endpoint changes', () => {
+    const und1 = engine.compose({
+      concepts: [concept1, concept2],
+      relations: [relation],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+    
+    const diffRelation = { ...relation, objectConceptId: 'con_3' };
+    const und2 = engine.compose({
+      concepts: [concept1, concept2],
+      relations: [diffRelation],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+
+    expect(und1.understandingId).not.toBe(und2.understandingId);
+  });
+
+  test('Semantic ID should change when semantic evidence identity changes', () => {
+    const und1 = engine.compose({
+      evidences: [evidence1],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+    
+    const diffEvidence = { ...evidence1, sourceId: 'cell_Y' }; // sourceId changed
+    const und2 = engine.compose({
+      evidences: [diffEvidence],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+
+    expect(und1.understandingId).not.toBe(und2.understandingId);
+  });
+
+  test('Semantic ID should NOT change when observational timestamp changes', () => {
+    const und1 = engine.compose({
+      concepts: [concept1],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+    
+    const diffConcept = { ...concept1, createdAt: new Date(Date.now() + 1000).toISOString() };
+    const und2 = engine.compose({
+      concepts: [diffConcept],
+      context: mockContext,
+      originatingCellId: 'cell_X'
+    });
+
+    expect(und1.understandingId).toBe(und2.understandingId);
+  });
+
   test('Semantic ID should remain same even if object keys are reordered in context', () => {
     const und1 = engine.compose({
       concepts: [concept1],
