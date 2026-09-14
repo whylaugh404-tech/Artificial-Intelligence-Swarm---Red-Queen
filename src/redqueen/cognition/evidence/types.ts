@@ -18,6 +18,7 @@ export const EvidenceSchema = z.object({
   timestamp: z.string().datetime(),
   provenance: EvidenceProvenanceSchema,
   context: ContextSchema,
+  confidence: z.number().min(0).max(1).optional(),
 });
 export type Evidence = z.infer<typeof EvidenceSchema>;
 

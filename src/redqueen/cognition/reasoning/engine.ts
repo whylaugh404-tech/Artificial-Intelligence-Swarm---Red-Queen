@@ -156,7 +156,7 @@ export class ReasoningEngine {
     provenanceSet.add(input.originatingCellId);
 
     for (const rawPremise of input.premises) {
-      const pInput = rawPremise as ReasoningPremiseInput;
+      const pInput = rawPremise as any;
       let statement = pInput.statement;
       let sourceType: PremiseSourceType = pInput.sourceType || 'OBSERVATION';
       let sourceId = pInput.sourceId || '';
@@ -503,9 +503,9 @@ export class ReasoningEngine {
         if (ev) {
           this.evidenceCache.set(evId, ev);
           if (ev.provenance?.sourceId) provenanceSet.add(ev.provenance.sourceId);
-          // High confidence evidence
           verifiedCount++;
-          totalEvidenceConfidence += 1.0;
+          // Use real evidence confidence if available, otherwise default to a high but non-perfect value
+          totalEvidenceConfidence += ev.confidence !== undefined ? ev.confidence : 0.85;
         } else {
           // Id reference without full cached object
           totalEvidenceConfidence += 0.8;

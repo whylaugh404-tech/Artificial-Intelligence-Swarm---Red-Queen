@@ -141,6 +141,7 @@ describe('P7.3: Native Reasoning Engine', () => {
     evidenceId: 'ev_incident_postmortem',
     sourceId: 'sensor_grid_a',
     timestamp: '2026-01-01T00:00:00.000Z',
+    confidence: 0.95,
     provenance: {
       sourceId: 'sensor_grid_a',
       timestamp: '2026-01-01T00:00:00.000Z'
