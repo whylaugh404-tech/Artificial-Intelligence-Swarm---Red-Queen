@@ -216,6 +216,8 @@ export type CompositeComputeModel = z.infer<typeof CompositeComputeModelSchema>;
 // 9d. Composite Computational State (synthesized state before final presentation)
 export const CompositeComputationalStateSchema = z.object({
   stateId: z.string().min(1),
+  transformationId: z.string().optional(),
+  transformationParameters: z.record(z.string(), z.unknown()).optional(),
   synthesizedEntities: z.record(z.string(), z.unknown()),
   unifiedStateVector: z.record(z.string(), z.unknown()),
   crossCellResolution: z.record(z.string(), z.string()),

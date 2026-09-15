@@ -579,4 +579,203 @@ describe('P8.1: Collective Computation Foundation & Audit Repairs', () => {
     expect(capacityProfile.availability).toBeLessThanOrEqual(1.0);
     expect(capacityProfile.architecture).toBeDefined();
   });
+
+  it('18. semantic hash audit: runtime metadata & timestamps never enter semantic identity', async () => {
+    const cell = await createTestCell('cell_audit_hashes');
+    const engine = cell.collectiveComputation;
+
+    const baseSpec = {
+      goal: 'Audit semantic identity isolation',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: { alpha: 100, beta: 'test' },
+      requiredCapabilities: ['COGNITIVE_REASONING']
+    };
+
+    // 1. Mutate createdAt timestamp -> Identity MUST remain strictly identical
+    const taskT1 = engine.createTask({ ...baseSpec, createdAt: '2026-01-01T00:00:00.000Z' });
+    const taskT2 = engine.createTask({ ...baseSpec, createdAt: '2026-09-15T23:59:59.999Z' });
+    expect(taskT1.deterministicIdentity).toBe(taskT2.deterministicIdentity);
+    expect(taskT1.taskId).toBe(taskT2.taskId);
+
+    // 2. Mutate runtime timeoutMs -> Identity MUST remain strictly identical
+    const taskTimeout1 = engine.createTask({ ...baseSpec, timeoutMs: 5000 });
+    const taskTimeout2 = engine.createTask({ ...baseSpec, timeoutMs: 60000 });
+    expect(taskTimeout1.deterministicIdentity).toBe(taskTimeout2.deterministicIdentity);
+    expect(taskTimeout1.taskId).toBe(taskTimeout2.taskId);
+
+    // 3. Subtask result hash MUST NOT be affected by execution duration or timestamp
+    const res = await engine.executeTask(taskT1, { availableCells: [cell] });
+    const subtask = Object.values(res.partialResults)[0];
+    expect(subtask).toBeDefined();
+
+    // Verify subtask hash depends only on subtaskId, output, and executingCellId
+    const expectedSubtaskHash = computeDeterministicHash({
+      subtaskId: subtask.subtaskId,
+      output: subtask.output,
+      executingCellId: subtask.executingCellId
+    });
+    expect(subtask.resultHash).toBe(expectedSubtaskHash);
+    expect(res.verificationStatus.verified).toBe(true);
+  });
+
+  it('19. semantic sensitivity & equivalence: computation mutation alters identity, semantic equivalence preserves identity', async () => {
+    const cell = await createTestCell('cell_semantic_sens');
+    const engine = cell.collectiveComputation;
+
+    const baseSpec = {
+      goal: 'Base semantic computation',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: { items: [1, 2, 3], scale: 2 },
+      requiredCapabilities: ['INFO_PROCESSING', 'SWARM_COORDINATION']
+    };
+    const baseTask = engine.createTask(baseSpec);
+
+    // 1. Semantic mutation: goal changed
+    const mutatedGoalTask = engine.createTask({ ...baseSpec, goal: 'Altered goal specification' });
+    expect(mutatedGoalTask.deterministicIdentity).not.toBe(baseTask.deterministicIdentity);
+
+    // 2. Semantic mutation: computationType changed
+    const mutatedTypeTask = engine.createTask({ ...baseSpec, computationType: 'GRAPH_INFERENCE' });
+    expect(mutatedTypeTask.deterministicIdentity).not.toBe(baseTask.deterministicIdentity);
+
+    // 3. Semantic mutation: payload value changed
+    const mutatedPayloadTask = engine.createTask({ ...baseSpec, payload: { items: [1, 2, 4], scale: 2 } });
+    expect(mutatedPayloadTask.deterministicIdentity).not.toBe(baseTask.deterministicIdentity);
+
+    // 4. Semantic mutation: capability requirement added
+    const mutatedCapTask = engine.createTask({ ...baseSpec, requiredCapabilities: ['INFO_PROCESSING', 'SWARM_COORDINATION', 'COGNITIVE_REASONING'] });
+    expect(mutatedCapTask.deterministicIdentity).not.toBe(baseTask.deterministicIdentity);
+
+    // 5. Semantic equivalence: payload keys permuted
+    const equivPayloadTask = engine.createTask({
+      goal: 'Base semantic computation',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: { scale: 2, items: [1, 2, 3] }, // reversed key insertion
+      requiredCapabilities: ['SWARM_COORDINATION', 'INFO_PROCESSING'] // reversed capability order
+    });
+    expect(equivPayloadTask.deterministicIdentity).toBe(baseTask.deterministicIdentity);
+    expect(equivPayloadTask.taskId).toBe(baseTask.taskId);
+  });
+
+  it('20. composition pipeline: compositeState depends strictly on input results + dependency structure + transformation parameters', async () => {
+    const coordinator = await createTestCell('coord_comp_pipe');
+    const worker = await createTestCell('worker_comp_pipe');
+
+    const task = coordinator.collectiveComputation.createTask({
+      goal: 'Verify compositeState dependence',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: {
+        items: [10, 20, 30, 40]
+      }
+    });
+
+    const result = await coordinator.collectiveComputation.executeTask(task, {
+      availableCells: [coordinator, worker]
+    });
+
+    const composition = result.composition;
+    const compositeState = composition.compositeState;
+
+    // 1. Pipeline stage verification
+    expect(composition.inputs.length).toBeGreaterThan(0);
+    expect(composition.transformation).toBeDefined();
+    expect(compositeState).toBeDefined();
+    expect(result.finalOutput).toBeDefined();
+
+    // 2. Transformation parameters linkage
+    expect(compositeState.transformationId).toBe(composition.transformation.transformationId);
+    expect(compositeState.transformationParameters).toBeDefined();
+    expect(compositeState.transformationParameters?.rule).toBe('AMDAHL_TOPOLOGICAL_REDUCTION');
+    expect(compositeState.transformationParameters?.criticalPathDepth).toBe(composition.transformation.criticalPathDepth);
+
+    // 3. Verify stateChecksum formula dependency on: input results + dependency structure + transformation parameters
+    const expectedChecksum = computeDeterministicHash({
+      synthesizedEntities: compositeState.synthesizedEntities,
+      unifiedStateVector: compositeState.unifiedStateVector,
+      crossCellResolution: compositeState.crossCellResolution,
+      dependencyResolutions: compositeState.dependencyResolutions,
+      transformation: compositeState.transformationParameters
+    });
+    expect(compositeState.stateChecksum).toBe(expectedChecksum);
+    expect(compositeState.stateId).toBe(`state_${expectedChecksum.substring(0, 16)}`);
+
+    // 4. Sensitivity test: mutating input results changes stateChecksum
+    const mutatedResultsChecksum = computeDeterministicHash({
+      synthesizedEntities: { ...compositeState.synthesizedEntities, mutated: { val: 999 } },
+      unifiedStateVector: compositeState.unifiedStateVector,
+      crossCellResolution: compositeState.crossCellResolution,
+      dependencyResolutions: compositeState.dependencyResolutions,
+      transformation: compositeState.transformationParameters
+    });
+    expect(mutatedResultsChecksum).not.toBe(compositeState.stateChecksum);
+
+    // 5. Sensitivity test: mutating dependency structure changes stateChecksum
+    const mutatedDepsChecksum = computeDeterministicHash({
+      synthesizedEntities: compositeState.synthesizedEntities,
+      unifiedStateVector: compositeState.unifiedStateVector,
+      crossCellResolution: compositeState.crossCellResolution,
+      dependencyResolutions: [{ fromSubtask: 'a', toSubtask: 'b', status: 'RESOLVED' }],
+      transformation: compositeState.transformationParameters
+    });
+    expect(mutatedDepsChecksum).not.toBe(compositeState.stateChecksum);
+
+    // 6. Sensitivity test: mutating transformation parameters changes stateChecksum
+    const mutatedTransChecksum = computeDeterministicHash({
+      synthesizedEntities: compositeState.synthesizedEntities,
+      unifiedStateVector: compositeState.unifiedStateVector,
+      crossCellResolution: compositeState.crossCellResolution,
+      dependencyResolutions: compositeState.dependencyResolutions,
+      transformation: { ...compositeState.transformationParameters, rule: 'ALTERED_RULE' }
+    });
+    expect(mutatedTransChecksum).not.toBe(compositeState.stateChecksum);
+  });
+
+  it('21. non-additive composition: verifies structural compute model and rejects simple capacity sum or output aggregation', async () => {
+    const coordinator = await createTestCell('coord_non_additive');
+    const worker1 = await createTestCell('worker_non_add_1', {
+      capabilities: ['INFO_PROCESSING', 'COGNITIVE_REASONING'],
+      specialization: 'DATA_WORKER'
+    });
+    const worker2 = await createTestCell('worker_non_add_2', {
+      capabilities: ['INFO_PROCESSING', 'SWARM_COORDINATION'],
+      specialization: 'AGGREGATOR'
+    });
+
+    const task = coordinator.collectiveComputation.createTask({
+      goal: 'Non-additive composition proof',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: {
+        subtasks: [
+          { subtaskId: 'sub_1', type: 'DATA_TRANSFORMATION', payload: { items: [1, 2] }, requiredSpecialization: 'DATA_WORKER' },
+          { subtaskId: 'sub_2', type: 'VECTOR_AGGREGATION', payload: { vectors: [[3, 4]] }, requiredSpecialization: 'AGGREGATOR', dependsOn: ['sub_1'] }
+        ]
+      }
+    });
+
+    const result = await coordinator.collectiveComputation.executeTask(task, {
+      availableCells: [coordinator, worker1, worker2]
+    });
+
+    const computeModel = result.composition.computeModel;
+
+    // Must be non-additive
+    expect(computeModel.isNonAdditive).toBe(true);
+    expect(computeModel.formula).toBe('C* = F(C1, C2, ..., Cn)');
+
+    // Multiple participating cells
+    expect(Object.keys(computeModel.participantCapacities).length).toBeGreaterThan(1);
+
+    // Effective capacity must strictly not be a scalar sum of participating capacities
+    const sumCapacities = Object.values(computeModel.participantCapacities).reduce((a, b) => a + b, 0);
+    expect(computeModel.naiveSumCapacity).toBeCloseTo(sumCapacities, 2);
+    expect(computeModel.effectiveCapacity).not.toBe(computeModel.naiveSumCapacity);
+    expect(computeModel.effectiveCapacity).toBeLessThan(computeModel.naiveSumCapacity);
+
+    // Unified state vector in compositeState maps semantic namespace: [subtaskId.key]
+    const stateVector = result.composition.compositeState.unifiedStateVector;
+    expect(Object.keys(stateVector).length).toBeGreaterThan(0);
+    for (const key of Object.keys(stateVector)) {
+      expect(key).toMatch(/^sub_.+\..+$/);
+    }
+  });
 });

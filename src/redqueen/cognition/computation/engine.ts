@@ -909,11 +909,21 @@ export class CollectiveComputationEngine {
     };
 
     // Step C: Composition Transformation
+    const canonicalDependencies = dependencies.map(d => ({
+      source: d.sourceSubtaskId,
+      target: d.targetSubtaskId,
+      key: d.requiredOutputKey || ''
+    })).sort((a, b) => (a.source + a.target).localeCompare(b.source + b.target));
+
     const transformationHash = computeDeterministicHash({
+      operator: 'NON_ADDITIVE_FUNCTIONAL_SYNTHESIS',
       rule: 'AMDAHL_TOPOLOGICAL_REDUCTION',
-      waveCount,
+      criticalPathDepth: waveCount,
+      parallelWavesCount: waveCount,
       totalSubtasks,
-      dependenciesCount: dependencies.length
+      dependencies: canonicalDependencies,
+      concurrencySpeedup: Math.round(theoreticalSpeedup * 100) / 100,
+      attenuationFactor: Math.round(latencyDegradation * 1000) / 1000
     });
     const transformationId = `trans_${transformationHash.substring(0, 16)}`;
 
@@ -937,6 +947,7 @@ export class CollectiveComputationEngine {
     };
 
     // Step D: Composite Computational State
+    // Strictly dependent on: input results + dependency structure + transformation parameters
     const synthesizedEntities: Record<string, unknown> = {};
     const unifiedStateVector: Record<string, unknown> = {};
     const crossCellResolution: Record<string, string> = { ...allocations };
@@ -960,15 +971,28 @@ export class CollectiveComputationEngine {
       }
     }
 
+    const transformationParameters = {
+      transformationId: transformation.transformationId,
+      operator: transformation.operator,
+      rule: transformation.rule,
+      criticalPathDepth: transformation.criticalPathDepth,
+      concurrencySpeedup: transformation.concurrencySpeedup,
+      attenuationFactor: transformation.attenuationFactor
+    };
+
     const stateChecksum = computeDeterministicHash({
       synthesizedEntities,
       unifiedStateVector,
-      crossCellResolution
+      crossCellResolution,
+      dependencyResolutions,
+      transformation: transformationParameters
     });
     const stateId = `state_${stateChecksum.substring(0, 16)}`;
 
     const compositeState: CompositeComputationalState = {
       stateId,
+      transformationId: transformation.transformationId,
+      transformationParameters,
       synthesizedEntities,
       unifiedStateVector,
       crossCellResolution,
