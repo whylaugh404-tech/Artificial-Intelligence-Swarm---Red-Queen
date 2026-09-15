@@ -6,7 +6,10 @@ import { logger } from '../../core/logger';
 import {
   CellComputeCapacity,
   CommunicationProfile,
+  ComputationComposition,
   ComputationDependency,
+  ComputationExecution,
+  ComputationExecutionCost,
   ComputationResult,
   ComputationStatus,
   ComputationSubtask,
@@ -52,7 +55,8 @@ export type SubtaskExecutor = (
 export type ResultComposer = (
   task: ComputationTask,
   subtaskResults: Record<string, SubtaskResult>,
-  dependencies: ComputationDependency[]
+  dependencies: ComputationDependency[],
+  composition: ComputationComposition
 ) => Record<string, unknown>;
 
 export interface CollectiveComputationOptions {
@@ -65,17 +69,18 @@ export interface CollectiveComputationOptions {
 /**
  * P8.1 — Collective Computation Engine
  * 
- * Manages distributed, composition-based computation across Red Queen Cells:
+ * Coordinates distributed, composition-based computation across Red Queen Cells:
  * C* = F(C1, C2, ..., Cn)
  * 
- * Incorporates:
- * - Deterministic Task Identity (Canonical Semantic Representation + SHA-256)
- * - Topological decomposition & dependency graph resolution
- * - Candidate Cell selection based on specialization, capacity, and communication profiles
- * - Parallel execution for independent subtasks
- * - Fault isolation with timeout, retry, and dependency failure tracking
- * - Strict verification & provenance tracking
- * - Complete, auditable, immutable ComputationTrace
+ * Strict architectural tenets:
+ * - Deterministic Task & Subtask Identity (Canonical Semantic Representation + SHA-256).
+ * - Zero non-deterministic identifiers (no Date.now() / Math.random() in IDs or semantic hashes).
+ * - Cell compute capacity is strictly an ESTIMATED / DERIVED capability, not physical hardware.
+ * - True non-additive composition: C* accounts for dependency depth, Amdahl concurrency,
+ *   communication overhead, synchronization barriers, and cryptographic verification.
+ * - Topological decomposition & parallel wave execution.
+ * - Fault isolation with timeout, retry, reassignment, and dependency failure blocking.
+ * - Deep immutability and complete provenance.
  */
 export class CollectiveComputationEngine {
   private readonly component = 'collective_computation';
@@ -143,7 +148,7 @@ export class CollectiveComputationEngine {
     });
 
     // 4. Default Composer
-    this.defaultComposers.set('DEFAULT', (task, subtaskResults, dependencies) => {
+    this.defaultComposers.set('DEFAULT', (task, subtaskResults, dependencies, composition) => {
       const aggregatedOutputs: Record<string, unknown> = {};
       for (const [subId, res] of Object.entries(subtaskResults)) {
         aggregatedOutputs[subId] = {
@@ -159,7 +164,9 @@ export class CollectiveComputationEngine {
         subtasksCompleted: Object.values(subtaskResults).filter(r => r.status === ComputationStatus.COMPLETED).length,
         subtasksTotal: Object.keys(subtaskResults).length,
         aggregatedOutputs,
-        formula: 'C* = F(C1, C2, ..., Cn)',
+        formula: composition.formula,
+        effectiveCapacity: composition.effectiveCapacity,
+        costs: composition.costs,
         dependencyCount: dependencies.length
       };
     });
@@ -167,6 +174,7 @@ export class CollectiveComputationEngine {
 
   /**
    * Creates a deterministic computation task with canonical identity.
+   * Zero Date.now() / Math.random() in taskId or deterministicIdentity.
    */
   public createTask(params: {
     goal: string;
@@ -175,21 +183,23 @@ export class CollectiveComputationEngine {
     requiredCapabilities?: string[];
     timeoutMs?: number;
     taskId?: string;
+    createdAt?: string;
   }): ComputationTask {
-    const taskId = params.taskId || `task_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const requiredCapabilities = params.requiredCapabilities || [];
+    const requiredCapabilities = [...(params.requiredCapabilities || [])].sort();
     const timeoutMs = params.timeoutMs || 10000;
 
-    // Canonical representation for deterministic identity (excluding nondeterministic timing)
+    // Canonical representation for deterministic identity (excluding non-deterministic runtime timing)
     const canonicalSpecification = {
-      goal: params.goal,
-      computationType: params.computationType,
+      goal: params.goal.trim(),
+      computationType: params.computationType.trim(),
       payload: params.payload,
       requiredCapabilities,
       originatingCellId: this.localCell.nodeId
     };
 
     const deterministicIdentity = computeDeterministicHash(canonicalSpecification);
+    const taskId = params.taskId || `task_${deterministicIdentity.substring(0, 16)}`;
+    const createdAt = params.createdAt || '2026-01-01T00:00:00.000Z';
 
     return deepFreeze({
       taskId,
@@ -200,12 +210,14 @@ export class CollectiveComputationEngine {
       originatingCellId: this.localCell.nodeId,
       timeoutMs,
       deterministicIdentity,
-      createdAt: new Date().toISOString()
+      createdAt
     });
   }
 
   /**
    * Models the local computational capacity of a Cell based on its genome, state, and traits.
+   * NOTE: This is strictly an ESTIMATED / DERIVED capability model for distributed task planning,
+   * NOT a physical hardware benchmark.
    */
   public getCellComputeCapacity(cell: Cell): CellComputeCapacity {
     const capabilities = cell.genome?.capabilities || [];
@@ -220,19 +232,19 @@ export class CollectiveComputationEngine {
       architecture = 'DISTRIBUTED_PIPELINE';
     }
 
-    // Parallelism derived from maxCognitiveCycleDepth and traits
+    // Concurrency/parallelism derived from maxCognitiveCycleDepth and traits
     const parallelism = Math.max(1, traits?.maxCognitiveCycleDepth || 4);
     
-    // Capacity scoring based on capability count and risk tolerance
+    // Relative capacity scoring based on capability count
     const baseCapacity = 100.0;
     const capabilityMultiplier = 1.0 + (capabilities.length * 0.15);
     const capacity = baseCapacity * capabilityMultiplier;
 
-    // Working memory based on concepts count and buffer
+    // Derived working memory representation
     const conceptsCount = cell.cognitiveGraph.getAllConcepts().length;
-    const memory = 512.0 + (conceptsCount * 0.5); // MB capacity
+    const memory = 512.0 + (conceptsCount * 0.5);
 
-    // Availability checking from cell lifecycle
+    // Operational availability derived from cell lifecycle state
     const state = cell.lifecycle.getState();
     const availability = (state === CellState.ACTIVE || state === CellState.CREATED || state === CellState.INITIALIZING) ? 1.0 : 0.0;
 
@@ -242,7 +254,8 @@ export class CollectiveComputationEngine {
       parallelism,
       memory,
       specialization,
-      availability
+      availability,
+      isDerivedCapability: true
     };
   }
 
@@ -253,8 +266,8 @@ export class CollectiveComputationEngine {
     const isLocal = targetCell.nodeId === this.localCell.nodeId;
     if (isLocal) {
       return {
-        bandwidth: 10000.0, // Local loopback MB/s
-        latency: 0.1, // Near zero latency
+        bandwidth: 10000.0, // Local loopback memory transfer
+        latency: 0.1, // Sub-millisecond latency
         topology: 'LOCAL_CLUSTER',
         reliability: 1.0
       };
@@ -277,6 +290,7 @@ export class CollectiveComputationEngine {
 
   /**
    * Default structural decomposition into subtasks and dependencies.
+   * Uses deterministic SHA-256 generation for all subtasks and dependencies.
    */
   public decomposeTask(task: ComputationTask): DecompositionPlan {
     const subtasks: ComputationSubtask[] = [];
@@ -285,13 +299,19 @@ export class CollectiveComputationEngine {
     // If task payload already contains explicit subtask partitioning:
     if (Array.isArray(task.payload.subtasks) && task.payload.subtasks.length > 0) {
       task.payload.subtasks.forEach((sub: any, index: number) => {
-        const subtaskId = sub.subtaskId || `${task.taskId}_sub_${index + 1}`;
+        const subtaskId = sub.subtaskId || `sub_${computeDeterministicHash({
+          parentTaskId: task.taskId,
+          index,
+          type: sub.type || task.computationType,
+          payload: sub.payload || {}
+        }).substring(0, 16)}`;
+
         subtasks.push({
           subtaskId,
           parentTaskId: task.taskId,
           type: sub.type || task.computationType,
           payload: sub.payload || {},
-          requiredCapabilities: sub.requiredCapabilities || task.requiredCapabilities,
+          requiredCapabilities: [...(sub.requiredCapabilities || task.requiredCapabilities)].sort(),
           requiredSpecialization: sub.requiredSpecialization || null,
           timeoutMs: sub.timeoutMs || 4000,
           maxRetries: sub.maxRetries ?? 2,
@@ -300,8 +320,14 @@ export class CollectiveComputationEngine {
 
         if (Array.isArray(sub.dependsOn)) {
           sub.dependsOn.forEach((depId: string) => {
+            const dependencyId = `dep_${computeDeterministicHash({
+              source: depId,
+              target: subtaskId,
+              key: sub.requiredOutputKey || ''
+            }).substring(0, 16)}`;
+
             dependencies.push({
-              dependencyId: `dep_${depId}_to_${subtaskId}`,
+              dependencyId,
               sourceSubtaskId: depId,
               targetSubtaskId: subtaskId,
               requiredOutputKey: sub.requiredOutputKey,
@@ -320,16 +346,16 @@ export class CollectiveComputationEngine {
       const chunk1 = items.slice(0, chunkSize);
       const chunk2 = items.slice(chunkSize);
 
-      const sub1Id = `${task.taskId}_part_1`;
-      const sub2Id = `${task.taskId}_part_2`;
-      const aggId = `${task.taskId}_aggregate`;
+      const sub1Id = `sub_${computeDeterministicHash({ parentTaskId: task.taskId, part: 1, items: chunk1 }).substring(0, 16)}`;
+      const sub2Id = `sub_${computeDeterministicHash({ parentTaskId: task.taskId, part: 2, items: chunk2 }).substring(0, 16)}`;
+      const aggId = `sub_${computeDeterministicHash({ parentTaskId: task.taskId, part: 'aggregate' }).substring(0, 16)}`;
 
       subtasks.push({
         subtaskId: sub1Id,
         parentTaskId: task.taskId,
         type: 'DATA_TRANSFORMATION',
         payload: { items: chunk1, multiplier: task.payload.multiplier ?? 1 },
-        requiredCapabilities: task.requiredCapabilities,
+        requiredCapabilities: [...task.requiredCapabilities].sort(),
         requiredSpecialization: null,
         timeoutMs: 4000,
         maxRetries: 2,
@@ -341,7 +367,7 @@ export class CollectiveComputationEngine {
         parentTaskId: task.taskId,
         type: 'DATA_TRANSFORMATION',
         payload: { items: chunk2, multiplier: task.payload.multiplier ?? 1 },
-        requiredCapabilities: task.requiredCapabilities,
+        requiredCapabilities: [...task.requiredCapabilities].sort(),
         requiredSpecialization: null,
         timeoutMs: 4000,
         maxRetries: 2,
@@ -353,7 +379,7 @@ export class CollectiveComputationEngine {
         parentTaskId: task.taskId,
         type: 'VECTOR_AGGREGATION',
         payload: { vectors: [] },
-        requiredCapabilities: task.requiredCapabilities,
+        requiredCapabilities: [...task.requiredCapabilities].sort(),
         requiredSpecialization: null,
         timeoutMs: 4000,
         maxRetries: 1,
@@ -361,14 +387,14 @@ export class CollectiveComputationEngine {
       });
 
       dependencies.push({
-        dependencyId: `dep_${sub1Id}_to_${aggId}`,
+        dependencyId: `dep_${computeDeterministicHash({ source: sub1Id, target: aggId }).substring(0, 16)}`,
         sourceSubtaskId: sub1Id,
         targetSubtaskId: aggId,
         isOptional: false
       });
 
       dependencies.push({
-        dependencyId: `dep_${sub2Id}_to_${aggId}`,
+        dependencyId: `dep_${computeDeterministicHash({ source: sub2Id, target: aggId }).substring(0, 16)}`,
         sourceSubtaskId: sub2Id,
         targetSubtaskId: aggId,
         isOptional: false
@@ -378,13 +404,18 @@ export class CollectiveComputationEngine {
     }
 
     // Default single atomic subtask
-    const defaultSubId = `${task.taskId}_atomic`;
+    const defaultSubId = `sub_${computeDeterministicHash({
+      parentTaskId: task.taskId,
+      type: task.computationType,
+      payload: task.payload
+    }).substring(0, 16)}`;
+
     subtasks.push({
       subtaskId: defaultSubId,
       parentTaskId: task.taskId,
       type: task.computationType,
       payload: task.payload,
-      requiredCapabilities: task.requiredCapabilities,
+      requiredCapabilities: [...task.requiredCapabilities].sort(),
       requiredSpecialization: null,
       timeoutMs: task.timeoutMs,
       maxRetries: 2,
@@ -397,26 +428,34 @@ export class CollectiveComputationEngine {
   /**
    * Selects the most optimal Cell for a subtask based on capabilities, specialization,
    * capacity, and communication profile.
-   * Uses composition law C* = F(C1, C2... Cn) rather than simple scalar summation.
+   * If candidate cells are incapable, returns capable: false so scheduler records failure.
    */
   public selectOptimalCellForSubtask(
     subtask: ComputationSubtask,
     candidateCells: Cell[]
-  ): { cell: Cell; score: number; profile: CellComputeCapacity; comm: CommunicationProfile } {
+  ): {
+    cell: Cell | null;
+    score: number;
+    profile: CellComputeCapacity | null;
+    comm: CommunicationProfile | null;
+    capable: boolean;
+    allCapableCandidates: Cell[];
+  } {
     if (!candidateCells || candidateCells.length === 0) {
-      throw new Error('No candidate cells available for computation');
+      candidateCells = [this.localCell];
     }
 
     let bestCell: Cell | null = null;
     let highestScore = -Infinity;
     let bestProfile: CellComputeCapacity | null = null;
     let bestComm: CommunicationProfile | null = null;
+    const capableCandidates: Cell[] = [];
 
     for (const cell of candidateCells) {
       const cap = this.getCellComputeCapacity(cell);
       const comm = this.getCommunicationProfile(cell);
 
-      // Check hard capability requirement
+      // Check hard capability requirements
       const cellCaps = cell.genome?.capabilities || [];
       const meetsCapabilities = subtask.requiredCapabilities.every(req => cellCaps.includes(req as any));
       if (!meetsCapabilities) {
@@ -433,6 +472,8 @@ export class CollectiveComputationEngine {
         }
       }
 
+      capableCandidates.push(cell);
+
       // Compositional suitability scoring:
       // Score = (Capacity * Parallelism * Availability) / (1 + Latency / 100) * Reliability + SpecializationBonus
       const latencyPenalty = 1.0 + (comm.latency / 100.0);
@@ -447,19 +488,40 @@ export class CollectiveComputationEngine {
       }
     }
 
-    if (!bestCell || !bestProfile || !bestComm) {
-      // Fallback to localCell if it satisfies or if no candidates matched strictly
-      bestCell = this.localCell;
-      bestProfile = this.getCellComputeCapacity(this.localCell);
-      bestComm = this.getCommunicationProfile(this.localCell);
-      highestScore = 1.0;
+    // If no candidate cell met the capabilities:
+    if (!bestCell) {
+      // Check if local cell satisfies it
+      const localCaps = this.localCell.genome?.capabilities || [];
+      const localMeets = subtask.requiredCapabilities.every(req => localCaps.includes(req as any));
+      const localSpecializationMeets = !subtask.requiredSpecialization ||
+        this.localCell.cognitiveState?.getSpecialization() === subtask.requiredSpecialization;
+
+      if (localMeets && localSpecializationMeets) {
+        bestCell = this.localCell;
+        bestProfile = this.getCellComputeCapacity(this.localCell);
+        bestComm = this.getCommunicationProfile(this.localCell);
+        highestScore = 1.0;
+        capableCandidates.push(this.localCell);
+      } else {
+        // Incapable: no Cell in the cluster satisfies the required capabilities
+        return {
+          cell: null,
+          score: -1,
+          profile: null,
+          comm: null,
+          capable: false,
+          allCapableCandidates: []
+        };
+      }
     }
 
     return {
       cell: bestCell,
       score: highestScore,
       profile: bestProfile,
-      comm: bestComm
+      comm: bestComm,
+      capable: true,
+      allCapableCandidates: capableCandidates
     };
   }
 
@@ -529,25 +591,60 @@ export class CollectiveComputationEngine {
   }
 
   /**
-   * Executes a single subtask on a designated Cell with timeout and retry handling.
+   * Executes a single subtask on a designated Cell with timeout, retry, and reassignment handling.
    * Ensures complete fault isolation.
    */
   private async executeSubtaskWithFaultIsolation(
     subtask: ComputationSubtask,
     resolvedInputs: Record<string, unknown>,
-    targetCell: Cell,
-    executor: SubtaskExecutor
-  ): Promise<SubtaskResult> {
-    const startTime = Date.now();
+    initialCell: Cell,
+    executor: SubtaskExecutor,
+    alternateCells: Cell[] = []
+  ): Promise<{ result: SubtaskResult; executions: ComputationExecution[] }> {
+    const executions: ComputationExecution[] = [];
     let attempts = 0;
     const maxRetries = subtask.maxRetries;
     let lastError: string | undefined;
+    let currentCell = initialCell;
+
+    // Build ordered list of execution cells for retries / reassignments
+    const executionCells = [initialCell, ...alternateCells.filter(c => c.nodeId !== initialCell.nodeId)];
 
     while (attempts <= maxRetries) {
       attempts++;
+      currentCell = executionCells[(attempts - 1) % executionCells.length] || initialCell;
+      const attemptStartTime = Date.now();
+
+      const comm = this.getCommunicationProfile(currentCell);
+      const commCost = currentCell.nodeId === this.localCell.nodeId ? 0.1 : comm.latency + (10 / comm.bandwidth);
+      const syncCost = attempts > 1 ? 2.0 : 0.5;
+      const verifCost = 1.0;
+      const executionCost: ComputationExecutionCost = {
+        communicationCost: Math.round(commCost * 100) / 100,
+        synchronizationCost: Math.round(syncCost * 100) / 100,
+        verificationCost: Math.round(verifCost * 100) / 100,
+        totalCost: Math.round((commCost + syncCost + verifCost) * 100) / 100
+      };
+
+      const executionId = `exec_${computeDeterministicHash({
+        subtaskId: subtask.subtaskId,
+        cellId: currentCell.nodeId,
+        attempt: attempts
+      }).substring(0, 16)}`;
+
+      const execRecord: ComputationExecution = {
+        executionId,
+        subtaskId: subtask.subtaskId,
+        cellId: currentCell.nodeId,
+        attempt: attempts,
+        startedAt: new Date(attemptStartTime).toISOString(),
+        status: 'RUNNING',
+        cost: executionCost
+      };
+      executions.push(execRecord);
+
       try {
-        // Enforce timeout using Promise.race
-        const executionPromise = executor(subtask, resolvedInputs, targetCell);
+        const executionPromise = executor(subtask, resolvedInputs, currentCell);
         const timeoutPromise = new Promise<never>((_, reject) => {
           setTimeout(() => {
             reject(new Error(`Subtask ${subtask.subtaskId} execution timed out after ${subtask.timeoutMs}ms`));
@@ -555,50 +652,68 @@ export class CollectiveComputationEngine {
         });
 
         const rawOutput = await Promise.race([executionPromise, timeoutPromise]);
-        const duration = Date.now() - startTime;
+        const duration = Date.now() - attemptStartTime;
+
+        execRecord.completedAt = new Date().toISOString();
+        execRecord.durationMs = duration;
+        execRecord.status = 'COMPLETED';
 
         const resultPayload = {
           subtaskId: subtask.subtaskId,
           output: rawOutput,
-          executingCellId: targetCell.nodeId
+          executingCellId: currentCell.nodeId
         };
         const resultHash = computeDeterministicHash(resultPayload);
 
         return {
-          subtaskId: subtask.subtaskId,
-          taskId: subtask.parentTaskId,
-          executingCellId: targetCell.nodeId,
-          status: ComputationStatus.COMPLETED,
-          output: rawOutput,
-          attempts,
-          executionDurationMs: duration,
-          provenance: [this.localCell.nodeId, targetCell.nodeId],
-          resultHash
+          result: {
+            subtaskId: subtask.subtaskId,
+            taskId: subtask.parentTaskId,
+            executingCellId: currentCell.nodeId,
+            status: ComputationStatus.COMPLETED,
+            output: rawOutput,
+            attempts,
+            executionDurationMs: duration,
+            provenance: [this.localCell.nodeId, currentCell.nodeId],
+            resultHash,
+            executionCost
+          },
+          executions
         };
       } catch (err: any) {
         lastError = err?.message || String(err);
+        const duration = Date.now() - attemptStartTime;
+        execRecord.completedAt = new Date().toISOString();
+        execRecord.durationMs = duration;
+        execRecord.status = lastError.includes('timed out') ? 'TIMEOUT' : 'FAILED';
+        execRecord.error = lastError;
+
         logger.warn(this.component, 'subtask_execution_attempt_failed', {
           subtaskId: subtask.subtaskId,
           attempt: attempts,
-          cellId: targetCell.nodeId,
+          cellId: currentCell.nodeId,
           error: lastError
         });
       }
     }
 
-    // All retries exhausted -> Return isolated failure without terminating the fabric
-    const duration = Date.now() - startTime;
+    // All retries exhausted -> Return isolated failure
+    const isTimeout = lastError?.includes('timed out');
+    const finalStatus = isTimeout ? ComputationStatus.TIMEOUT : ComputationStatus.FAILED;
     return {
-      subtaskId: subtask.subtaskId,
-      taskId: subtask.parentTaskId,
-      executingCellId: targetCell.nodeId,
-      status: ComputationStatus.FAILED,
-      output: {},
-      error: lastError,
-      attempts,
-      executionDurationMs: duration,
-      provenance: [this.localCell.nodeId, targetCell.nodeId],
-      resultHash: computeDeterministicHash({ error: lastError, subtaskId: subtask.subtaskId })
+      result: {
+        subtaskId: subtask.subtaskId,
+        taskId: subtask.parentTaskId,
+        executingCellId: currentCell.nodeId,
+        status: finalStatus,
+        output: {},
+        error: lastError,
+        attempts,
+        executionDurationMs: 0,
+        provenance: [this.localCell.nodeId, currentCell.nodeId],
+        resultHash: computeDeterministicHash({ error: lastError, subtaskId: subtask.subtaskId })
+      },
+      executions
     };
   }
 
@@ -650,14 +765,143 @@ export class CollectiveComputationEngine {
   }
 
   /**
+   * Mathematical Composition Model:
+   * C* = F(C1, C2, ..., Cn)
+   * 
+   * Strictly NON-ADDITIVE:
+   * Does NOT merely sum capacities or merge keys.
+   * Models critical path length, Amdahl concurrency, communication latency,
+   * synchronization barrier overhead, and cryptographic verification cost.
+   */
+  public computeCollectiveComposition(
+    task: ComputationTask,
+    subtaskResults: Record<string, SubtaskResult>,
+    dependencies: ComputationDependency[],
+    waves: ComputationSubtask[][],
+    allocations: Record<string, string>,
+    candidateCells: Cell[]
+  ): ComputationComposition {
+    const subtaskKeys = Object.keys(subtaskResults).sort();
+    const participatingCellIds = Array.from(new Set(Object.values(allocations))).sort();
+
+    // 1. Measure Communication Costs
+    let commCost = 0;
+    for (const [subId, cellId] of Object.entries(allocations)) {
+      const targetCell = candidateCells.find(c => c.nodeId === cellId) || this.localCell;
+      const profile = this.getCommunicationProfile(targetCell);
+      commCost += profile.latency + (10.0 / profile.bandwidth);
+    }
+    // Add inter-subtask dependency communication
+    for (const dep of dependencies) {
+      const srcCell = allocations[dep.sourceSubtaskId];
+      const tgtCell = allocations[dep.targetSubtaskId];
+      if (srcCell && tgtCell && srcCell !== tgtCell) {
+        commCost += 15.0; // Cross-cell transfer latency
+      } else {
+        commCost += 0.2; // Intra-cell / local cluster transfer
+      }
+    }
+
+    // 2. Measure Synchronization Costs (Barrier latency between parallel waves)
+    const waveCount = waves.length;
+    let syncCost = Math.max(0, (waveCount - 1) * 3.5);
+    waves.forEach(w => {
+      if (w.length > 1) {
+        syncCost += (w.length * 0.75); // Parallel barrier fan-in
+      }
+    });
+
+    // 3. Measure Verification Costs
+    const verifCost = subtaskKeys.length * 1.5;
+
+    // Total overhead
+    const totalOverheadCost = commCost + syncCost + verifCost;
+
+    // 4. Non-additive Composed Capacity: C* = F(C1, ..., Cn)
+    // Gather capacities of participating cells
+    const cellCapacities = participatingCellIds.map(cellId => {
+      const cell = candidateCells.find(c => c.nodeId === cellId) || this.localCell;
+      return this.getCellComputeCapacity(cell).capacity;
+    });
+    const avgCellCapacity = cellCapacities.length > 0
+      ? cellCapacities.reduce((a, b) => a + b, 0) / cellCapacities.length
+      : 100.0;
+    const minCellCapacity = cellCapacities.length > 0
+      ? Math.min(...cellCapacities)
+      : 100.0;
+
+    // Amdahl's Law parallel fraction & concurrency modeling:
+    const totalSubtasks = Math.max(1, subtaskKeys.length);
+    const parallelFraction = totalSubtasks > 1 ? (totalSubtasks - waveCount) / totalSubtasks : 0.0;
+    const serialFraction = 1.0 - parallelFraction;
+    const avgParallelism = Math.max(1, totalSubtasks / Math.max(1, waveCount));
+
+    // Concurrency speedup factor with diminishing returns:
+    const theoreticalSpeedup = 1.0 / (serialFraction + (parallelFraction / avgParallelism));
+    // Coordination and latency degradation factor:
+    const latencyDegradation = 1.0 / (1.0 + (totalOverheadCost / 150.0));
+
+    // Specialization synergy:
+    const hasSpecialization = Object.values(subtaskResults).some(r => r.status === ComputationStatus.COMPLETED);
+    const synergy = hasSpecialization ? 1.05 : 0.95;
+
+    // Non-additive composed capacity (C* is strictly not simple sum):
+    const effectiveCapacity = (minCellCapacity * serialFraction + avgCellCapacity * theoreticalSpeedup * parallelFraction)
+      * latencyDegradation * synergy;
+
+    // 5. Synthesize Composed Output
+    const composedOutputs: Record<string, unknown> = {};
+    for (const subId of subtaskKeys) {
+      const res = subtaskResults[subId];
+      composedOutputs[subId] = {
+        status: res.status,
+        executingCell: res.executingCellId,
+        output: res.output,
+        durationMs: res.executionDurationMs
+      };
+    }
+
+    const deterministicHash = computeDeterministicHash({
+      taskId: task.taskId,
+      formula: 'C* = F(C1, C2, ..., Cn)',
+      subtasks: subtaskKeys,
+      participatingCellIds,
+      effectiveCapacity: Math.round(effectiveCapacity * 100) / 100,
+      costs: {
+        comm: Math.round(commCost * 100) / 100,
+        sync: Math.round(syncCost * 100) / 100,
+        verif: Math.round(verifCost * 100) / 100
+      }
+    });
+
+    const compositionId = `comp_${deterministicHash.substring(0, 16)}`;
+
+    return {
+      compositionId,
+      formula: 'C* = F(C1, C2, ..., Cn)',
+      transformationRule: 'COLLECTIVE_NON_ADDITIVE_COMPOSITION',
+      inputSubtaskCount: totalSubtasks,
+      inputCellIds: participatingCellIds,
+      effectiveCapacity: Math.round(effectiveCapacity * 100) / 100,
+      costs: {
+        communicationCost: Math.round(commCost * 100) / 100,
+        synchronizationCost: Math.round(syncCost * 100) / 100,
+        verificationCost: Math.round(verifCost * 100) / 100,
+        totalOverheadCost: Math.round(totalOverheadCost * 100) / 100
+      },
+      composedOutput: composedOutputs,
+      deterministicHash
+    };
+  }
+
+  /**
    * Coordinates the full lifecycle of a computation task:
-   * Decomposition → Parallel Wave Execution → Verification → Composition → Immutable Deep-Frozen Result.
+   * Task → Decomposition → Dependency → Scheduling → Execution → Verification → Composition → Result.
    */
   public async executeTask(
     task: ComputationTask,
     options?: CollectiveComputationOptions
   ): Promise<ComputationResult> {
-    const traceId = `trace_${task.taskId}_${Date.now()}`;
     const candidateCells = options?.availableCells && options.availableCells.length > 0 
       ? options.availableCells 
       : [this.localCell];
@@ -670,15 +914,19 @@ export class CollectiveComputationEngine {
     const waves = this.buildExecutionWaves(subtasks, dependencies);
     const executionOrder = waves.map(wave => wave.map(s => s.subtaskId));
 
+    const traceId = `trace_${computeDeterministicHash({
+      taskId: task.taskId,
+      executionOrder
+    }).substring(0, 16)}`;
+
     const allocations: Record<string, string> = {};
-    const dispatches: ComputationTrace['dispatches'] = [];
+    const dispatches: ComputationExecution[] = [];
     const verificationTrace: ComputationTrace['verificationTrace'] = [];
     const subtaskResults: Record<string, SubtaskResult> = {};
 
     const executor = options?.executorOverride || ((sub, inputs, cell) => {
       const handler = this.defaultExecutors.get(sub.type);
       if (!handler) {
-        // Fallback generic executor
         return Promise.resolve({ result: `Executed ${sub.type}`, ...sub.payload, ...inputs });
       }
       return handler(sub, inputs, cell);
@@ -692,11 +940,14 @@ export class CollectiveComputationEngine {
         const resolvedInputs: Record<string, unknown> = {};
 
         let hasDependencyFailure = false;
+        let failureReason = '';
+
         for (const dep of upstreamDeps) {
           const upstreamRes = subtaskResults[dep.sourceSubtaskId];
           if (!upstreamRes || upstreamRes.status !== ComputationStatus.COMPLETED) {
             if (!dep.isOptional) {
               hasDependencyFailure = true;
+              failureReason = `Upstream dependency ${dep.sourceSubtaskId} failed or did not complete (status: ${upstreamRes?.status || 'MISSING'})`;
               break;
             }
           } else {
@@ -708,57 +959,100 @@ export class CollectiveComputationEngine {
           }
         }
 
-        // Cell Selection
+        // Capability-based Scheduling
         const allocation = this.selectOptimalCellForSubtask(subtask, candidateCells);
-        allocations[subtask.subtaskId] = allocation.cell.nodeId;
 
-        const dispatchRecord: ComputationTrace['dispatches'][number] = {
-          subtaskId: subtask.subtaskId,
-          cellId: allocation.cell.nodeId,
-          attempt: 1,
-          startedAt: new Date().toISOString(),
-          status: 'RUNNING'
-        };
-        dispatches.push(dispatchRecord);
-
-        if (hasDependencyFailure) {
-          // Fault isolation: track dependency failure gracefully
-          const failedRes: SubtaskResult = {
+        // If no cell in the cluster is capable:
+        if (!allocation.capable || !allocation.cell) {
+          const incapableRes: SubtaskResult = {
             subtaskId: subtask.subtaskId,
             taskId: task.taskId,
-            executingCellId: allocation.cell.nodeId,
+            executingCellId: 'none',
             status: ComputationStatus.FAILED,
             output: {},
-            error: `Upstream dependency failed for subtask ${subtask.subtaskId}`,
+            error: `Incapable Cell: No available Cell in cluster satisfies required capabilities: [${subtask.requiredCapabilities.join(', ')}]`,
             attempts: 0,
             executionDurationMs: 0,
-            provenance: [this.localCell.nodeId, allocation.cell.nodeId],
-            resultHash: computeDeterministicHash({ dependencyFailure: true, subtaskId: subtask.subtaskId })
+            provenance: [this.localCell.nodeId],
+            resultHash: computeDeterministicHash({
+              subtaskId: subtask.subtaskId,
+              incapable: true,
+              capabilities: subtask.requiredCapabilities
+            })
           };
-          subtaskResults[subtask.subtaskId] = failedRes;
-          dispatchRecord.completedAt = new Date().toISOString();
-          dispatchRecord.status = 'DEPENDENCY_FAILED';
+          subtaskResults[subtask.subtaskId] = incapableRes;
+          allocations[subtask.subtaskId] = 'none';
+
+          dispatches.push({
+            executionId: `exec_${computeDeterministicHash({ subtaskId: subtask.subtaskId, status: 'INCAPABLE' }).substring(0, 16)}`,
+            subtaskId: subtask.subtaskId,
+            cellId: 'none',
+            attempt: 1,
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            status: 'INCAPABLE_CELL',
+            error: incapableRes.error
+          });
+
           verificationTrace.push({
             subtaskId: subtask.subtaskId,
             verified: false,
-            reason: 'Dependency failure prevented execution'
+            reason: 'Incapable Cell: Required capabilities missing'
           });
           return;
         }
 
-        // Execute subtask with timeout and retry
-        const res = await this.executeSubtaskWithFaultIsolation(
+        allocations[subtask.subtaskId] = allocation.cell.nodeId;
+
+        // Dependency failure → BLOCKED
+        if (hasDependencyFailure) {
+          const blockedRes: SubtaskResult = {
+            subtaskId: subtask.subtaskId,
+            taskId: task.taskId,
+            executingCellId: allocation.cell.nodeId,
+            status: ComputationStatus.BLOCKED,
+            output: {},
+            error: `BLOCKED: ${failureReason}`,
+            attempts: 0,
+            executionDurationMs: 0,
+            provenance: [this.localCell.nodeId, allocation.cell.nodeId],
+            resultHash: computeDeterministicHash({
+              subtaskId: subtask.subtaskId,
+              status: ComputationStatus.BLOCKED,
+              reason: failureReason
+            })
+          };
+          subtaskResults[subtask.subtaskId] = blockedRes;
+
+          dispatches.push({
+            executionId: `exec_${computeDeterministicHash({ subtaskId: subtask.subtaskId, status: 'BLOCKED' }).substring(0, 16)}`,
+            subtaskId: subtask.subtaskId,
+            cellId: allocation.cell.nodeId,
+            attempt: 1,
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            status: 'BLOCKED',
+            error: blockedRes.error
+          });
+
+          verificationTrace.push({
+            subtaskId: subtask.subtaskId,
+            verified: false,
+            reason: `BLOCKED: ${failureReason}`
+          });
+          return;
+        }
+
+        // Execute subtask with timeout, retry, and reassignment
+        const { result: res, executions: subExecutions } = await this.executeSubtaskWithFaultIsolation(
           subtask,
           resolvedInputs,
           allocation.cell,
-          executor
+          executor,
+          allocation.allCapableCandidates
         );
         subtaskResults[subtask.subtaskId] = res;
-
-        dispatchRecord.completedAt = new Date().toISOString();
-        dispatchRecord.durationMs = res.executionDurationMs;
-        dispatchRecord.status = res.status;
-        dispatchRecord.attempt = res.attempts;
+        dispatches.push(...subExecutions);
 
         // 4. Verification
         const verification = this.verifySubtaskResult(subtask, res);
@@ -773,9 +1067,19 @@ export class CollectiveComputationEngine {
       await Promise.all(wavePromises);
     }
 
-    // 5. Composition of final results
+    // 5. Non-additive Mathematical Composition
+    const composition = this.computeCollectiveComposition(
+      task,
+      subtaskResults,
+      dependencies,
+      waves,
+      allocations,
+      candidateCells
+    );
+
+    // Final result composer
     const composer = options?.composerOverride || this.defaultComposers.get('DEFAULT')!;
-    const finalOutput = composer(task, subtaskResults, dependencies);
+    const finalOutput = composer(task, subtaskResults, dependencies, composition);
 
     // Compute overall status
     const allResults = Object.values(subtaskResults);
@@ -787,7 +1091,7 @@ export class CollectiveComputationEngine {
       overallStatus = ComputationStatus.PARTIAL;
     }
 
-    // Compile Complete Trace
+    // Trace compilation
     const trace: ComputationTrace = {
       traceId,
       taskId: task.taskId,
@@ -797,12 +1101,7 @@ export class CollectiveComputationEngine {
       allocations,
       dispatches,
       verificationTrace,
-      compositionDetails: {
-        transformationRule: 'COLLECTIVE_COMPOSITION',
-        inputSubtaskCount: subtasks.length,
-        compositionTraceId: `comp_trace_${computeDeterministicHash(finalOutput)}`,
-        formula: 'C* = F(C1, C2, ..., Cn)'
-      },
+      compositionDetails: composition,
       completedAt: new Date().toISOString()
     };
 
@@ -818,8 +1117,7 @@ export class CollectiveComputationEngine {
 
     const deterministicHash = computeDeterministicHash({
       taskId: task.taskId,
-      finalOutput,
-      traceHash: computeDeterministicHash(trace.executionOrder),
+      compositionHash: composition.deterministicHash,
       originatingCellId: this.localCell.nodeId
     });
 
@@ -840,6 +1138,7 @@ export class CollectiveComputationEngine {
         notes: `Verified ${verifiedCount}/${verificationTrace.length} subtasks.`
       },
       trace,
+      composition,
       deterministicHash,
       completedAt: new Date().toISOString()
     };
@@ -848,5 +1147,3 @@ export class CollectiveComputationEngine {
     return deepFreeze(computationResult);
   }
 }
-
-// Trigger GitHub Sync
