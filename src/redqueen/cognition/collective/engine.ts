@@ -17,7 +17,8 @@ import {
   vectorToArray,
   arrayToVector,
   clamp01,
-  validateFeatureVector
+  validateFeatureVector,
+  FEATURE_VECTOR_KEYS
 } from '../types';
 
 export interface PeerSelectionCriteria {
@@ -124,67 +125,50 @@ export class CollectiveCognitionEngine {
    */
   public extractFeatureVector(cell: Cell, targetDomain?: string): CognitiveFeatureVector {
     // 1. Computation
-    let computation = 0.6;
-    if (cell.genome?.capabilities?.includes('INFO_PROCESSING') || (cell.genome?.capabilities as any)?.includes('COMPUTATION')) {
-      computation = 0.9;
-    } else if ((cell as any).computationalCapability?.partitions && (cell as any).computationalCapability.partitions.length > 0) {
-      const cap = (cell as any).computationalCapability.partitions[0].capacity ?? 1000;
-      computation = clamp01(cap / 5000);
-    }
+    // Neutral fallback if explicit raw compute metrics are unavailable.
+    let computation = 0.5;
 
     // 2. Reliability
-    let reliability = 0.85;
-    if ((cell.genome as any)?.fitness !== undefined) {
-      reliability = clamp01(0.5 + ((cell.genome as any).fitness * 0.45));
-    }
-    if ((cell.genome?.traits as any)?.reliabilityScore !== undefined) {
-      reliability = clamp01((cell.genome.traits as any).reliabilityScore);
+    // Derive from risk tolerance if available; lower risk tolerance equates to higher structural reliability constraint.
+    let reliability = 0.5;
+    if (cell.genome?.traits?.riskTolerance !== undefined) {
+      reliability = clamp01(1.0 - cell.genome.traits.riskTolerance);
     }
 
     // 3. Cognition
-    let cognition = 0.65;
+    // Grounded in explicit genetic capability.
+    let cognition = 0.5;
     if (cell.genome?.capabilities?.includes('COGNITIVE_REASONING')) {
-      cognition = 0.95;
+      cognition = 1.0;
     }
 
     // 4. Knowledge
+    // Avoid false heuristics (like concept count). Explicit metric required, fallback to neutral.
     let knowledge = 0.5;
-    try {
-      if (cell.cognitiveGraph) {
-        const concepts = cell.cognitiveGraph.getAllConcepts();
-        knowledge = clamp01(0.4 + (concepts.length * 0.1));
-      }
-    } catch {
-      knowledge = 0.5;
-    }
 
     // 5. Specialization
     let specialization = 0.5;
     if (cell.genome?.specialization) {
       if (targetDomain && cell.genome.specialization.toUpperCase().includes(targetDomain.toUpperCase())) {
         specialization = 1.0;
-      } else {
-        specialization = 0.85;
       }
     }
 
     // 6. Experience
-    let experience = 0.6;
-    if (cell.genome?.generation !== undefined) {
-      experience = clamp01(0.4 + (cell.genome.generation * 0.15));
-    }
+    // Avoid false heuristics (like generation count). Explicit metric required, fallback to neutral.
+    let experience = 0.5;
 
     // 7. Resource Efficiency
-    const resourceEfficiency = clamp01((computation * 0.5) + (reliability * 0.5));
+    let resourceEfficiency = 0.5;
 
     const vector: CognitiveFeatureVector = {
-      computation: clamp01(computation),
-      reliability: clamp01(reliability),
-      cognition: clamp01(cognition),
-      knowledge: clamp01(knowledge),
-      specialization: clamp01(specialization),
-      experience: clamp01(experience),
-      resourceEfficiency: clamp01(resourceEfficiency)
+      computation,
+      reliability,
+      cognition,
+      knowledge,
+      specialization,
+      experience,
+      resourceEfficiency
     };
 
     validateFeatureVector(vector);
@@ -260,8 +244,7 @@ export class CollectiveCognitionEngine {
       inputVectors[cell.nodeId] = x_i;
 
       const { matrix, bias } = generateDeterministicMatrixAndBias(
-        cell.nodeId,
-        cell.genome?.specialization ?? null,
+        x_i,
         cell.genome?.capabilities ?? []
       );
 
@@ -302,9 +285,10 @@ export class CollectiveCognitionEngine {
     const cArr = new Array(7).fill(0);
     for (const id of cellIds) {
       const alpha = weights[id];
-      const zArr = vectorToArray(transformations[id].transformedVector);
+      const zRecord = transformations[id].transformedVector;
       for (let j = 0; j < 7; j++) {
-        cArr[j] += alpha * zArr[j];
+        const key = FEATURE_VECTOR_KEYS[j];
+        cArr[j] += alpha * (zRecord[key] ?? 0);
       }
     }
     const resultVector = arrayToVector(cArr);

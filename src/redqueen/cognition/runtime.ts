@@ -32,8 +32,14 @@ export type CognitiveRequest = z.infer<typeof CognitiveRequestSchema>;
 export interface StructuredIntent {
   intentId: string;
   action: 'QUERY' | 'REASON' | 'EVALUATE' | 'SYNTHESIZE' | 'GENERAL';
+  intent: string;
   domain: string;
-  keywords: string[];
+  concepts: string[];
+  relations: { subject: string; predicate: string; object: string; }[];
+  constraints: string[];
+  context: string;
+  unknowns: string[];
+  requiredCapabilities: string[];
   rawInput: string;
   certaintyRequirement: number;
 }
@@ -240,6 +246,7 @@ export class CognitiveRuntime {
       };
 
     } catch (error: any) {
+      console.error(error);
       logger.error(COMPONENT, 'runtime_processing_error', { requestId: request.requestId, error: error.message });
       provenance.push(`error:${error.message}`);
 
@@ -279,21 +286,41 @@ export class CognitiveRuntime {
       action = 'SYNTHESIZE';
     }
 
-    // Tokenize meaningful keywords (length >= 2, excluding common stop words)
-    const stopWords = new Set(['the', 'and', 'for', 'with', 'this', 'that', 'from', 'are', 'was', 'were', 'does']);
+    // Tokenize meaningful concepts (length >= 2, excluding common stop words)
+    const stopWords = new Set(['the', 'and', 'for', 'with', 'this', 'that', 'from', 'are', 'was', 'were', 'does', 'how', 'why', 'what']);
     const tokens = raw
       .replace(/[^\w\s]/g, ' ')
       .split(/\s+/)
       .map(w => w.trim())
       .filter(w => w.length >= 2 && !stopWords.has(w.toLowerCase()));
+      
+    // Naive relation extraction based strictly on semantic markers, not sequential loops
+    const relations: { subject: string; predicate: string; object: string }[] = [];
+    if (lower.includes(' causes ')) {
+      const parts = lower.split(' causes ');
+      if (parts[0] && parts[1]) {
+        relations.push({ subject: parts[0].trim(), predicate: 'CAUSES', object: parts[1].trim() });
+      }
+    } else if (lower.includes(' depends on ')) {
+      const parts = lower.split(' depends on ');
+      if (parts[0] && parts[1]) {
+        relations.push({ subject: parts[0].trim(), predicate: 'DEPENDS_ON', object: parts[1].trim() });
+      }
+    }
 
     const intentHash = computeDeterministicHash({ raw, domain: request.context.domain });
 
     return {
       intentId: `intent_${intentHash.substring(0, 12)}`,
       action,
+      intent: `Determine ${action} for concepts ${tokens.join(', ')}`,
       domain: request.context.domain ?? 'science',
-      keywords: tokens,
+      concepts: tokens,
+      relations,
+      constraints: request.context.temporalBounds ? ['temporal_bound'] : [],
+      context: request.context.domain ?? 'general',
+      unknowns: [],
+      requiredCapabilities: ['COGNITIVE_REASONING'],
       rawInput: raw,
       certaintyRequirement: (request.context as any).certaintyRequirement ?? 0.8
     };
@@ -307,8 +334,8 @@ export class CognitiveRuntime {
     const relations: any[] = [];
 
     // Extract concepts from distinct keywords
-    const uniqueKeywords = Array.from(new Set(intent.keywords));
-    uniqueKeywords.forEach((kw, idx) => {
+    const uniqueConcepts = Array.from(new Set(intent.concepts));
+    uniqueConcepts.forEach((kw) => {
       const cId = `concept_${kw.toLowerCase()}`;
       concepts.push({
         conceptId: cId,
@@ -326,23 +353,17 @@ export class CognitiveRuntime {
       });
     });
 
-    // If keywords indicate relationships (e.g. causes, depends, relates, x causes y)
-    if (concepts.length >= 2) {
-      for (let i = 0; i < concepts.length - 1; i++) {
-        const c1 = concepts[i];
-        const c2 = concepts[i + 1];
-        let predicate = CognitiveRelationPredicate.RELATED_TO;
-        if (intent.rawInput.toLowerCase().includes('cause')) {
-          predicate = CognitiveRelationPredicate.CAUSES;
-        } else if (intent.rawInput.toLowerCase().includes('depend')) {
-          predicate = CognitiveRelationPredicate.DEPENDS_ON;
-        }
-
+    // Extract genuine relations only (no sequential loops)
+    intent.relations.forEach((rel) => {
+      const subjectConcept = concepts.find(c => c.canonicalName.toLowerCase() === rel.subject.toLowerCase()) || concepts[0];
+      const objectConcept = concepts.find(c => c.canonicalName.toLowerCase() === rel.object.toLowerCase()) || concepts[1];
+      
+      if (subjectConcept && objectConcept && subjectConcept !== objectConcept) {
         relations.push({
-          relationId: `rel_${c1.canonicalName}_${predicate}_${c2.canonicalName}`,
-          subjectConceptId: c1.conceptId,
-          predicate,
-          objectConceptId: c2.conceptId,
+          relationId: `rel_${subjectConcept.canonicalName}_${rel.predicate}_${objectConcept.canonicalName}`,
+          subjectConceptId: subjectConcept.conceptId,
+          predicate: rel.predicate as CognitiveRelationPredicate,
+          objectConceptId: objectConcept.conceptId,
           confidence: 0.85,
           weight: 0.85,
           bidirectional: false,
@@ -353,7 +374,7 @@ export class CognitiveRuntime {
           version: 1
         });
       }
-    }
+    });
 
     return { concepts, relations };
   }
@@ -388,7 +409,7 @@ export class CognitiveRuntime {
 
       // Check specialization match against domain / keywords
       if (spec) {
-        if (intent.keywords.some(kw => spec.includes(kw.toUpperCase())) || spec.includes(intent.domain.toUpperCase())) {
+        if (intent.concepts.some(kw => spec.includes(kw.toUpperCase())) || spec.includes(intent.domain.toUpperCase())) {
           isRelevant = true;
           matchedRole = 'KNOWLEDGE';
           matchReason = `Specialization match: ${cell.genome.specialization}`;
@@ -509,7 +530,7 @@ export class CognitiveRuntime {
     }));
 
     return this.understandingEngine.compose({
-      summary: request.creatorInput,
+      summary: intent.intent,
       context: request.context,
       originatingCellId: relevantCells[0]?.nodeId || 'runtime_coordinator',
       concepts: supportedConcepts,
@@ -534,7 +555,6 @@ export class CognitiveRuntime {
     if (understanding.summary?.includes('insufficient_state_marker')) return null;
 
     const premises: any[] = [];
-
     if (collectiveRepresentation.emergentStructures.length > 0) {
       collectiveRepresentation.emergentStructures.forEach(es => {
         premises.push({
@@ -545,12 +565,19 @@ export class CognitiveRuntime {
         });
       });
     } else {
-      activatedCells.forEach(c => {
+      // Reasoning is built from collective cognitive composition, not just metadata
+      premises.push({
+        statement: `Collective cognitive vector synthesized: compute=${collectiveState.resultVector.computation.toFixed(2)}, reliability=${collectiveState.resultVector.reliability.toFixed(2)}, cognition=${collectiveState.resultVector.cognition.toFixed(2)}`,
+        sourceType: 'UNDERSTANDING' as const,
+        sourceId: understanding.understandingId,
+        confidence: collectiveState.resultVector.cognition
+      });
+      understanding.concepts.forEach(c => {
         premises.push({
-          statement: `Cell ${c.cellId} contributed ${c.role} from specialization ${c.specialization}`,
+          statement: `Concept identified: ${c.canonicalName}`,
           sourceType: 'UNDERSTANDING' as const,
-          sourceId: understanding.understandingId,
-          confidence: collectiveState.resultVector.cognition
+          sourceId: c.conceptId,
+          confidence: c.confidence
         });
       });
     }

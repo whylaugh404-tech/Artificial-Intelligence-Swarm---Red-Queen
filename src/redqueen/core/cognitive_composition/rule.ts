@@ -14,7 +14,8 @@ import {
   generateDeterministicMatrixAndBias,
   vectorToArray,
   arrayToVector,
-  clamp01
+  clamp01,
+  FEATURE_VECTOR_KEYS
 } from '../../cognition/types';
 
 /**
@@ -139,8 +140,7 @@ export class CognitiveCompositionRule implements CompositionTransformationRule {
 
       // Deterministic transformation matrix W_i and bias b_i
       const { matrix, bias } = generateDeterministicMatrixAndBias(
-        partId,
-        c.structure.specialization ? String(c.structure.specialization) : null,
+        x_i,
         [String(c.structure.architecture ?? 'generic')]
       );
 
@@ -175,9 +175,10 @@ export class CognitiveCompositionRule implements CompositionTransformationRule {
     const cArr = new Array(7).fill(0);
     for (const [id, trans] of Object.entries(transformations)) {
       const alpha = weights[id] ?? 0;
-      const zArr = vectorToArray(trans.transformedVector);
+      const zRecord = trans.transformedVector;
       for (let j = 0; j < 7; j++) {
-        cArr[j] += alpha * zArr[j];
+        const key = FEATURE_VECTOR_KEYS[j];
+        cArr[j] += alpha * (zRecord[key] ?? 0);
       }
     }
     const resultVector = arrayToVector(cArr);

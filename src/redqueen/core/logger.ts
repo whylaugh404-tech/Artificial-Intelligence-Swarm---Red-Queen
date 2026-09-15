@@ -33,7 +33,7 @@ class Logger {
     } else if (level === LogLevel.WARN) {
       console.warn(logStr);
     } else {
-      console.log(logStr);
+      console.error(logStr);
     }
   }
 

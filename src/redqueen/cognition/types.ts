@@ -25,7 +25,7 @@ export const LinearTransformationSchema = z.object({
   dimension: z.number().int().positive(),
   matrix: z.array(z.array(z.number())),
   bias: z.array(z.number()),
-  transformedVector: CognitiveFeatureVectorSchema,
+  transformedVector: z.record(z.string(), z.number()), // Unbounded intermediate linear result z_i
   description: z.string().optional()
 });
 
@@ -45,7 +45,7 @@ export const CompositionTraceSchema = z.object({
   steps: z.array(z.string()),
   timestamp: z.string(),
   inputVectors: z.record(z.string(), CognitiveFeatureVectorSchema),
-  transformedVectors: z.record(z.string(), CognitiveFeatureVectorSchema),
+  transformedVectors: z.record(z.string(), z.record(z.string(), z.number())),
   weights: z.record(z.string(), z.number()),
   resultVector: CognitiveFeatureVectorSchema
 });
@@ -152,10 +152,13 @@ export function applyLinearTransformation(
     for (let j = 0; j < 7; j++) {
       sum += (row[j] ?? 0) * xArr[j];
     }
-    zArr[i] = clamp01(sum);
+    zArr[i] = sum;
   }
 
-  const transformedVector = arrayToVector(zArr);
+  const transformedVector: Record<string, number> = {};
+  for (let i = 0; i < 7; i++) {
+    transformedVector[FEATURE_VECTOR_KEYS[i]] = zArr[i];
+  }
 
   return {
     dimension: 7,
@@ -168,31 +171,16 @@ export function applyLinearTransformation(
 
 /**
  * Generates a deterministic transformation matrix W_i and bias vector b_i for a Cell.
- * Incorporates cognitive cross-couplings and deterministic cell-specific modulations.
+ * Incorporates cognitive cross-couplings and deterministic cell-specific modulations
+ * purely based on the semantic state, NOT pseudo-random hashes or cell IDs.
  */
 export function generateDeterministicMatrixAndBias(
-  cellId: string,
-  specialization: string | null = null,
+  x: CognitiveFeatureVector,
   capabilities: string[] = []
 ): { matrix: number[][]; bias: number[] } {
   const caps = Array.isArray(capabilities) ? capabilities : [];
-  // Deterministic seed hash derived from cellId and traits
-  let hash = 0x811c9dc5;
-  const str = `${cellId}:${specialization ?? 'general'}:${caps.slice().sort().join(',')}`;
-  for (let i = 0; i < str.length; i++) {
-    hash ^= str.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
 
   // Base matrix capturing functional couplings:
-  // [0] computation -> [0] self-retention 0.75, [2] powers cognition 0.15, [6] efficiency 0.10
-  // [1] reliability -> [1] self-retention 0.80, [2] stabilizes cognition 0.10
-  // [2] cognition   -> [2] self-retention 0.70, [6] modulates efficiency 0.10
-  // [3] knowledge   -> [3] self-retention 0.70, [2] informs cognition 0.20
-  // [4] specialization -> [4] self-retention 0.85, [3] sharpens knowledge 0.15
-  // [5] experience  -> [5] self-retention 0.70, [1] calibrates reliability 0.20
-  // [6] resourceEfficiency -> [6] self-retention 0.80
-
   const baseMatrix: number[][] = [
     [0.75, 0.00, 0.05, 0.00, 0.05, 0.05, 0.10], // computation
     [0.05, 0.80, 0.00, 0.00, 0.00, 0.15, 0.00], // reliability (experience calibrates)
@@ -203,25 +191,36 @@ export function generateDeterministicMatrixAndBias(
     [0.10, 0.10, 0.00, 0.00, 0.00, 0.00, 0.80]  // resourceEfficiency
   ];
 
-  // Derive small deterministic cell-specific offset delta in [-0.05, 0.05]
+  // Derive matrix semantically
   const matrix: number[][] = [];
+  const capabilityBonus = caps.length * 0.01;
+
   for (let i = 0; i < 7; i++) {
     const row: number[] = [];
+    const semanticFeatureI = vectorToArray(x)[i] ?? 0;
+
     for (let j = 0; j < 7; j++) {
-      hash = Math.imul(hash ^ (i * 7 + j), 0x01000193);
-      const rand01 = ((hash >>> 0) % 1000) / 1000;
-      const delta = (rand01 - 0.5) * 0.1;
-      const val = Math.max(0, Math.min(1.0, baseMatrix[i][j] + delta));
+      const semanticFeatureJ = vectorToArray(x)[j] ?? 0;
+      
+      // The transformation matrix W_i components are modulated deterministically 
+      // by the state properties themselves and the capabilities.
+      // E.g., if capability bonus is higher, elements shift slightly.
+      const delta = (semanticFeatureI * 0.02) - (semanticFeatureJ * 0.02) + capabilityBonus;
+      
+      let val = baseMatrix[i][j] + delta;
+      
+      // Ensure positive semi-definite characteristics
+      if (val < 0) val = 0;
+      
       row.push(Number(val.toFixed(4)));
     }
     matrix.push(row);
   }
 
-  // Deterministic bias in [0.01, 0.05]
+  // Deterministic bias b_i derived from specialization and experience
   const bias: number[] = [];
   for (let i = 0; i < 7; i++) {
-    hash = Math.imul(hash ^ (i + 101), 0x01000193);
-    const bVal = 0.01 + (((hash >>> 0) % 40) / 1000);
+    const bVal = 0.01 + (x.experience * 0.02) + (x.specialization * 0.01);
     bias.push(Number(bVal.toFixed(4)));
   }
 
