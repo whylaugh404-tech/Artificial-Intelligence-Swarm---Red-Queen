@@ -133,3 +133,63 @@ export interface EvolutionCycleOptions {
   evaluationInput?: EvaluationInput;
   timestamp?: string;
 }
+
+/**
+ * P9.2: Population Selection Types
+ */
+export const SelectionScoreSchema = z.object({
+  cellId: z.string().min(1),
+  fitness: z.number().min(0.0).max(1.0),
+  specializationScore: z.number().min(0.0).max(1.0),
+  reliabilityScore: z.number().min(0.0).max(1.0),
+  contributionScore: z.number().min(0.0).max(1.0),
+  diversityScore: z.number().min(0.0).max(1.0),
+  finalScore: z.number().min(0.0).max(1.0),
+  deterministicIdentity: z.string().min(1)
+});
+
+export type SelectionScore = z.infer<typeof SelectionScoreSchema>;
+
+export const SelectionWeightsSchema = z.object({
+  fitness: z.number().min(0.0).max(1.0).default(0.40),
+  specializationScore: z.number().min(0.0).max(1.0).default(0.15),
+  reliabilityScore: z.number().min(0.0).max(1.0).default(0.15),
+  contributionScore: z.number().min(0.0).max(1.0).default(0.15),
+  diversityScore: z.number().min(0.0).max(1.0).default(0.15)
+});
+
+export type SelectionWeights = z.infer<typeof SelectionWeightsSchema>;
+
+export const SelectionProvenanceSchema = z.object({
+  evaluatedPopulation: z.array(z.string()),
+  rankedCells: z.array(z.string()),
+  fitnessSnapshots: z.record(z.string(), z.number()),
+  selectionReasons: z.record(z.string(), z.string()),
+  parameters: z.record(z.string(), z.unknown()),
+  selectedCells: z.array(z.string()),
+  deterministicHash: z.string()
+});
+
+export type SelectionProvenance = z.infer<typeof SelectionProvenanceSchema>;
+
+export const PopulationSelectionResultSchema = z.object({
+  populationSize: z.number().int().min(0),
+  selectedCells: z.array(z.string()),
+  rankedCells: z.array(z.string()),
+  selectionScores: z.record(z.string(), SelectionScoreSchema),
+  preservedDiversity: z.number().min(0.0).max(1.0),
+  deterministicIdentity: z.string().min(1),
+  provenance: SelectionProvenanceSchema,
+  timestamp: z.string()
+});
+
+export type PopulationSelectionResult = z.infer<typeof PopulationSelectionResultSchema>;
+
+export interface PopulationSelectionOptions {
+  selectionCount?: number;
+  evaluationInputs?: Record<string, EvaluationInput>;
+  weights?: Partial<SelectionWeights>;
+  preserveSpecializationNiches?: boolean;
+  timestamp?: string;
+  metadata?: Record<string, unknown>;
+}
