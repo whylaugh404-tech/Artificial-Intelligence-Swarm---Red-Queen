@@ -149,11 +149,97 @@ export const ComputationVerificationStatusSchema = z.object({
 
 export type ComputationVerificationStatus = z.infer<typeof ComputationVerificationStatusSchema>;
 
-// 9. Computation Composition Model: C* = F(C1, C2, ..., Cn)
+// 9. Structured Composition Pipeline Elements:
+// Partial Results -> Composition Inputs -> Composition Transformation -> Composite Computational State -> Final Result
+
+// 9a. Composition Input
+export const CompositionInputSchema = z.object({
+  subtaskId: z.string().min(1),
+  executingCellId: z.string().min(1),
+  status: ComputationStatusSchema,
+  output: z.record(z.string(), z.unknown()),
+  provenance: z.array(z.string()),
+  resultHash: z.string().min(1),
+  dependencySourceIds: z.array(z.string()),
+  isVerified: z.boolean(),
+  cost: ComputationExecutionCostSchema.optional()
+});
+
+export type CompositionInput = z.infer<typeof CompositionInputSchema>;
+
+// 9b. Composition Transformation Operator
+export const CompositionTransformationSchema = z.object({
+  transformationId: z.string().min(1),
+  operator: z.string().default('NON_ADDITIVE_FUNCTIONAL_SYNTHESIS'),
+  rule: z.string(),
+  criticalPathDepth: z.number().int().nonnegative(),
+  parallelWavesCount: z.number().int().nonnegative(),
+  averageParallelism: z.number().positive(),
+  parallelFraction: z.number().min(0).max(1),
+  serialFraction: z.number().min(0).max(1),
+  concurrencySpeedup: z.number().positive(),
+  attenuationFactor: z.number().positive(),
+  specializationSynergy: z.number().positive(),
+  dependencyGraphReduction: z.object({
+    nodesCount: z.number().int().nonnegative(),
+    edgesCount: z.number().int().nonnegative(),
+    resolvedEdgesCount: z.number().int().nonnegative()
+  })
+});
+
+export type CompositionTransformation = z.infer<typeof CompositionTransformationSchema>;
+
+// 9c. Mathematical Composite Compute Model Structure: C* = F(C1, ..., Cn)
+export const CompositeComputeModelSchema = z.object({
+  formula: z.string().default('C* = F(C1, C2, ..., Cn)'),
+  participantCapacities: z.record(z.string(), z.number().nonnegative()),
+  naiveSumCapacity: z.number().nonnegative(),
+  effectiveCapacity: z.number().nonnegative(), // C* (strictly non-additive, derived operational capability)
+  isNonAdditive: z.literal(true).default(true),
+  parameters: z.object({
+    serialFraction: z.number().nonnegative(),
+    parallelFraction: z.number().nonnegative(),
+    theoreticalSpeedup: z.number().positive(),
+    latencyDegradation: z.number().positive(),
+    specializationFactor: z.number().positive()
+  }),
+  overheadBreakdown: z.object({
+    communicationCost: z.number().nonnegative(),
+    synchronizationCost: z.number().nonnegative(),
+    verificationCost: z.number().nonnegative(),
+    totalOverheadCost: z.number().nonnegative()
+  })
+});
+
+export type CompositeComputeModel = z.infer<typeof CompositeComputeModelSchema>;
+
+// 9d. Composite Computational State (synthesized state before final presentation)
+export const CompositeComputationalStateSchema = z.object({
+  stateId: z.string().min(1),
+  synthesizedEntities: z.record(z.string(), z.unknown()),
+  unifiedStateVector: z.record(z.string(), z.unknown()),
+  crossCellResolution: z.record(z.string(), z.string()),
+  dependencyResolutions: z.array(z.object({
+    fromSubtask: z.string(),
+    toSubtask: z.string(),
+    resolvedKey: z.string().optional(),
+    status: z.string()
+  })),
+  provenanceChain: z.array(z.string()),
+  stateChecksum: z.string().min(1)
+});
+
+export type CompositeComputationalState = z.infer<typeof CompositeComputationalStateSchema>;
+
+// 9e. Computation Composition Model: C* = F(C1, C2, ..., Cn)
 export const ComputationCompositionSchema = z.object({
   compositionId: z.string().min(1),
   formula: z.string().default('C* = F(C1, C2, ..., Cn)'),
   transformationRule: z.string(),
+  computeModel: CompositeComputeModelSchema,
+  inputs: z.array(CompositionInputSchema),
+  transformation: CompositionTransformationSchema,
+  compositeState: CompositeComputationalStateSchema,
   inputSubtaskCount: z.number().int().nonnegative(),
   inputCellIds: z.array(z.string()),
   effectiveCapacity: z.number().nonnegative(), // Derived capability incorporating Amdahl concurrency & overhead, NOT simple scalar sum

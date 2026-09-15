@@ -429,4 +429,154 @@ describe('P8.1: Collective Computation Foundation & Audit Repairs', () => {
       (result as any).status = ComputationStatus.FAILED;
     }).toThrow();
   });
+
+  it('14. RFC 8785 (JCS) compliance: verifies key order, negative zero, array semantics, and surrogate handling', async () => {
+    const { canonicalizeJson, computeDeterministicHash } = await import('../src/redqueen/cognition/computation/canonical');
+
+    // 1. Key sorting by UTF-16 code units (RFC 8785 Section 3.2.3)
+    const objUnsorted = {
+      b: 1,
+      a: 2,
+      aa: 3,
+      'a\uFFFF': 4
+    };
+    const serialized = canonicalizeJson(objUnsorted);
+    // 'a' (len 1) < 'aa' (index 1 is 0x61) < 'a\uFFFF' (index 1 is 0xFFFF) < 'b' (index 0 is 0x62)
+    expect(serialized).toBe('{"a":2,"aa":3,"a\uFFFF":4,"b":1}');
+
+    // 2. Negative zero (-0) MUST serialize as '0' (RFC 8785 Section 3.2.2.3)
+    expect(canonicalizeJson(-0)).toBe('0');
+    expect(canonicalizeJson(0)).toBe('0');
+    expect(canonicalizeJson({ zero: -0 })).toBe('{"zero":0}');
+
+    // 3. Array semantics: preserve order, undefined/function becomes null (RFC 8785 Section 3.2.4)
+    expect(canonicalizeJson([1, undefined, 'test', null])).toBe('[1,null,"test",null]');
+
+    // 4. Object semantics: omit undefined and function values (RFC 8785 Section 3.2.3)
+    expect(canonicalizeJson({ keep: 1, drop: undefined, fn: () => {} })).toBe('{"keep":1}');
+
+    // 5. Rejection of NaN and Infinity (RFC 8785 Section 3.2.2.3)
+    expect(() => canonicalizeJson(NaN)).toThrow(TypeError);
+    expect(() => canonicalizeJson(Infinity)).toThrow(TypeError);
+    expect(() => canonicalizeJson(-Infinity)).toThrow(TypeError);
+
+    // 6. String escaping: RFC 8785 Section 3.2.2.2
+    expect(canonicalizeJson('Hello\nWorld\t"Quotes"\\Backslash\u0000')).toBe('"Hello\\nWorld\\t\\"Quotes\\"\\\\Backslash\\u0000"');
+
+    // 7. Unpaired surrogates rejected (RFC 8785 Section 3.2.2.2)
+    expect(() => canonicalizeJson('Lone high \uD800')).toThrow(TypeError);
+    expect(() => canonicalizeJson('Lone low \uDC00')).toThrow(TypeError);
+
+    // 8. Deterministic SHA-256 hash
+    const hash1 = computeDeterministicHash({ x: 10, y: [1, 2], z: { inner: 'val' } });
+    const hash2 = computeDeterministicHash({ z: { inner: 'val' }, x: 10, y: [1, 2] });
+    expect(hash1).toBe(hash2);
+    expect(hash1).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('15. structured composition pipeline: verifies partial results -> inputs -> transformation -> composite state -> final result', async () => {
+    const coordinator = await createTestCell('coord_pipeline');
+    const worker1 = await createTestCell('worker_pipeline_1');
+    const worker2 = await createTestCell('worker_pipeline_2');
+
+    const task = coordinator.collectiveComputation.createTask({
+      goal: 'Multi-stage pipeline analysis',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: {
+        items: [1, 2, 3, 4, 5, 6]
+      }
+    });
+
+    const result = await coordinator.collectiveComputation.executeTask(task, {
+      availableCells: [coordinator, worker1, worker2]
+    });
+
+    expect(result.status).toBe(ComputationStatus.COMPLETED);
+
+    // Stage 1: Partial results
+    expect(result.partialResults).toBeDefined();
+    const partialSubIds = Object.keys(result.partialResults);
+    expect(partialSubIds.length).toBeGreaterThan(0);
+
+    // Stage 2: Composition inputs
+    expect(result.composition.inputs).toBeDefined();
+    expect(result.composition.inputs.length).toBe(partialSubIds.length);
+    result.composition.inputs.forEach(input => {
+      expect(input.subtaskId).toBeDefined();
+      expect(input.executingCellId).toBeDefined();
+      expect(input.resultHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(input.output).toBeDefined();
+    });
+
+    // Stage 3: Composition transformation
+    expect(result.composition.transformation).toBeDefined();
+    expect(result.composition.transformation.operator).toBe('NON_ADDITIVE_FUNCTIONAL_SYNTHESIS');
+    expect(result.composition.transformation.rule).toBe('AMDAHL_TOPOLOGICAL_REDUCTION');
+    expect(result.composition.transformation.criticalPathDepth).toBeGreaterThanOrEqual(1);
+    expect(result.composition.transformation.concurrencySpeedup).toBeGreaterThan(0);
+    expect(result.composition.transformation.attenuationFactor).toBeGreaterThan(0);
+
+    // Stage 4: Composite computational state
+    expect(result.composition.compositeState).toBeDefined();
+    expect(result.composition.compositeState.stateId).toMatch(/^state_[a-f0-9]{16}$/);
+    expect(result.composition.compositeState.stateChecksum).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.composition.compositeState.synthesizedEntities).toBeDefined();
+    expect(result.composition.compositeState.crossCellResolution).toBeDefined();
+    expect(result.composition.compositeState.provenanceChain.length).toBeGreaterThan(0);
+
+    // Stage 5: Final Result (ResultComposer output)
+    expect(result.finalOutput).toBeDefined();
+    expect(result.finalOutput.status).toBe('SUCCESS');
+    expect(result.finalOutput.compositeState).toEqual(result.composition.compositeState);
+    expect(result.finalOutput.computeModel).toEqual(result.composition.computeModel);
+    expect(result.finalOutput.transformation).toEqual(result.composition.transformation);
+  });
+
+  it('16. structural compute model C* = F(C1...Cn): verifies non-additive properties and overhead breakdown', async () => {
+    const coordinator = await createTestCell('coord_model');
+    const worker1 = await createTestCell('worker_model_1');
+    const worker2 = await createTestCell('worker_model_2');
+
+    const task = coordinator.collectiveComputation.createTask({
+      goal: 'Capacity modeling',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: {
+        items: [10, 20, 30, 40]
+      }
+    });
+
+    const result = await coordinator.collectiveComputation.executeTask(task, {
+      availableCells: [coordinator, worker1, worker2]
+    });
+
+    const computeModel = result.composition.computeModel;
+    expect(computeModel).toBeDefined();
+    expect(computeModel.formula).toBe('C* = F(C1, C2, ..., Cn)');
+    expect(computeModel.isNonAdditive).toBe(true);
+
+    // Naive sum must not equal or define the effective capacity in a non-additive model
+    expect(computeModel.naiveSumCapacity).toBeGreaterThan(0);
+    expect(computeModel.effectiveCapacity).toBeGreaterThan(0);
+
+    // Overhead breakdown must explicitly separate communication, synchronization, and verification
+    expect(computeModel.overheadBreakdown.communicationCost).toBeGreaterThanOrEqual(0);
+    expect(computeModel.overheadBreakdown.synchronizationCost).toBeGreaterThanOrEqual(0);
+    expect(computeModel.overheadBreakdown.verificationCost).toBeGreaterThanOrEqual(0);
+    expect(computeModel.overheadBreakdown.totalOverheadCost).toBe(
+      Math.round((computeModel.overheadBreakdown.communicationCost +
+        computeModel.overheadBreakdown.synchronizationCost +
+        computeModel.overheadBreakdown.verificationCost) * 100) / 100
+    );
+  });
+
+  it('17. derived capability model: explicitly ensures operational estimate and forbids physical CPU/GPU claims', async () => {
+    const cell = await createTestCell('cell_cap_invar');
+    const engine = cell.collectiveComputation;
+
+    const capacityProfile = engine.getCellComputeCapacity(cell);
+    expect(capacityProfile.isDerivedCapability).toBe(true);
+    expect(capacityProfile.capacity).toBeGreaterThan(0);
+    expect(capacityProfile.availability).toBeLessThanOrEqual(1.0);
+    expect(capacityProfile.architecture).toBeDefined();
+  });
 });

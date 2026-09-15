@@ -1,11 +1,19 @@
-import { createHash } from 'crypto';
 import { Cell } from '../../core/cell';
 import { CellState } from '../../core/lifecycle';
 import { deepFreeze } from '../../genome/genome';
 import { logger } from '../../core/logger';
 import {
+  canonicalSerialize,
+  canonicalizeJson,
+  computeDeterministicHash
+} from './canonical';
+import {
   CellComputeCapacity,
   CommunicationProfile,
+  CompositionInput,
+  CompositionTransformation,
+  CompositeComputationalState,
+  CompositeComputeModel,
   ComputationComposition,
   ComputationDependency,
   ComputationExecution,
@@ -19,27 +27,12 @@ import {
   SubtaskResult
 } from './types';
 
-/**
- * Deterministic canonical serialization (RFC-8785 compliant style).
- * Sorts object keys recursively and formats primitives consistently.
- */
-export function canonicalSerialize(obj: unknown): string {
-  if (obj === null || obj === undefined) return 'null';
-  if (typeof obj !== 'object') return JSON.stringify(obj);
-  if (Array.isArray(obj)) {
-    return `[${obj.map(canonicalSerialize).join(',')}]`;
-  }
-  const keys = Object.keys(obj as Record<string, unknown>).sort();
-  const parts = keys.map(k => `${JSON.stringify(k)}:${canonicalSerialize((obj as Record<string, unknown>)[k])}`);
-  return `{${parts.join(',')}}`;
-}
-
-/**
- * Computes deterministic SHA-256 hash for any arbitrary structured object.
- */
-export function computeDeterministicHash(obj: unknown): string {
-  return createHash('sha256').update(canonicalSerialize(obj)).digest('hex');
-}
+// Re-export canonical serialization and hashing for engine consumers
+export {
+  canonicalSerialize,
+  canonicalizeJson,
+  computeDeterministicHash
+};
 
 export interface DecompositionPlan {
   subtasks: ComputationSubtask[];
@@ -147,7 +140,7 @@ export class CollectiveComputationEngine {
       };
     });
 
-    // 4. Default Composer
+    // 4. Default Composer: Transforms partial results and composition into final synthesized computational state
     this.defaultComposers.set('DEFAULT', (task, subtaskResults, dependencies, composition) => {
       const aggregatedOutputs: Record<string, unknown> = {};
       for (const [subId, res] of Object.entries(subtaskResults)) {
@@ -158,11 +151,25 @@ export class CollectiveComputationEngine {
         };
       }
 
+      const completedCount = Object.values(subtaskResults).filter(r => r.status === ComputationStatus.COMPLETED).length;
+      const totalCount = Object.keys(subtaskResults).length;
+      const overallStatus = completedCount === totalCount ? 'SUCCESS' : (completedCount > 0 ? 'PARTIAL' : 'FAILED');
+
       return {
         goal: task.goal,
         taskId: task.taskId,
-        subtasksCompleted: Object.values(subtaskResults).filter(r => r.status === ComputationStatus.COMPLETED).length,
-        subtasksTotal: Object.keys(subtaskResults).length,
+        status: overallStatus,
+        subtasksCompleted: completedCount,
+        subtasksTotal: totalCount,
+        // Composite Computational State (synthesized from composition transformation)
+        compositeState: composition.compositeState,
+        // Mathematical & Structural Non-Additive Compute Model: C* = F(C1...Cn)
+        computeModel: composition.computeModel,
+        // Functional Transformation Operator and Reduction Telemetry
+        transformation: composition.transformation,
+        // Composition Inputs Reference
+        compositionInputsCount: composition.inputs.length,
+        // Aggregated outputs preserved for backward compatibility and direct inspection
         aggregatedOutputs,
         formula: composition.formula,
         effectiveCapacity: composition.effectiveCapacity,
@@ -849,7 +856,128 @@ export class CollectiveComputationEngine {
     const effectiveCapacity = (minCellCapacity * serialFraction + avgCellCapacity * theoreticalSpeedup * parallelFraction)
       * latencyDegradation * synergy;
 
-    // 5. Synthesize Composed Output
+    // 5. Synthesize Composed Output & Build Pipeline Artifacts
+    // Step A: Partial Results -> Composition Inputs
+    const inputs: CompositionInput[] = subtaskKeys.map(subId => {
+      const res = subtaskResults[subId];
+      const upstreamDeps = dependencies
+        .filter(d => d.targetSubtaskId === subId)
+        .map(d => d.sourceSubtaskId)
+        .sort();
+      return {
+        subtaskId: subId,
+        executingCellId: res.executingCellId,
+        status: res.status,
+        output: res.output,
+        provenance: [...res.provenance].sort(),
+        resultHash: res.resultHash,
+        dependencySourceIds: upstreamDeps,
+        isVerified: res.status === ComputationStatus.COMPLETED,
+        cost: res.executionCost
+      };
+    });
+
+    // Step B: Structural Compute Model C* = F(C1...Cn)
+    const participantCapacities: Record<string, number> = {};
+    let naiveSumCapacity = 0;
+    participatingCellIds.forEach(cellId => {
+      const cell = candidateCells.find(c => c.nodeId === cellId) || this.localCell;
+      const cap = this.getCellComputeCapacity(cell).capacity;
+      participantCapacities[cellId] = Math.round(cap * 100) / 100;
+      naiveSumCapacity += cap;
+    });
+
+    const computeModel: CompositeComputeModel = {
+      formula: 'C* = F(C1, C2, ..., Cn)',
+      participantCapacities,
+      naiveSumCapacity: Math.round(naiveSumCapacity * 100) / 100,
+      effectiveCapacity: Math.round(effectiveCapacity * 100) / 100,
+      isNonAdditive: true,
+      parameters: {
+        serialFraction: Math.round(serialFraction * 1000) / 1000,
+        parallelFraction: Math.round(parallelFraction * 1000) / 1000,
+        theoreticalSpeedup: Math.round(theoreticalSpeedup * 100) / 100,
+        latencyDegradation: Math.round(latencyDegradation * 1000) / 1000,
+        specializationFactor: Math.round(synergy * 100) / 100
+      },
+      overheadBreakdown: {
+        communicationCost: Math.round(commCost * 100) / 100,
+        synchronizationCost: Math.round(syncCost * 100) / 100,
+        verificationCost: Math.round(verifCost * 100) / 100,
+        totalOverheadCost: Math.round(totalOverheadCost * 100) / 100
+      }
+    };
+
+    // Step C: Composition Transformation
+    const transformationHash = computeDeterministicHash({
+      rule: 'AMDAHL_TOPOLOGICAL_REDUCTION',
+      waveCount,
+      totalSubtasks,
+      dependenciesCount: dependencies.length
+    });
+    const transformationId = `trans_${transformationHash.substring(0, 16)}`;
+
+    const transformation: CompositionTransformation = {
+      transformationId,
+      operator: 'NON_ADDITIVE_FUNCTIONAL_SYNTHESIS',
+      rule: 'AMDAHL_TOPOLOGICAL_REDUCTION',
+      criticalPathDepth: waveCount,
+      parallelWavesCount: waveCount,
+      averageParallelism: Math.round(avgParallelism * 100) / 100,
+      parallelFraction: Math.round(parallelFraction * 1000) / 1000,
+      serialFraction: Math.round(serialFraction * 1000) / 1000,
+      concurrencySpeedup: Math.round(theoreticalSpeedup * 100) / 100,
+      attenuationFactor: Math.round(latencyDegradation * 1000) / 1000,
+      specializationSynergy: Math.round(synergy * 100) / 100,
+      dependencyGraphReduction: {
+        nodesCount: subtaskKeys.length,
+        edgesCount: dependencies.length,
+        resolvedEdgesCount: dependencies.filter(d => subtaskResults[d.sourceSubtaskId]?.status === ComputationStatus.COMPLETED).length
+      }
+    };
+
+    // Step D: Composite Computational State
+    const synthesizedEntities: Record<string, unknown> = {};
+    const unifiedStateVector: Record<string, unknown> = {};
+    const crossCellResolution: Record<string, string> = { ...allocations };
+    const dependencyResolutions = dependencies.map(dep => {
+      const srcRes = subtaskResults[dep.sourceSubtaskId];
+      return {
+        fromSubtask: dep.sourceSubtaskId,
+        toSubtask: dep.targetSubtaskId,
+        resolvedKey: dep.requiredOutputKey,
+        status: srcRes?.status === ComputationStatus.COMPLETED ? 'RESOLVED' : 'UNRESOLVED'
+      };
+    });
+
+    for (const subId of subtaskKeys) {
+      const res = subtaskResults[subId];
+      if (res.status === ComputationStatus.COMPLETED) {
+        synthesizedEntities[subId] = res.output;
+        for (const [k, v] of Object.entries(res.output)) {
+          unifiedStateVector[`${subId}.${k}`] = v;
+        }
+      }
+    }
+
+    const stateChecksum = computeDeterministicHash({
+      synthesizedEntities,
+      unifiedStateVector,
+      crossCellResolution
+    });
+    const stateId = `state_${stateChecksum.substring(0, 16)}`;
+
+    const compositeState: CompositeComputationalState = {
+      stateId,
+      synthesizedEntities,
+      unifiedStateVector,
+      crossCellResolution,
+      dependencyResolutions,
+      provenanceChain: participatingCellIds,
+      stateChecksum
+    };
+
+    // Step E: Preserved composedOutputs record
     const composedOutputs: Record<string, unknown> = {};
     for (const subId of subtaskKeys) {
       const res = subtaskResults[subId];
@@ -867,6 +995,8 @@ export class CollectiveComputationEngine {
       subtasks: subtaskKeys,
       participatingCellIds,
       effectiveCapacity: Math.round(effectiveCapacity * 100) / 100,
+      transformationId,
+      stateChecksum,
       costs: {
         comm: Math.round(commCost * 100) / 100,
         sync: Math.round(syncCost * 100) / 100,
@@ -880,6 +1010,10 @@ export class CollectiveComputationEngine {
       compositionId,
       formula: 'C* = F(C1, C2, ..., Cn)',
       transformationRule: 'COLLECTIVE_NON_ADDITIVE_COMPOSITION',
+      computeModel,
+      inputs,
+      transformation,
+      compositeState,
       inputSubtaskCount: totalSubtasks,
       inputCellIds: participatingCellIds,
       effectiveCapacity: Math.round(effectiveCapacity * 100) / 100,
