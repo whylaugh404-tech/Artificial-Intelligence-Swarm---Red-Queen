@@ -668,12 +668,30 @@ export class CollectiveComputationEngine {
         execRecord.durationMs = duration;
         execRecord.status = 'COMPLETED';
 
-        const resultPayload = {
-          subtaskId: subtask.subtaskId,
-          output: rawOutput,
-          executingCellId: currentCell.nodeId
-        };
-        const resultHash = computeDeterministicHash(resultPayload);
+        let finalOutput = rawOutput;
+        let finalResultHash: string;
+        let finalProvenance = [this.localCell.nodeId, currentCell.nodeId];
+
+        // Check if rawOutput carries verified remote result metadata from DistributedComputationFabric
+        if (rawOutput && typeof rawOutput === 'object' && (rawOutput as any).__isRemoteResult) {
+          const remoteMeta = (rawOutput as any).__remoteSubtaskResult as SubtaskResult;
+          // Use verified remote resultHash and provenance directly instead of recalculating
+          finalResultHash = remoteMeta.resultHash;
+          finalProvenance = remoteMeta.provenance;
+
+          const cleanOutput = { ...rawOutput };
+          delete cleanOutput.__isRemoteResult;
+          delete cleanOutput.__remoteSubtaskResult;
+          finalOutput = cleanOutput;
+        } else {
+          // Local execution: calculate deterministic hash
+          const resultPayload = {
+            subtaskId: subtask.subtaskId,
+            output: rawOutput,
+            executingCellId: currentCell.nodeId
+          };
+          finalResultHash = computeDeterministicHash(resultPayload);
+        }
 
         return {
           result: {
@@ -681,11 +699,11 @@ export class CollectiveComputationEngine {
             taskId: subtask.parentTaskId,
             executingCellId: currentCell.nodeId,
             status: ComputationStatus.COMPLETED,
-            output: rawOutput,
+            output: finalOutput,
             attempts,
             executionDurationMs: duration,
-            provenance: [this.localCell.nodeId, currentCell.nodeId],
-            resultHash,
+            provenance: finalProvenance,
+            resultHash: finalResultHash,
             executionCost
           },
           executions
@@ -1064,12 +1082,28 @@ export class CollectiveComputationEngine {
     options?: CollectiveComputationOptions
   ): Promise<ComputationResult> {
     const candidateCells = options?.availableCells && options.availableCells.length > 0 
-      ? options.availableCells 
+      ? [...options.availableCells] 
       : [this.localCell];
 
     // 1. Decomposition
     const decomposer = options?.decomposerOverride || this.decomposeTask.bind(this);
     const { subtasks, dependencies } = decomposer(task);
+
+    // Remote capability discovery: resolve remote cells via fabric and inject into candidates
+    if (this.fabric) {
+      const allRequiredCaps = Array.from(new Set([
+        ...(task.requiredCapabilities || []),
+        ...subtasks.flatMap(s => s.requiredCapabilities || [])
+      ]));
+      if (allRequiredCaps.length > 0) {
+        const discovered = await this.fabric.discoverCapableCells(allRequiredCaps);
+        for (const disc of discovered) {
+          if (!candidateCells.some(c => c.nodeId === disc.nodeId)) {
+            candidateCells.push(disc);
+          }
+        }
+      }
+    }
 
     // 2. Topology & Wave Construction
     const waves = this.buildExecutionWaves(subtasks, dependencies);

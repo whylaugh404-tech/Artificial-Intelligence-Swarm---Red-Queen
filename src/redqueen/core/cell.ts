@@ -256,6 +256,7 @@ export class Cell {
       }
       this.cognitiveState.syncLifecycleState(CellState.STOPPED);
       await this.cognitiveState.persist(this.memory);
+      this.collectiveComputation.fabric?.stop();
       this.swarm.stop();
       this.election.stop();
       this.exchange.stop();
@@ -450,6 +451,8 @@ export class Cell {
           }
         }
       }, 5000);
+
+      this.collectiveComputation.fabric?.start();
 
       logger.info(this.component, 'cell_active');
     });
@@ -654,6 +657,7 @@ export class Cell {
       this.syncIntervalTimer = null;
     }
     this.exchange.stop();
+    this.collectiveComputation.fabric?.stop();
     this.cognitiveState.syncLifecycleState(CellState.STOPPED);
     await this.cognitiveState.persist(this.memory);
     await this.lifecycle.shutdown();

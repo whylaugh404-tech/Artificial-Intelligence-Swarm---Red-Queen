@@ -125,6 +125,7 @@ export const SubtaskResultSchema = z.object({
   subtaskId: z.string().min(1),
   taskId: z.string().min(1),
   executingCellId: z.string().min(1),
+  originatingCellId: z.string().optional(),
   status: ComputationStatusSchema,
   output: z.record(z.string(), z.unknown()),
   error: z.string().optional(),
