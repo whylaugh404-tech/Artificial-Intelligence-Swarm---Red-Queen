@@ -104,6 +104,9 @@ export class JsonFileMemoryStore implements MemoryStore {
   }
 
   async initialize(): Promise<void> {
+    if (this.storagePath === ':memory:') {
+      return;
+    }
     try {
       await fs.mkdir(path.dirname(this.storagePath), { recursive: true });
       
@@ -168,6 +171,9 @@ export class JsonFileMemoryStore implements MemoryStore {
    *    In the event of a power crash during writeFile, original storagePath is untouched.
    */
   private async persist(): Promise<void> {
+    if (this.storagePath === ':memory:') {
+      return;
+    }
     const data = Array.from(this.memoryMap.values());
     const tempPath = `${this.storagePath}.tmp`;
     await fs.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf8');
