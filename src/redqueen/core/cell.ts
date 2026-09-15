@@ -51,6 +51,7 @@ import { VerificationEngine } from '../cognition/verification';
 import { CollectiveCognitionEngine } from '../cognition/collective/engine';
 import { CognitiveDevelopmentEngine } from '../cognition/development/engine';
 import { CollectiveComputationEngine } from '../cognition/computation/engine';
+import { DistributedComputationFabric } from '../cognition/computation/fabric';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -187,6 +188,7 @@ export class Cell {
     this.collectiveCognition = new CollectiveCognitionEngine(this);
     this.cognitiveDevelopment = new CognitiveDevelopmentEngine(this);
     this.collectiveComputation = new CollectiveComputationEngine(this);
+    
 
     // Initialize Information Metabolism Subsystem
     this.metabolism = new MetabolismEngine(
@@ -202,6 +204,7 @@ export class Cell {
 
     this.routing = new RoutingTable(this.nodeId);
     this.transport = new P2PTransport(this.nodeId, rawPrivateKey, this.publicKey);
+    this.collectiveComputation.fabric = new DistributedComputationFabric(this, this.collectiveComputation);
     this.osint = new OsintScanner();
 
     this.swarm = new SwarmMembershipManager(

@@ -75,7 +75,10 @@ export interface CollectiveComputationOptions {
  * - Fault isolation with timeout, retry, reassignment, and dependency failure blocking.
  * - Deep immutability and complete provenance.
  */
+import { DistributedComputationFabric } from "./fabric";
+
 export class CollectiveComputationEngine {
+  public fabric?: DistributedComputationFabric;
   private readonly component = 'collective_computation';
   private defaultExecutors: Map<string, SubtaskExecutor> = new Map();
   private defaultComposers: Map<string, ResultComposer> = new Map();
@@ -1082,13 +1085,14 @@ export class CollectiveComputationEngine {
     const verificationTrace: ComputationTrace['verificationTrace'] = [];
     const subtaskResults: Record<string, SubtaskResult> = {};
 
-    const executor = options?.executorOverride || ((sub, inputs, cell) => {
+    const baseExecutor = options?.executorOverride || ((sub, inputs, cell) => {
       const handler = this.defaultExecutors.get(sub.type);
       if (!handler) {
         return Promise.resolve({ result: `Executed ${sub.type}`, ...sub.payload, ...inputs });
       }
       return handler(sub, inputs, cell);
     });
+    const executor = (this.fabric && !options?.executorOverride) ? this.fabric.getRemoteExecutor(baseExecutor as any) : baseExecutor;
 
     // 3. Execution Wave by Wave (Parallel execution within wave)
     for (const wave of waves) {
