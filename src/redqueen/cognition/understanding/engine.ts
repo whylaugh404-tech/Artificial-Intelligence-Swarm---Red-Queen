@@ -174,6 +174,12 @@ export class UnderstandingEngine {
     const understanding: CognitiveUnderstanding = {
       understandingId,
       summary: input.summary,
+      intent: (input as any).intent || input.summary,
+      concepts: (input as any).concepts || [],
+      relations: (input as any).relations || [],
+      constraints: (input as any).constraints || [],
+      unknowns: (input as any).unknowns || [],
+      requiredCapabilities: (input as any).requiredCapabilities || [],
       dependencies,
       evidenceIds: Array.from(evidenceIdsSet).sort(),
       context: input.context,

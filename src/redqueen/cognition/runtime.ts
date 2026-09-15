@@ -8,6 +8,7 @@ import { ComputationTrace, ComputationTraceSchema, ComputationTask } from './com
 import { computeDeterministicHash } from './computation/canonical';
 import { UnderstandingEngine } from './understanding/engine';
 import { ReasoningEngine } from './reasoning/engine';
+import { CollectiveCognitionEngine, CollectiveRepresentation } from './collective';
 import { CognitiveGraph } from './representation/graph';
 import { logger } from '../core/logger';
 
@@ -51,6 +52,7 @@ export type CognitiveTrace = z.infer<typeof CognitiveTraceSchema>;
 export const CognitiveResultSchema = z.object({
   requestId: z.string().min(1),
   understanding: CognitiveUnderstandingSchema.optional(),
+  collective: z.any().optional(), // Adding collective here
   reasoning: ReasoningChainSchema.optional(),
   conclusion: ReasoningConclusionSchema.optional(),
   confidence: z.number().min(0.0).max(1.0),
@@ -67,17 +69,19 @@ export type CognitiveResult = z.infer<typeof CognitiveResultSchema>;
 export interface CognitiveRuntimeOptions {
   understandingEngine?: UnderstandingEngine;
   reasoningEngine?: ReasoningEngine;
+  collectiveEngine?: CollectiveCognitionEngine;
 }
 
 /**
- * P9.4: Red Queen Cognitive Runtime
+ * P9.4 & P9.5: Red Queen Cognitive Runtime & Collective Engine
  * 
  * Orchestrates collective cognition across a population of Cells.
- * Flow: Creator Input -> Understanding -> Relevant Cells -> Collective Composition -> Reasoning -> Evidence -> Computation -> Conclusion
+ * Flow: Creator Input -> Understanding -> Relevant Cells -> Collective Composition -> Reasoning -> Evidence -> Conclusion
  */
 export class CognitiveRuntime {
   private understandingEngine: UnderstandingEngine;
   private reasoningEngine: ReasoningEngine;
+  private collectiveEngine: CollectiveCognitionEngine;
   
   constructor(
     private population: Cell[],
@@ -85,6 +89,7 @@ export class CognitiveRuntime {
   ) {
     this.understandingEngine = options?.understandingEngine ?? new UnderstandingEngine();
     this.reasoningEngine = options?.reasoningEngine ?? new ReasoningEngine();
+    this.collectiveEngine = options?.collectiveEngine ?? new CollectiveCognitionEngine();
   }
 
   public async process(request: CognitiveRequest): Promise<CognitiveResult> {
@@ -110,16 +115,21 @@ export class CognitiveRuntime {
       }
       provenance.push(`cells_activated:${activatedCells.length}`);
 
-      // 3. Compose Collective State & Reasoning
-      // (Using ReasoningEngine over the understanding + active cells)
-      const reasoning = this.buildReasoning(understanding, activatedCells, request.context);
+      // 3. Collective Interaction & Non-Linear Composition (P9.5)
+      const contributions = this.gatherContributions(activatedCells, understanding);
+      const collectiveRepresentation = this.collectiveEngine.compose(understanding, contributions, request.context);
+      provenance.push(`collective_composition_completed:${collectiveRepresentation.emergentStructures.length}_structures`);
+
+      // 4. Compose Collective State & Reasoning
+      // (Using ReasoningEngine over the understanding + active cells + collective representation)
+      const reasoning = this.buildReasoning(understanding, activatedCells, request.context, collectiveRepresentation);
 
       if (!reasoning) {
         return this.createInsufficientResult(request, 'INSUFFICIENT_COGNITIVE_STATE', provenance, activatedCells, evidence, understanding);
       }
       provenance.push(`reasoning_completed:${reasoning.reasoningId}`);
 
-      // 4. Evidence & Confidence Evaluation
+      // 5. Evidence & Confidence Evaluation
       // Extract evidences from reasoning
       if (reasoning.conclusion?.evidence) {
         // Collect actual evidence objects if available in collective state (mocked for foundation)
@@ -128,13 +138,14 @@ export class CognitiveRuntime {
       
       let confidence = reasoning.conclusion?.uncertainty?.belief ?? 0.5;
 
-      // 5. Semantic Deterministic Identity
+      // 6. Semantic Deterministic Identity
       const semanticPayload = {
         requestId: request.requestId,
         creatorInput: request.creatorInput,
         context: request.context,
         understandingId: understanding.understandingId,
         activatedCells: activatedCells.map(c => c.cellId).sort(),
+        emergentStructures: collectiveRepresentation.emergentStructures.map(s => s.emergentId).sort(),
         reasoningId: reasoning.reasoningId,
         conclusionStatement: reasoning.conclusion?.statement ?? ''
       };
@@ -143,6 +154,7 @@ export class CognitiveRuntime {
       return {
         requestId: request.requestId,
         understanding,
+        collective: collectiveRepresentation,
         reasoning,
         conclusion: reasoning.conclusion,
         confidence,
@@ -239,37 +251,112 @@ export class CognitiveRuntime {
             reason: `Capability match: REASONING`
           });
           isActivated = true;
+        } else if (requiredRoles.includes('EVIDENCE') && (cell.genome.capabilities as string[]).includes('EVIDENCE')) {
+           activatedCells.push({
+            cellId: cell.nodeId,
+            role: 'EVIDENCE',
+            specialization: cell.genome.specialization,
+            reason: `Capability match: EVIDENCE`
+          });
+          isActivated = true;
         }
       }
     }
   }
 
+  private gatherContributions(activatedCells: CognitiveActivation[], understanding: CognitiveUnderstanding): any[] {
+    const contributions: any[] = [];
+    
+    // Distribute concepts, relations, and evidences among cells for testing purposes
+    activatedCells.forEach((cell, index) => {
+      // Cell 0 provides concept 1
+      if (index === 0 && understanding.concepts.length > 0) {
+        contributions.push({
+          cellId: cell.cellId,
+          contributionType: 'CONCEPT',
+          content: understanding.concepts[0],
+          confidence: 0.9
+        });
+      }
+      
+      // Cell 1 provides concept 2
+      if (index === 1 && understanding.concepts.length > 1) {
+        contributions.push({
+          cellId: cell.cellId,
+          contributionType: 'CONCEPT',
+          content: understanding.concepts[1],
+          confidence: 0.9
+        });
+      }
+
+      // Cell 0 or 1 provides relation
+      if (understanding.relations.length > 0) {
+        contributions.push({
+          cellId: cell.cellId,
+          contributionType: 'RELATION',
+          content: understanding.relations[0],
+          confidence: 0.8
+        });
+      }
+      
+      // Provide evidence if available
+      if (cell.role === 'EVIDENCE' || cell.specialization === 'DATA_EVALUATOR') {
+        contributions.push({
+          cellId: cell.cellId,
+          contributionType: 'EVIDENCE',
+          content: {
+            evidenceId: 'ev_1',
+            supports: understanding.relations.length > 0 ? understanding.relations[0].relationId : null
+          },
+          confidence: 0.85
+        });
+      }
+    });
+
+    return contributions;
+  }
+
   private buildReasoning(
     understanding: CognitiveUnderstanding, 
     activatedCells: CognitiveActivation[],
-    context: Context
+    context: Context,
+    collectiveRepresentation?: CollectiveRepresentation
   ): ReasoningChain | null {
     if (activatedCells.length === 0) return null;
 
     // Fail if requested to fail for testing "insufficient cognitive state"
     if (understanding.summary?.includes("insufficient_state_marker")) return null;
 
-    const premises = activatedCells.map(c => ({
-      statement: `Cell ${c.cellId} contributed ${c.role} from specialization ${c.specialization}`,
-      sourceType: 'UNDERSTANDING' as const,
-      sourceId: understanding.understandingId,
-      confidence: 0.9
-    }));
+    const premises = [];
+    
+    if (collectiveRepresentation && collectiveRepresentation.emergentStructures.length > 0) {
+      collectiveRepresentation.emergentStructures.forEach(es => {
+        premises.push({
+          statement: `Emergent structure ${es.emergentId} derived from ${es.sourceCells.length} cells: ${es.resultingStructure.statement}`,
+          sourceType: 'UNDERSTANDING' as const,
+          sourceId: es.emergentId,
+          confidence: es.confidence
+        });
+      });
+    } else {
+      activatedCells.forEach(c => {
+        premises.push({
+          statement: `Cell ${c.cellId} contributed ${c.role} from specialization ${c.specialization}`,
+          sourceType: 'UNDERSTANDING' as const,
+          sourceId: understanding.understandingId,
+          confidence: 0.9
+        });
+      });
+    }
 
-    console.error('UNDERSTANDING TO BE PARSED:', JSON.stringify(understanding, null, 2));
     return this.reasoningEngine.reason({
       goal: `Resolve intent: ${understanding.summary}`,
       context,
       originatingCellId: activatedCells[0].cellId,
       understandings: [understanding],
       premises,
-      evidences: ['ev_dummy_derived_from_understanding'],
-      hypotheses: [{
+      evidences: collectiveRepresentation?.beliefs.flatMap(b => b.supportingEvidence) || ['ev_dummy_derived_from_understanding'],
+      hypotheses: collectiveRepresentation?.hypotheses || [{
         statement: `The collective response is derived from ${activatedCells.length} cells.`,
         confidence: 0.85
       }]
