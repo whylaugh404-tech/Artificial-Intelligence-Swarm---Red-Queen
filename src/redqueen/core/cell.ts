@@ -52,6 +52,7 @@ import { CollectiveCognitionEngine } from '../cognition/collective/engine';
 import { CognitiveDevelopmentEngine } from '../cognition/development/engine';
 import { CollectiveComputationEngine } from '../cognition/computation/engine';
 import { DistributedComputationFabric } from '../cognition/computation/fabric';
+import { EvolutionEngine } from '../evolution';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -93,6 +94,7 @@ export class Cell {
   public readonly verification: VerificationEngine;
   public readonly cognitiveDevelopment: CognitiveDevelopmentEngine;
   public readonly collectiveComputation: CollectiveComputationEngine;
+  public readonly evolution: EvolutionEngine;
 
   private _genome: CellGenome;
   private _lineage: CellLineage;
@@ -188,6 +190,7 @@ export class Cell {
     this.collectiveCognition = new CollectiveCognitionEngine(this);
     this.cognitiveDevelopment = new CognitiveDevelopmentEngine(this);
     this.collectiveComputation = new CollectiveComputationEngine(this);
+    this.evolution = new EvolutionEngine(this);
     
 
     // Initialize Information Metabolism Subsystem
