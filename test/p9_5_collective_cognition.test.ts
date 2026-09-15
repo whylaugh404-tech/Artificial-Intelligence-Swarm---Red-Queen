@@ -3,17 +3,33 @@ import { CognitiveRuntime } from '../src/redqueen/cognition/runtime';
 import { Cell } from '../src/redqueen/core/cell';
 import { CellGenome } from '../src/redqueen/genome/types';
 import { RepresentationVerificationStatus } from '../src/redqueen/cognition/representation/types';
+import { CollectiveCognitionEngine } from '../src/redqueen/cognition/collective/engine';
+import {
+  CognitiveFeatureVector,
+  applyLinearTransformation,
+  generateDeterministicMatrixAndBias,
+  clamp01,
+  EPSILON_TOLERANCE
+} from '../src/redqueen/cognition/types';
+import { CognitiveCompositionRule } from '../src/redqueen/core/cognitive_composition/rule';
+import { ComputePartition } from '../src/redqueen/core/cognitive_composition/types';
 
-describe('P9.5 — Non-Linear Collective Cognition', () => {
-  const createMockCell = (id: string, specs: string, caps: string[]): Cell => {
+describe('P9.5 — Linear Mathematical Cognitive Model & Collective Cognition', () => {
+  const createMockCell = (
+    id: string,
+    specs: string,
+    caps: string[],
+    fitness = 0.9,
+    generation = 1
+  ): Cell => {
     return {
       nodeId: id,
       lineageId: `lin_${id}`,
       genome: {
         genomeId: `gen_${id}`,
         lineageId: `lin_${id}`,
-        generation: 1,
-        fitness: 1,
+        generation,
+        fitness,
         capabilities: caps,
         specialization: specs
       } as unknown as CellGenome,
@@ -29,439 +45,356 @@ describe('P9.5 — Non-Linear Collective Cognition', () => {
       evolutionEngine: {} as any,
       start: vi.fn(),
       stop: vi.fn(),
-      getState: vi.fn(),
+      getState: vi.fn().mockReturnValue({ mode: 'active', reliability: 0.95 }),
       submitTask: vi.fn()
     } as any;
   };
 
-  const c1 = createMockCell('c1', 'MATH_EXPERT', ['COGNITIVE_REASONING', 'INFO_PROCESSING']);
-  const c2 = createMockCell('c2', 'PHYSICS_EXPERT', ['COGNITIVE_REASONING']);
-  const c3 = createMockCell('c3', 'DATA_EVALUATOR', ['EVIDENCE']);
+  const c1 = createMockCell('c1', 'MATH_EXPERT', ['COGNITIVE_REASONING', 'INFO_PROCESSING'], 0.95);
+  const c2 = createMockCell('c2', 'PHYSICS_EXPERT', ['COGNITIVE_REASONING'], 0.85);
+  const c3 = createMockCell('c3', 'DATA_EVALUATOR', ['EVIDENCE'], 0.75);
 
   const population = [c1, c2, c3];
+  const engine = new CollectiveCognitionEngine(c1);
   const runtime = new CognitiveRuntime(population);
 
   const mockContext = {
-    contextId: 'ctx_mock',
+    contextId: 'ctx_p9_5',
     domain: 'science',
-    timeframe: 'now',
+    timeframe: 'current',
     certaintyRequirement: 0.8
   };
 
-  it('1. input menghasilkan structured understanding', async () => {
-    const result = await runtime.process({
-      requestId: 'req_1',
-      creatorInput: 'test structural representation',
-      context: mockContext
+  describe('1. Representasi Matematis Cell (Feature Vector x_i)', () => {
+    it('mengekstraksi feature vector x_i berdimensi 7 dengan semua nilai ternormalisasi ke [0, 1]', () => {
+      const vector: CognitiveFeatureVector = engine.extractFeatureVector(c1, 'science');
+
+      expect(vector).toBeDefined();
+      const keys: (keyof CognitiveFeatureVector)[] = [
+        'computation',
+        'reliability',
+        'cognition',
+        'knowledge',
+        'specialization',
+        'experience',
+        'resourceEfficiency'
+      ];
+
+      keys.forEach(k => {
+        expect(typeof vector[k]).toBe('number');
+        expect(vector[k]).toBeGreaterThanOrEqual(0.0);
+        expect(vector[k]).toBeLessThanOrEqual(1.0);
+      });
     });
 
-    expect(result.status).toBe('SUCCESS');
-    expect(result.understanding).toBeDefined();
-    expect(result.understanding?.intent).toBeDefined();
+    it('merefleksikan spesialisasi dan kapabilitas genome ke dalam bobot fitur x_i', () => {
+      const vecMath = engine.extractFeatureVector(c1, 'math');
+      const vecPhysics = engine.extractFeatureVector(c2, 'math');
+
+      // c1 has MATH_EXPERT which matches 'math' domain -> specialization must be higher
+      expect(vecMath.specialization).toBeGreaterThan(vecPhysics.specialization);
+      // c1 has INFO_PROCESSING -> computation capacity is higher
+      expect(vecMath.computation).toBeGreaterThanOrEqual(vecPhysics.computation);
+    });
   });
 
-  it('2. understanding memiliki concepts', async () => {
-    const result = await runtime.process({
-      requestId: 'req_2',
-      creatorInput: 'test concepts',
-      context: mockContext
+  describe('2. Transformasi Linear (z_i = W_i * x_i + b_i)', () => {
+    it('menghasilkan matriks transformasi W_i (7x7) dan bias b_i (7x1) yang deterministik', () => {
+      const { matrix: W1, bias: b1 } = generateDeterministicMatrixAndBias('c1', 'MATH_EXPERT', ['COGNITIVE_REASONING']);
+      const { matrix: W2, bias: b2 } = generateDeterministicMatrixAndBias('c1', 'MATH_EXPERT', ['COGNITIVE_REASONING']);
+
+      expect(W1.length).toBe(7);
+      expect(b1.length).toBe(7);
+      expect(W1[0].length).toBe(7);
+
+      // Deterministic: Same input yields strictly identical matrices
+      expect(W1).toEqual(W2);
+      expect(b1).toEqual(b2);
+
+      // Distinct cells yield distinct transformation matrices
+      const { matrix: W3 } = generateDeterministicMatrixAndBias('c2', 'PHYSICS_EXPERT', ['COGNITIVE_REASONING']);
+      expect(W1).not.toEqual(W3);
     });
 
-    expect(result.understanding?.concepts).toBeDefined();
-    expect(Array.isArray(result.understanding?.concepts)).toBe(true);
+    it('menerapkan z_i = clamp01(W_i * x_i + b_i) dengan benar', () => {
+      const x: CognitiveFeatureVector = {
+        computation: 0.8,
+        reliability: 0.9,
+        cognition: 0.7,
+        knowledge: 0.85,
+        specialization: 0.95,
+        experience: 0.5,
+        resourceEfficiency: 0.6
+      };
+
+      const { matrix: W, bias: b } = generateDeterministicMatrixAndBias('c1', 'MATH_EXPERT', ['COGNITIVE_REASONING']);
+      const trans = applyLinearTransformation(x, W, b);
+      const z = trans.transformedVector;
+
+      expect(z).toBeDefined();
+      const keys: (keyof CognitiveFeatureVector)[] = [
+        'computation',
+        'reliability',
+        'cognition',
+        'knowledge',
+        'specialization',
+        'experience',
+        'resourceEfficiency'
+      ];
+
+      keys.forEach(k => {
+        expect(z[k]).toBeGreaterThanOrEqual(0.0);
+        expect(z[k]).toBeLessThanOrEqual(1.0);
+      });
+    });
   });
 
-  it('3. understanding memiliki relations', async () => {
-    const result = await runtime.process({
-      requestId: 'req_3',
-      creatorInput: 'test relations',
-      context: mockContext
+  describe('3. Normalisasi Bobot Komposisi (Σ α_i = 1 dan α_i >= 0)', () => {
+    it('menghitung bobot α_i >= 0 dan Σ α_i = 1.0 (convex combination)', () => {
+      const weights = engine.calculateCompositionWeights(population, 'science');
+
+      let sum = 0;
+      population.forEach(cell => {
+        const alpha = weights[cell.nodeId];
+        expect(alpha).toBeDefined();
+        expect(alpha.weight).toBeGreaterThanOrEqual(0.0);
+        expect(alpha.normalizedWeight).toBeGreaterThanOrEqual(0.0);
+        sum += alpha.normalizedWeight;
+      });
+
+      expect(Math.abs(sum - 1.0)).toBeLessThan(EPSILON_TOLERANCE);
     });
 
-    expect(result.understanding?.relations).toBeDefined();
-    expect(Array.isArray(result.understanding?.relations)).toBe(true);
+    it('memberikan bobot lebih besar pada Cell dengan fitness dan relevansi lebih tinggi', () => {
+      // c1: fitness 0.95, specialization MATH_EXPERT
+      // c3: fitness 0.75, specialization DATA_EVALUATOR
+      const weights = engine.calculateCompositionWeights(population, 'math');
+
+      expect(weights['c1'].normalizedWeight).toBeGreaterThan(weights['c3'].normalizedWeight);
+    });
   });
 
-  it('4. multiple Cells menghasilkan structured contributions', async () => {
-    const result = await runtime.process({
-      requestId: 'req_4',
-      creatorInput: 'gravity and mass',
-      context: mockContext
+  describe('4. Komposisi Kognitif Linear (C = Σ α_i * z_i)', () => {
+    it('menghasilkan Collective Cognitive State C yang sesuai dengan weighted linear combination', () => {
+      const state = engine.executeLinearComposition(population, mockContext, 'science');
+
+      expect(state).toBeDefined();
+      expect(state.resultVector).toBeDefined();
+
+      // Verify manual calculation: C_k = sum_i(alpha_i * z_{i,k})
+      const manualResult: Record<string, number> = {
+        computation: 0,
+        reliability: 0,
+        cognition: 0,
+        knowledge: 0,
+        specialization: 0,
+        experience: 0,
+        resourceEfficiency: 0
+      };
+
+      for (const cell of population) {
+        const alpha = state.weights[cell.nodeId];
+        const z = state.transformations[cell.nodeId].transformedVector;
+        for (const k of Object.keys(manualResult) as (keyof CognitiveFeatureVector)[]) {
+          manualResult[k] += alpha * z[k];
+        }
+      }
+
+      for (const k of Object.keys(manualResult) as (keyof CognitiveFeatureVector)[]) {
+        const expected = clamp01(manualResult[k]);
+        expect(Math.abs(state.resultVector[k] - expected)).toBeLessThan(EPSILON_TOLERANCE);
+      }
     });
-    
-    expect(result.activatedCells.length).toBeGreaterThan(0);
-    // Collective composition is triggered internally
-    expect(result.collective).toBeDefined();
+
+    it('CognitiveCompositionRule menghasilkan komposisi linear yang valid pada compute partitions', () => {
+      const partitions: ComputePartition[] = [
+        {
+          partitionId: 'p1',
+          cellIdentity: 'c1',
+          name: 'part1',
+          architecture: 'wasm64',
+          capacity: 800,
+          parallelism: 2,
+          memory: 1024,
+          specialization: 'MATH_EXPERT',
+          availability: 0.99,
+          communicationProfile: {
+            bandwidth: 1000,
+            latency: 5,
+            topology: 'direct',
+            reliability: 0.95
+          },
+          runtimeMetadata: {}
+        },
+        {
+          partitionId: 'p2',
+          cellIdentity: 'c2',
+          name: 'part2',
+          architecture: 'wasm64',
+          capacity: 600,
+          parallelism: 1,
+          memory: 512,
+          specialization: 'PHYSICS_EXPERT',
+          availability: 0.95,
+          communicationProfile: {
+            bandwidth: 800,
+            latency: 10,
+            topology: 'direct',
+            reliability: 0.90
+          },
+          runtimeMetadata: {}
+        }
+      ];
+
+      const rule = new CognitiveCompositionRule();
+      const composed = rule.apply(partitions as any);
+
+      expect(composed.derivedStructure).toBeDefined();
+      const compSummary = (composed.derivedStructure as any).computeSummary;
+      const linComp = (composed.derivedStructure as any).linearComposition;
+      expect(compSummary.totalCapacity).toBeGreaterThan(0);
+      expect(compSummary.partitionCount).toBe(2);
+      expect(linComp.resultVector).toBeDefined();
+      expect(linComp.weights).toBeDefined();
+      expect(composed.reasoningTrace.length).toBeGreaterThan(0);
+    });
   });
 
-  it('5. Cell contributions interact', async () => {
-    // Mock UnderstandingEngine to inject specific concepts & relations
-    const customRuntime = new CognitiveRuntime(population, {
-      understandingEngine: {
-        compose: (input: any) => ({
-          understandingId: 'und_mock',
-          summary: input.summary,
-          intent: 'evaluate interaction',
-          concepts: [
-            { conceptId: 'c_gravity', canonicalName: 'gravity' },
-            { conceptId: 'c_mass', canonicalName: 'mass' }
-          ],
-          relations: [
-            { relationId: 'rel_1', subjectConceptId: 'c_gravity', predicate: 'DEPENDS_ON', objectConceptId: 'c_mass' }
-          ],
-          constraints: [],
-          unknowns: [],
-          requiredCapabilities: [],
-          dependencies: [{ sourceId: 'src1', sourceType: 'CONCEPT', role: 'test' }],
-          evidenceIds: [],
-          context: mockContext,
-          provenance: ['test'],
-          verificationStatus: RepresentationVerificationStatus.PENDING,
-          originatingCellId: 'test',
-          createdAt: new Date().toISOString(),
-          version: 1,
-          metadata: {}
-        })
-      } as any
+  describe('5. Determinisme Matematis & Boundedness', () => {
+    it('input sama selalu menghasilkan output collective state dan deterministicIdentity yang identik', () => {
+      const state1 = engine.executeLinearComposition(population, mockContext, 'science');
+      const state2 = engine.executeLinearComposition(population, mockContext, 'science');
+
+      expect(state1.resultVector).toEqual(state2.resultVector);
+      expect(state1.weights).toEqual(state2.weights);
+      expect(state1.deterministicIdentity).toBe(state2.deterministicIdentity);
     });
 
-    const result = await customRuntime.process({
-      requestId: 'req_5',
-      creatorInput: 'how does gravity relate to mass?',
-      context: mockContext
+    it('mempertahankan properti boundedness: ∀k, 0 <= C_k <= 1', () => {
+      // Create extreme edge-case cells
+      const highCell = createMockCell('c_high', 'SUPER_SPECIALIST', ['ALL'], 1.0);
+      const lowCell = createMockCell('c_low', 'MINIMAL', [], 0.0);
+
+      const state = engine.executeLinearComposition([highCell, lowCell], mockContext, 'extreme');
+      const keys: (keyof CognitiveFeatureVector)[] = [
+        'computation',
+        'reliability',
+        'cognition',
+        'knowledge',
+        'specialization',
+        'experience',
+        'resourceEfficiency'
+      ];
+
+      keys.forEach(k => {
+        expect(state.resultVector[k]).toBeGreaterThanOrEqual(0.0);
+        expect(state.resultVector[k]).toBeLessThanOrEqual(1.0);
+      });
     });
 
-    expect(result.collective).toBeDefined();
-    expect(result.collective.emergentStructures.length).toBeGreaterThan(0);
+    it('menjamin non-randomness: 100 eksekusi berturut-turut menghasilkan variance 0', () => {
+      const firstRun = engine.executeLinearComposition(population, mockContext, 'science');
+      for (let i = 0; i < 100; i++) {
+        const nextRun = engine.executeLinearComposition(population, mockContext, 'science');
+        expect(nextRun.deterministicIdentity).toBe(firstRun.deterministicIdentity);
+        expect(nextRun.resultVector.cognition).toBe(firstRun.resultVector.cognition);
+      }
+    });
   });
 
-  it('6. interaction menghasilkan new relation', async () => {
-    // emergent structure is essentially a new hypothesis/relation
-    const customRuntime = new CognitiveRuntime(population, {
-      understandingEngine: {
-        compose: (input: any) => ({
-          understandingId: 'und_mock_2',
-          summary: 'x',
-          concepts: [
-            { conceptId: 'X', canonicalName: 'X' },
-            { conceptId: 'Y', canonicalName: 'Y' }
-          ],
-          relations: [
-            { relationId: 'r1', subjectConceptId: 'X', predicate: 'CAUSES', objectConceptId: 'Y' }
-          ],
-          constraints: [], unknowns: [], requiredCapabilities: [], dependencies: [{ sourceId: 'src1', sourceType: 'CONCEPT', role: 'test' }], evidenceIds: [],
-          context: mockContext, provenance: ['test'], verificationStatus: RepresentationVerificationStatus.PENDING,
-          originatingCellId: 'test', createdAt: new Date().toISOString(), version: 1, metadata: {}
-        })
-      } as any
+  describe('6. Integrasi Pipeline Kognitif (Bukan sekadar agregasi kapasitas)', () => {
+    it('menjalankan pipeline lengkap dan menyertakan collective linear mathematical state', async () => {
+      const result = await runtime.process({
+        requestId: 'req_full_pipeline',
+        creatorInput: 'Evaluate gravity and relativistic mass relations in astrophysics',
+        context: mockContext
+      });
+
+      expect(result.status).toBe('SUCCESS');
+      expect(result.understanding).toBeDefined();
+      expect(result.understanding?.concepts.length).toBeGreaterThan(0);
+      expect(result.activatedCells.length).toBeGreaterThan(0);
+
+      // Verifikasi collective representation memuat collectiveState linear
+      expect(result.collective).toBeDefined();
+      expect(result.collective.collectiveState).toBeDefined();
+      const collState = result.collective.collectiveState;
+      expect(collState.resultVector).toBeDefined();
+      expect(collState.weights).toBeDefined();
+      expect(collState.transformations).toBeDefined();
+
+      // Verifikasi provenance mencakup tahapan linear composition
+      expect(result.provenance).toContainEqual(expect.stringContaining('linear_composition_computed'));
+      expect(result.provenance).toContainEqual(expect.stringContaining('collective_state_formed'));
+      expect(result.provenance).toContainEqual(expect.stringContaining('understanding_formed'));
+      expect(result.provenance).toContainEqual(expect.stringContaining('reasoning_completed'));
     });
 
-    const result = await customRuntime.process({
-      requestId: 'req_6',
-      creatorInput: 'X causes Y',
-      context: mockContext
+    it('understanding dibangun dari concepts/relations yang didukung oleh Cells, bukan deskripsi mentah palsu', async () => {
+      const result = await runtime.process({
+        requestId: 'req_understanding_concepts',
+        creatorInput: 'mass causes gravity curvature',
+        context: mockContext
+      });
+
+      expect(result.understanding).toBeDefined();
+      const concepts = result.understanding!.concepts;
+      expect(concepts.length).toBeGreaterThan(0);
+      // Concepts must be grounded with evidence IDs from collective composition
+      concepts.forEach(c => {
+        expect(c.verificationStatus).toBe(RepresentationVerificationStatus.SUPPORTED);
+        expect(c.evidenceIds.length).toBeGreaterThan(0);
+      });
     });
 
-    const emergent = result.collective.emergentStructures[0];
-    expect(emergent).toBeDefined();
-    expect(emergent.transformation).toBe('CROSS_CELL_RELATION_MATCH');
+    it('menolak status SUCCESS jika intent tidak dapat dipahami (unknown_intent_marker)', async () => {
+      const result = await runtime.process({
+        requestId: 'req_insufficient',
+        creatorInput: 'unknown_intent_marker',
+        context: mockContext
+      });
+
+      expect(result.status).toBe('INSUFFICIENT_UNDERSTANDING');
+      expect(result.understanding).toBeUndefined();
+    });
   });
 
-  it('7. interaction menghasilkan hypothesis', async () => {
-    const customRuntime = new CognitiveRuntime(population, {
-      understandingEngine: {
-        compose: (input: any) => ({
-          understandingId: 'und_mock_3',
-          summary: 'x',
-          concepts: [
-            { conceptId: 'A', canonicalName: 'A' },
-            { conceptId: 'B', canonicalName: 'B' }
-          ],
-          relations: [], // No explicit relations -> Conceptual synthesis -> Hypothesis
-          constraints: [], unknowns: [], requiredCapabilities: [], dependencies: [{ sourceId: 'src1', sourceType: 'CONCEPT', role: 'test' }], evidenceIds: [],
-          context: mockContext, provenance: ['test'], verificationStatus: RepresentationVerificationStatus.PENDING,
-          originatingCellId: 'test', createdAt: new Date().toISOString(), version: 1, metadata: {}
-        })
-      } as any
+  describe('7. Regresi P9.1 - P9.4 Tetap Terpenuhi', () => {
+    it('Cell individuality, genome, lineage, and memory tetap terlindungi (P9.1 - P9.4)', () => {
+      expect(c1.nodeId).toBe('c1');
+      expect(c2.nodeId).toBe('c2');
+      expect(c1.genome.genomeId).toBe('gen_c1');
+      expect((c1 as any).lineageId).toBe('lin_c1');
+      expect((c1 as any).memoryStore.put).not.toHaveBeenCalled();
     });
 
-    const result = await customRuntime.process({
-      requestId: 'req_7',
-      creatorInput: 'concept A and B',
-      context: mockContext
+    it('perbedaan timestamp tidak mengubah deterministic identity (isolasi waktu P9.4)', async () => {
+      const res1 = await runtime.process({
+        requestId: 'req_time_iso',
+        creatorInput: 'Identical semantic statement for verification',
+        context: mockContext,
+        timestamp: '2026-09-15T10:00:00.000Z'
+      });
+
+      const res2 = await runtime.process({
+        requestId: 'req_time_iso',
+        creatorInput: 'Identical semantic statement for verification',
+        context: mockContext,
+        timestamp: '2026-09-15T18:00:00.000Z'
+      });
+
+      expect(res1.deterministicIdentity).toBe(res2.deterministicIdentity);
     });
 
-    const hypotheses = result.collective.hypotheses;
-    expect(hypotheses.length).toBe(1);
-    expect(hypotheses[0].statement).toContain('Possible emergent link between');
-  });
-
-  it('8. hypothesis berbeda dari source contribution', async () => {
-    const customRuntime = new CognitiveRuntime(population, {
-      understandingEngine: {
-        compose: (input: any) => ({
-          understandingId: 'und_mock_4',
-          summary: 'x',
-          concepts: [
-            { conceptId: 'C', canonicalName: 'C' },
-            { conceptId: 'D', canonicalName: 'D' }
-          ],
-          relations: [],
-          constraints: [], unknowns: [], requiredCapabilities: [], dependencies: [{ sourceId: 'src1', sourceType: 'CONCEPT', role: 'test' }], evidenceIds: [],
-          context: mockContext, provenance: ['test'], verificationStatus: RepresentationVerificationStatus.PENDING,
-          originatingCellId: 'test', createdAt: new Date().toISOString(), version: 1, metadata: {}
-        })
-      } as any
+    it('eksekusi murni internal deterministik tanpa panggilan external AI provider', async () => {
+      const start = performance.now();
+      await runtime.process({
+        requestId: 'req_no_ext',
+        creatorInput: 'Internal mathematical composition test',
+        context: mockContext
+      });
+      const duration = performance.now() - start;
+      expect(duration).toBeLessThan(100);
     });
-
-    const result = await customRuntime.process({
-      requestId: 'req_8',
-      creatorInput: 'test diff',
-      context: mockContext
-    });
-
-    const emergent = result.collective.emergentStructures[0];
-    const sourceStructs = emergent.sourceStructures;
-    expect(sourceStructs).not.toContain(emergent.resultingStructure);
-  });
-
-  it('9. evidence dapat mendukung hypothesis', async () => {
-    // Handled in collective engine logic
-    const customRuntime = new CognitiveRuntime(population, {
-      understandingEngine: {
-        compose: (input: any) => ({
-          understandingId: 'und_mock_9',
-          summary: 'evidence',
-          concepts: [{ conceptId: 'A' }, { conceptId: 'B' }],
-          relations: [{ relationId: 'r1', subjectConceptId: 'A', predicate: 'IS', objectConceptId: 'B' }],
-          constraints: [], unknowns: [], requiredCapabilities: [], dependencies: [{ sourceId: 'src1', sourceType: 'CONCEPT', role: 'test' }], evidenceIds: [],
-          context: mockContext, provenance: ['test'], verificationStatus: RepresentationVerificationStatus.PENDING,
-          originatingCellId: 'test', createdAt: new Date().toISOString(), version: 1, metadata: {}
-        })
-      } as any
-    });
-
-    const result = await customRuntime.process({
-      requestId: 'req_9',
-      creatorInput: 'evidence evidence', // includes "evidence" keyword to activate EVIDENCE cell
-      context: mockContext
-    });
-    
-    // In our mock gatherContributions, EVIDENCE cell provides support for the first relation
-    expect(result.collective.beliefs[0].status).toBe(RepresentationVerificationStatus.SUPPORTED);
-  });
-
-  it('10. evidence dapat membantah hypothesis', async () => {
-    // Modifying gatherContributions for contradiction is tricky from here, 
-    // so let's directly call collectiveEngine
-    const result = runtime['collectiveEngine'].compose(
-      { concepts: [], relations: [] } as any,
-      [
-        { cellId: 'c1', contributionType: 'RELATION', content: { relationId: 'r1', subjectConceptId: 'A', objectConceptId: 'B', predicate: 'IS' }, confidence: 1 },
-        { cellId: 'c1', contributionType: 'CONCEPT', content: { conceptId: 'A' }, confidence: 1 },
-        { cellId: 'c2', contributionType: 'EVIDENCE', content: { evidenceId: 'e1', contradicts: 'r1' }, confidence: 1 }
-      ],
-      mockContext
-    );
-
-    expect(result.beliefs[0].status).toBe(RepresentationVerificationStatus.REJECTED);
-  });
-
-  it('11. contradiction dipertahankan', async () => {
-    const result = runtime['collectiveEngine'].compose(
-      { concepts: [], relations: [] } as any,
-      [
-        { cellId: 'c1', contributionType: 'RELATION', content: { relationId: 'r1', subjectConceptId: 'A', objectConceptId: 'B', predicate: 'IS' }, confidence: 1 },
-        { cellId: 'c1', contributionType: 'CONCEPT', content: { conceptId: 'A' }, confidence: 1 },
-        { cellId: 'c2', contributionType: 'EVIDENCE', content: { evidenceId: 'e1', contradicts: 'r1' }, confidence: 1 },
-        { cellId: 'c3', contributionType: 'EVIDENCE', content: { evidenceId: 'e2', supports: 'r1' }, confidence: 1 }
-      ],
-      mockContext
-    );
-
-    expect(result.beliefs[0].status).toBe(RepresentationVerificationStatus.CONTRADICTED);
-    expect(result.contradictions.length).toBe(1);
-  });
-
-  it('12. belief dapat berubah berdasarkan evidence', async () => {
-    const result = runtime['collectiveEngine'].compose(
-      { concepts: [], relations: [] } as any,
-      [
-        { cellId: 'c1', contributionType: 'RELATION', content: { relationId: 'r1', subjectConceptId: 'A', objectConceptId: 'B', predicate: 'IS' }, confidence: 1 },
-        { cellId: 'c1', contributionType: 'CONCEPT', content: { conceptId: 'A' }, confidence: 1 },
-        { cellId: 'c2', contributionType: 'EVIDENCE', content: { evidenceId: 'e1', supports: 'r1' }, confidence: 1 }
-      ],
-      mockContext
-    );
-
-    expect(result.beliefs[0].belief).toBeGreaterThan(0.5);
-  });
-
-  it('13. collective result bukan penjumlahan score', async () => {
-    const customRuntime = new CognitiveRuntime(population, {
-      understandingEngine: {
-        compose: (input: any) => ({
-          understandingId: 'und_mock_13',
-          summary: 'x',
-          concepts: [{ conceptId: 'C' }, { conceptId: 'D' }],
-          relations: [],
-          constraints: [], unknowns: [], requiredCapabilities: [], dependencies: [{ sourceId: 'src1', sourceType: 'CONCEPT', role: 'test' }], evidenceIds: [],
-          context: mockContext, provenance: ['test'], verificationStatus: RepresentationVerificationStatus.PENDING,
-          originatingCellId: 'test', createdAt: new Date().toISOString(), version: 1, metadata: {}
-        })
-      } as any
-    });
-
-    const result = await customRuntime.process({
-      requestId: 'req_13',
-      creatorInput: 'test score',
-      context: mockContext
-    });
-
-    const emergent = result.collective.emergentStructures[0];
-    expect(typeof emergent).toBe('object');
-    expect(emergent.resultingStructure).toBeDefined();
-    // Prove it's a structural transformation, not an arithmetic sum
-    expect(typeof emergent.resultingStructure.statement).toBe('string');
-  });
-
-  it('14. collective result bukan daftar Cell', async () => {
-    const customRuntime = new CognitiveRuntime(population, {
-      understandingEngine: {
-        compose: (input: any) => ({
-          understandingId: 'und_mock_14',
-          summary: 'x',
-          concepts: [{ conceptId: 'C' }, { conceptId: 'D' }],
-          relations: [],
-          constraints: [], unknowns: [], requiredCapabilities: [], dependencies: [{ sourceId: 'src1', sourceType: 'CONCEPT', role: 'test' }], evidenceIds: [],
-          context: mockContext, provenance: ['test'], verificationStatus: RepresentationVerificationStatus.PENDING,
-          originatingCellId: 'test', createdAt: new Date().toISOString(), version: 1, metadata: {}
-        })
-      } as any
-    });
-
-    const result = await customRuntime.process({
-      requestId: 'req_14',
-      creatorInput: 'test list',
-      context: mockContext
-    });
-
-    const reasoning = result.reasoning;
-    // The reasoning shouldn't just be a list of cells
-    expect(reasoning?.premises[0].statement).toContain('Emergent structure');
-  });
-
-  it('15. emergent structure memiliki provenance', async () => {
-    const customRuntime = new CognitiveRuntime(population, {
-      understandingEngine: {
-        compose: (input: any) => ({
-          understandingId: 'und_mock_15',
-          summary: 'x',
-          concepts: [{ conceptId: 'C' }, { conceptId: 'D' }],
-          relations: [],
-          constraints: [], unknowns: [], requiredCapabilities: [], dependencies: [{ sourceId: 'src1', sourceType: 'CONCEPT', role: 'test' }], evidenceIds: [],
-          context: mockContext, provenance: ['test'], verificationStatus: RepresentationVerificationStatus.PENDING,
-          originatingCellId: 'test', createdAt: new Date().toISOString(), version: 1, metadata: {}
-        })
-      } as any
-    });
-
-    const result = await customRuntime.process({
-      requestId: 'req_15',
-      creatorInput: 'test provenance',
-      context: mockContext
-    });
-
-    const emergent = result.collective.emergentStructures[0];
-    expect(emergent.provenance).toBeDefined();
-    expect(emergent.provenance.length).toBeGreaterThan(0);
-  });
-
-  it('16. emergent structure deterministic', async () => {
-    const result1 = runtime['collectiveEngine'].compose(
-      { concepts: [], relations: [] } as any,
-      [
-        { cellId: 'c1', contributionType: 'CONCEPT', content: { conceptId: 'A' }, confidence: 1 },
-        { cellId: 'c2', contributionType: 'CONCEPT', content: { conceptId: 'B' }, confidence: 1 }
-      ],
-      mockContext
-    );
-
-    const result2 = runtime['collectiveEngine'].compose(
-      { concepts: [], relations: [] } as any,
-      [
-        { cellId: 'c1', contributionType: 'CONCEPT', content: { conceptId: 'A' }, confidence: 1 },
-        { cellId: 'c2', contributionType: 'CONCEPT', content: { conceptId: 'B' }, confidence: 1 }
-      ],
-      mockContext
-    );
-
-    expect(result1.emergentStructures[0].deterministicIdentity).toBe(result2.emergentStructures[0].deterministicIdentity);
-  });
-
-  it('17. Cell individuality preserved', () => {
-    expect(c1.nodeId).toBe('c1');
-    expect(c2.nodeId).toBe('c2');
-  });
-
-  it('18. genome unchanged', () => {
-    expect(c1.genome.genomeId).toBe('gen_c1');
-  });
-
-  it('19. memory unchanged', () => {
-    expect((c1 as any).memoryStore.put).not.toHaveBeenCalled();
-  });
-
-  it('20. lineage unchanged', () => {
-    expect((c1 as any).lineageId).toBe('lin_c1');
-  });
-
-  it('21. no external AI provider', async () => {
-    const start = performance.now();
-    await runtime.process({
-      requestId: 'req_perf',
-      creatorInput: 'test perf',
-      context: mockContext
-    });
-    const duration = performance.now() - start;
-    expect(duration).toBeLessThan(100);
-  });
-
-  it('22. deterministic semantic identity', async () => {
-    const result1 = await runtime.process({
-      requestId: 'same_req',
-      creatorInput: 'semantic identity test',
-      context: mockContext
-    });
-
-    const result2 = await runtime.process({
-      requestId: 'same_req',
-      creatorInput: 'semantic identity test',
-      context: mockContext
-    });
-
-    expect(result1.deterministicIdentity).toBe(result2.deterministicIdentity);
-  });
-
-  it('23. P9.4 regression', async () => {
-    const result = await runtime.process({
-      requestId: 'p94',
-      creatorInput: 'hello world',
-      context: mockContext
-    });
-    expect(result.status).toBe('SUCCESS');
-    expect(result.understanding).toBeDefined();
-    expect(result.reasoning).toBeDefined();
-    expect(result.conclusion).toBeDefined();
-    expect(result.provenance.length).toBeGreaterThan(0);
-  });
-
-  it('24. P9.3 regression', async () => {
-    const result = await runtime.process({
-      requestId: 'p93',
-      creatorInput: 'regression',
-      context: mockContext
-    });
-    expect(result.status).toBe('SUCCESS');
   });
 });

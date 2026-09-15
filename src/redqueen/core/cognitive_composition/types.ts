@@ -10,9 +10,11 @@ import {
   CompositionTopologySchema
 } from '../composition/types';
 import {
-  ComputePartition,
   ComputePartitionSchema
 } from '../compute/types';
+import type { ComputePartition } from '../compute/types';
+export type { ComputePartition };
+export { ComputePartitionSchema };
 
 /**
  * Resulting cognitive operational bounds determined non-additively by compute capability.
