@@ -193,3 +193,44 @@ export interface PopulationSelectionOptions {
   timestamp?: string;
   metadata?: Record<string, unknown>;
 }
+
+/**
+ * P9.3: Population Dynamics & Evolution Cycle Foundation Types
+ */
+export const PopulationCycleProvenanceSchema = z.object({
+  cycleId: z.string(),
+  generation: z.number().int().min(0),
+  previousGeneration: z.number().int().min(0),
+  inputPopulationIds: z.array(z.string()),
+  survivingCellIds: z.array(z.string()),
+  fitnessSnapshots: z.record(z.string(), z.number()),
+  selectionReasons: z.record(z.string(), z.string()),
+  ranking: z.array(z.string()),
+  parameters: z.record(z.string(), z.unknown()),
+  selectionDeterministicHash: z.string(),
+  deterministicHash: z.string()
+});
+
+export type PopulationCycleProvenance = z.infer<typeof PopulationCycleProvenanceSchema>;
+
+export interface PopulationCycleOptions extends PopulationSelectionOptions {
+  currentGeneration?: number;
+  generation?: number;
+  cycleId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PopulationEvolutionCycleResult {
+  generation: number;
+  inputPopulation: any[];
+  inputPopulationIds: string[];
+  fitnessStates: Record<string, FitnessState>;
+  selectionResult: PopulationSelectionResult;
+  survivingCells: any[];
+  survivingCellIds: string[];
+  populationIdentity: string;
+  evolutionEvent: PopulationCycleProvenance;
+  provenance: PopulationCycleProvenance;
+  deterministicIdentity: string;
+  timestamp: string;
+}
