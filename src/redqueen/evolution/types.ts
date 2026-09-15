@@ -10,19 +10,25 @@ import { ComputationTask, SubtaskResult } from '../cognition/computation/types';
  */
 
 export const FitnessComponentsSchema = z.object({
-  cognitive: z.number().min(0.0).max(1.0),
-  metabolic: z.number().min(0.0).max(1.0),
-  computational: z.number().min(0.0).max(1.0),
-  adaptability: z.number().min(0.0).max(1.0)
+  computationPerformance: z.number().min(0.0).max(1.0),
+  reliability: z.number().min(0.0).max(1.0),
+  cognitiveContribution: z.number().min(0.0).max(1.0),
+  knowledgeContribution: z.number().min(0.0).max(1.0),
+  specialization: z.number().min(0.0).max(1.0),
+  experience: z.number().min(0.0).max(1.0),
+  resourceEfficiency: z.number().min(0.0).max(1.0)
 });
 
 export type FitnessComponents = z.infer<typeof FitnessComponentsSchema>;
 
 export const FitnessWeightsSchema = z.object({
-  cognitive: z.number().min(0.0).max(1.0).default(0.3),
-  metabolic: z.number().min(0.0).max(1.0).default(0.25),
-  computational: z.number().min(0.0).max(1.0).default(0.25),
-  adaptability: z.number().min(0.0).max(1.0).default(0.2)
+  computationPerformance: z.number().min(0.0).max(1.0).default(0.15),
+  reliability: z.number().min(0.0).max(1.0).default(0.15),
+  cognitiveContribution: z.number().min(0.0).max(1.0).default(0.15),
+  knowledgeContribution: z.number().min(0.0).max(1.0).default(0.15),
+  specialization: z.number().min(0.0).max(1.0).default(0.10),
+  experience: z.number().min(0.0).max(1.0).default(0.15),
+  resourceEfficiency: z.number().min(0.0).max(1.0).default(0.15)
 });
 
 export type FitnessWeights = z.infer<typeof FitnessWeightsSchema>;
@@ -91,6 +97,7 @@ export const EvolutionEventSchema = z.object({
   currentFitness: FitnessStateSchema.nullable(),
   mutations: z.array(MutationSchema),
   timestamp: z.string(),
+  provenance: z.array(z.string()).default([]),
   status: z.enum(['APPLIED', 'REVERTED']),
   deterministicHash: z.string()
 });
@@ -103,6 +110,9 @@ export interface EvaluationInput {
   subtaskResults?: SubtaskResult[];
   operationalConfidence?: number;
   conceptCount?: number;
+  knowledgeCount?: number;
+  reliabilityScore?: number;
+  resourceScore?: number;
   weights?: Partial<FitnessWeights>;
   timestamp?: string;
   metadata?: Record<string, unknown>;

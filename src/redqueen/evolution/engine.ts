@@ -87,23 +87,70 @@ export class EvolutionEngine {
     const genome = activeCell.genome;
     const cogState = activeCell.cognitiveState ? activeCell.cognitiveState.getState() : null;
 
-    // 1. Cognitive Fitness [0.0, 1.0]
-    // Considers operational confidence and verified conceptual representations
+    // 1. computationPerformance [0.0, 1.0]
+    let computationPerformance = 0.5; // neutral default
+    if (input?.subtaskResults && input.subtaskResults.length > 0) {
+      let completed = 0;
+      let total = 0;
+      for (const res of input.subtaskResults) {
+        if (res.status === ComputationStatus.COMPLETED) {
+          completed += 1;
+          total += 1;
+        } else if (res.status === ComputationStatus.FAILED) {
+          total += 1;
+        }
+      }
+      computationPerformance = total > 0 ? round4(clamp(completed / total)) : 0.5;
+    } else if (input?.computationTasks && input.computationTasks.length > 0) {
+      let completed = 0;
+      let total = 0;
+      for (const task of input.computationTasks) {
+        const st = 'status' in task ? (task as any).status : undefined;
+        if (st === ComputationStatus.COMPLETED || st === 'COMPLETED') {
+          completed += 1;
+          total += 1;
+        } else if (st === ComputationStatus.FAILED || st === 'FAILED') {
+          total += 1;
+        }
+      }
+      computationPerformance = total > 0 ? round4(clamp(completed / total)) : 0.5;
+    } else if (activeCell.collectiveComputation) {
+      const cap = activeCell.collectiveComputation.getCellComputeCapacity(activeCell);
+      const availScore = cap.availability;
+      const parallelismScore = clamp(cap.parallelism / 5.0);
+      computationPerformance = round4(clamp(availScore * 0.6 + parallelismScore * 0.4));
+    }
+
+    // 2. reliability [0.0, 1.0]
+    let reliability = 0.5;
+    if (typeof input?.reliabilityScore === 'number') {
+      reliability = clamp(input.reliabilityScore);
+    } else if (activeCell.verification) {
+      reliability = 0.8; // Baseline for having verification engine
+    }
+
+    // 3. cognitiveContribution [0.0, 1.0]
     const opConfidence = typeof input?.operationalConfidence === 'number'
       ? clamp(input.operationalConfidence)
       : clamp(cogState?.operationalConfidence ?? 1.0);
+    const cognitiveContribution = round4(clamp(opConfidence));
 
+    // 4. knowledgeContribution [0.0, 1.0]
     const conceptCount = typeof input?.conceptCount === 'number'
       ? input.conceptCount
       : (activeCell.cognitiveGraph ? activeCell.cognitiveGraph.getAllConcepts().length : (cogState?.knowledgeReferences.length ?? 0));
+    const knowledgeCount = typeof input?.knowledgeCount === 'number' ? input.knowledgeCount : conceptCount; // Fallback to concepts
+    const knowledgeContribution = round4(clamp(knowledgeCount / 20.0));
 
-    // Smooth saturation for conceptual richness: 10 concepts = 1.0
-    const conceptScore = clamp(conceptCount / 10.0);
-    const cognitive = round4(clamp(opConfidence * 0.7 + conceptScore * 0.3));
+    // 5. specialization [0.0, 1.0]
+    let specializationScore = 0.5;
+    if (genome.specialization) {
+      specializationScore = 0.8; // Has a specialization
+    }
+    const specialization = specializationScore;
 
-    // 2. Metabolic Fitness [0.0, 1.0]
-    // Considers transaction outcomes (ACCEPTED vs REJECTED/FAILED)
-    let metabolic = 0.8; // Default baseline for new Cell
+    // 6. experience [0.0, 1.0]
+    let experience = 0.5; // neutral default
     if (input?.experiences && input.experiences.length > 0) {
       let positive = 0;
       let total = 0;
@@ -119,64 +166,26 @@ export class EvolutionEngine {
           total += 1;
         }
       }
-      metabolic = total > 0 ? round4(clamp(positive / total)) : 0.8;
+      experience = total > 0 ? round4(clamp(positive / total)) : 0.5;
     }
 
-    // 3. Computational Fitness [0.0, 1.0]
-    // Considers task/subtask completion if provided, or derived compute capacity
-    let computational = 0.8; // Default baseline for new Cell
-    if (input?.subtaskResults && input.subtaskResults.length > 0) {
-      let completed = 0;
-      let total = 0;
-      for (const res of input.subtaskResults) {
-        if (res.status === ComputationStatus.COMPLETED) {
-          completed += 1;
-          total += 1;
-        } else if (res.status === ComputationStatus.FAILED) {
-          total += 1;
-        }
-      }
-      computational = total > 0 ? round4(clamp(completed / total)) : 0.8;
-    } else if (input?.computationTasks && input.computationTasks.length > 0) {
-      let completed = 0;
-      let total = 0;
-      for (const task of input.computationTasks) {
-        const st = 'status' in task ? (task as any).status : undefined;
-        if (st === ComputationStatus.COMPLETED || st === 'COMPLETED') {
-          completed += 1;
-          total += 1;
-        } else if (st === ComputationStatus.FAILED || st === 'FAILED') {
-          total += 1;
-        }
-      }
-      computational = total > 0 ? round4(clamp(completed / total)) : 0.8;
+    // 7. resourceEfficiency [0.0, 1.0]
+    let resourceEfficiency = 0.5;
+    if (typeof input?.resourceScore === 'number') {
+      resourceEfficiency = clamp(input.resourceScore);
     } else if (activeCell.collectiveComputation) {
       const cap = activeCell.collectiveComputation.getCellComputeCapacity(activeCell);
-      const availScore = cap.availability;
-      const parallelismScore = clamp(cap.parallelism / 5.0);
-      computational = round4(clamp(availScore * 0.6 + parallelismScore * 0.4));
+      resourceEfficiency = round4(clamp(cap.availability));
     }
 
-    // 4. Adaptability / Trait Alignment Fitness [0.0, 1.0]
-    // Evaluates balance of cognitive traits (exploration/exploitation balance, risk, cycle depth)
-    const traits = genome.traits;
-    const balanceScore = 1.0 - 2.0 * Math.abs(traits.explorationVsExploitation - 0.5); // optimal at 0.5
-    const riskScore = traits.riskTolerance; // [0.0, 1.0]
-    const mutationRateScore = 1.0 - Math.min(1.0, Math.abs(traits.mutationRate - 0.05) * 5.0); // optimal around 0.05
-    const depthScore = Math.min(1.0, traits.maxCognitiveCycleDepth / 5.0); // optimal around 5
-
-    const adaptability = round4(clamp(
-      balanceScore * 0.35 +
-      riskScore * 0.25 +
-      mutationRateScore * 0.20 +
-      depthScore * 0.20
-    ));
-
     const components: FitnessComponents = {
-      cognitive,
-      metabolic,
-      computational,
-      adaptability
+      computationPerformance,
+      reliability,
+      cognitiveContribution,
+      knowledgeContribution,
+      specialization,
+      experience,
+      resourceEfficiency
     };
 
     // Parse and validate components schema
@@ -184,26 +193,35 @@ export class EvolutionEngine {
 
     // Parse and normalize weights
     const rawWeights = {
-      cognitive: 0.3,
-      metabolic: 0.25,
-      computational: 0.25,
-      adaptability: 0.2,
+      computationPerformance: 0.15,
+      reliability: 0.15,
+      cognitiveContribution: 0.15,
+      knowledgeContribution: 0.15,
+      specialization: 0.10,
+      experience: 0.15,
+      resourceEfficiency: 0.15,
       ...input?.weights
     };
-    const sumWeights = rawWeights.cognitive + rawWeights.metabolic + rawWeights.computational + rawWeights.adaptability;
+    const sumWeights = Object.values(rawWeights).reduce((a, b) => a + b, 0);
     const weights: FitnessWeights = {
-      cognitive: rawWeights.cognitive / sumWeights,
-      metabolic: rawWeights.metabolic / sumWeights,
-      computational: rawWeights.computational / sumWeights,
-      adaptability: rawWeights.adaptability / sumWeights
+      computationPerformance: rawWeights.computationPerformance / sumWeights,
+      reliability: rawWeights.reliability / sumWeights,
+      cognitiveContribution: rawWeights.cognitiveContribution / sumWeights,
+      knowledgeContribution: rawWeights.knowledgeContribution / sumWeights,
+      specialization: rawWeights.specialization / sumWeights,
+      experience: rawWeights.experience / sumWeights,
+      resourceEfficiency: rawWeights.resourceEfficiency / sumWeights
     };
     FitnessWeightsSchema.parse(weights);
 
     const overallFitness = round4(clamp(
-      components.cognitive * weights.cognitive +
-      components.metabolic * weights.metabolic +
-      components.computational * weights.computational +
-      components.adaptability * weights.adaptability
+      components.computationPerformance * weights.computationPerformance +
+      components.reliability * weights.reliability +
+      components.cognitiveContribution * weights.cognitiveContribution +
+      components.knowledgeContribution * weights.knowledgeContribution +
+      components.specialization * weights.specialization +
+      components.experience * weights.experience +
+      components.resourceEfficiency * weights.resourceEfficiency
     ));
 
     const evaluatedAt = input?.timestamp ?? genome.createdAt;
@@ -213,8 +231,7 @@ export class EvolutionEngine {
       genomeId: genome.genomeId,
       generation: genome.generation,
       components,
-      overallFitness,
-      evaluatedAt
+      overallFitness
     });
 
     const state: FitnessState = {
@@ -490,6 +507,9 @@ export class EvolutionEngine {
       timestamp
     });
 
+    // Save pre-mutation genome to snapshots for rollback
+    this.genomeSnapshots.set(activeCell.genome.genomeId, activeCell.genome);
+
     // 2. Compute deterministic mutation
     const { mutations, evolvedGenome } = this.mutate({
       seed: options.seed,
@@ -520,6 +540,7 @@ export class EvolutionEngine {
       currentFitness,
       mutations,
       timestamp,
+      provenance: [activeCell.nodeId, previousFitness.genomeId, evolvedGenome.genomeId],
       status: EvolutionEventStatus.APPLIED
     };
 
