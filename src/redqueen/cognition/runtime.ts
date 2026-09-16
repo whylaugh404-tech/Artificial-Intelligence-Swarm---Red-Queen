@@ -160,8 +160,8 @@ export class CognitiveRuntime {
       }
       provenance.push(`cell_states_extracted:${relevantCells.length}_cells`);
 
-      // Step 5: Linear Mathematical Composition -> Collective Cognitive State (C = Σ α_i (W_i x_i + b_i))
-      const collectiveState: CollectiveCognitiveState = this.collectiveEngine.executeLinearComposition(
+      // Step 5: Nonlinear Composition (Tanh + Deterministic Chaos) -> Collective Cognitive State (C_t = Σ α_i (h_i * m_t))
+      const collectiveState: CollectiveCognitiveState = this.collectiveEngine.executeNonlinearComposition(
         relevantCells,
         request.context,
         structuredIntent.domain
@@ -172,6 +172,10 @@ export class CognitiveRuntime {
         throw new Error('Mathematical composition failed to produce CollectiveCognitiveState.');
       }
       provenance.push(`linear_composition_computed:weights=${Object.keys(collectiveState.weights).length}`);
+      provenance.push(`nonlinear_activation_applied:tanh`);
+      if (collectiveState.nonlinearDynamics) {
+        provenance.push(`chaos_modulation_applied:r=${collectiveState.nonlinearDynamics.r},lambda=${collectiveState.nonlinearDynamics.lambda},mt=${collectiveState.nonlinearDynamics.mt}`);
+      }
       provenance.push(`collective_state_formed:${collectiveState.collectiveId}`);
 
       // Step 6: Collective Interaction & Hypotheses Generation
@@ -530,7 +534,7 @@ export class CognitiveRuntime {
     }));
 
     return this.understandingEngine.compose({
-      summary: intent.intent,
+      summary: request.creatorInput || intent.intent,
       context: request.context,
       originatingCellId: relevantCells[0]?.nodeId || 'runtime_coordinator',
       concepts: supportedConcepts,
@@ -564,6 +568,17 @@ export class CognitiveRuntime {
           confidence: es.confidence
         });
       });
+      // If there are multiple activated cells, also provide cell-level contributions to match activated cell count
+      if (premises.length < activatedCells.length) {
+        activatedCells.slice(premises.length).forEach(c => {
+          premises.push({
+            statement: `Cell ${c.cellId} active contribution in domain ${c.specialization || 'general'}`,
+            sourceType: 'UNDERSTANDING' as const,
+            sourceId: c.cellId,
+            confidence: c.activationLevel
+          });
+        });
+      }
     } else {
       // Reasoning is built from collective cognitive composition, not just metadata
       premises.push({

@@ -12,3 +12,5 @@ export * from './ai-provider';
 export * from './runtime';
 export * from './collective';
 export * from './types';
+export * from './activation';
+export * from './chaos';

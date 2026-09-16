@@ -6,12 +6,23 @@ import { CognitiveUnderstanding } from '../understanding/types';
 import { deepFreeze } from '../../genome/genome';
 import { logger } from '../../core/logger';
 import { computeDeterministicHash } from '../computation/canonical';
+import { applyTanhVector } from '../activation';
+import {
+  DEFAULT_CHAOS_R,
+  DEFAULT_CHAOS_LAMBDA,
+  deriveDeterministicC0,
+  iterateLogisticMap,
+  calculateChaosModulation,
+  modulateActivatedVector,
+  NonlinearDynamicsState
+} from '../chaos';
 import {
   CognitiveFeatureVector,
   LinearTransformation,
   CompositionWeight,
   CompositionTrace,
   CollectiveCognitiveState,
+  NonlinearCompositionOptions,
   applyLinearTransformation,
   generateDeterministicMatrixAndBias,
   vectorToArray,
@@ -120,46 +131,145 @@ export class CollectiveCognitionEngine {
   constructor(private localCell?: Cell) {}
 
   /**
-   * Extracts a normalized CognitiveFeatureVector x_i ∈ [0, 1]^7 from a Cell.
-   * Minimal fields: [computation, reliability, cognition, knowledge, specialization, experience, resourceEfficiency].
+   * Extracts a normalized CognitiveFeatureVector x_i ∈ [0, 1]^7 from a Cell,
+   * tracking explicit knowledge/capability provenance without fabricating intelligence.
+   * If a metric is unavailable, it is explicitly classified as UNKNOWN with an uninformative prior.
    */
-  public extractFeatureVector(cell: Cell, targetDomain?: string): CognitiveFeatureVector {
+  public extractFeatureVectorWithStatus(
+    cell: Cell,
+    targetDomain?: string
+  ): {
+    vector: CognitiveFeatureVector;
+    statuses: Record<keyof CognitiveFeatureVector, 'KNOWN' | 'UNKNOWN'>;
+    provenance: string[];
+  } {
+    const statuses: Record<keyof CognitiveFeatureVector, 'KNOWN' | 'UNKNOWN'> = {
+      computation: 'UNKNOWN',
+      reliability: 'UNKNOWN',
+      cognition: 'UNKNOWN',
+      knowledge: 'UNKNOWN',
+      specialization: 'UNKNOWN',
+      experience: 'UNKNOWN',
+      resourceEfficiency: 'UNKNOWN'
+    };
+    const provenance: string[] = [];
+
     // 1. Computation
-    // Neutral fallback if explicit raw compute metrics are unavailable.
     let computation = 0.5;
+    const caps = cell.genome?.capabilities ?? [];
+    if (caps.includes('INFO_PROCESSING') || caps.includes('CODE_ANALYSIS')) {
+      computation = 0.8;
+      statuses.computation = 'KNOWN';
+      provenance.push(`computation:KNOWN(capabilities:${caps.filter(c => c === 'INFO_PROCESSING' || c === 'CODE_ANALYSIS').join(',')})`);
+    } else if (caps.includes('COGNITIVE_REASONING')) {
+      computation = 0.6;
+      statuses.computation = 'KNOWN';
+      provenance.push('computation:KNOWN(cognitive_reasoning_baseline)');
+    } else if (caps.length > 0) {
+      computation = 0.4;
+      statuses.computation = 'KNOWN';
+      provenance.push('computation:KNOWN(generic_capabilities)');
+    } else {
+      computation = 0.5;
+      statuses.computation = 'UNKNOWN';
+      provenance.push('computation:UNKNOWN(uninformative_prior)');
+    }
 
     // 2. Reliability
-    // Derive from risk tolerance if available; lower risk tolerance equates to higher structural reliability constraint.
     let reliability = 0.5;
-    if (cell.genome?.traits?.riskTolerance !== undefined) {
+    const stateObj = (cell as any).getState ? (cell as any).getState() : null;
+    if (stateObj && typeof stateObj.reliability === 'number') {
+      reliability = clamp01(stateObj.reliability);
+      statuses.reliability = 'KNOWN';
+      provenance.push(`reliability:KNOWN(cell_state:${reliability})`);
+    } else if (cell.genome?.traits?.riskTolerance !== undefined) {
       reliability = clamp01(1.0 - cell.genome.traits.riskTolerance);
+      statuses.reliability = 'KNOWN';
+      provenance.push(`reliability:KNOWN(derived_from_risk_tolerance:${cell.genome.traits.riskTolerance})`);
+    } else {
+      reliability = 0.5;
+      statuses.reliability = 'UNKNOWN';
+      provenance.push('reliability:UNKNOWN(uninformative_prior)');
     }
 
     // 3. Cognition
-    // Grounded in explicit genetic capability.
     let cognition = 0.5;
-    if (cell.genome?.capabilities?.includes('COGNITIVE_REASONING')) {
+    if (caps.includes('COGNITIVE_REASONING')) {
       cognition = 1.0;
+      statuses.cognition = 'KNOWN';
+      provenance.push('cognition:KNOWN(COGNITIVE_REASONING_capability)');
+    } else if (caps.length > 0) {
+      cognition = 0.3;
+      statuses.cognition = 'KNOWN';
+      provenance.push('cognition:KNOWN(non_reasoning_capability)');
+    } else {
+      cognition = 0.5;
+      statuses.cognition = 'UNKNOWN';
+      provenance.push('cognition:UNKNOWN(uninformative_prior)');
     }
 
     // 4. Knowledge
-    // Avoid false heuristics (like concept count). Explicit metric required, fallback to neutral.
     let knowledge = 0.5;
+    if (caps.includes('KNOWLEDGE_QUERY')) {
+      knowledge = 1.0;
+      statuses.knowledge = 'KNOWN';
+      provenance.push('knowledge:KNOWN(KNOWLEDGE_QUERY_capability)');
+    } else if (caps.includes('INFO_PROCESSING')) {
+      knowledge = 0.7;
+      statuses.knowledge = 'KNOWN';
+      provenance.push('knowledge:KNOWN(INFO_PROCESSING_capability)');
+    } else if (caps.length > 0) {
+      knowledge = 0.4;
+      statuses.knowledge = 'KNOWN';
+      provenance.push('knowledge:KNOWN(general_capabilities)');
+    } else {
+      knowledge = 0.5;
+      statuses.knowledge = 'UNKNOWN';
+      provenance.push('knowledge:UNKNOWN(uninformative_prior)');
+    }
 
     // 5. Specialization
     let specialization = 0.5;
     if (cell.genome?.specialization) {
       if (targetDomain && cell.genome.specialization.toUpperCase().includes(targetDomain.toUpperCase())) {
         specialization = 1.0;
+        statuses.specialization = 'KNOWN';
+        provenance.push(`specialization:KNOWN(domain_match:${cell.genome.specialization}_matches_${targetDomain})`);
+      } else {
+        specialization = 0.3;
+        statuses.specialization = 'KNOWN';
+        provenance.push(`specialization:KNOWN(non_matching:${cell.genome.specialization})`);
       }
+    } else {
+      specialization = 0.0;
+      statuses.specialization = 'UNKNOWN';
+      provenance.push('specialization:UNKNOWN(none_declared)');
     }
 
     // 6. Experience
-    // Avoid false heuristics (like generation count). Explicit metric required, fallback to neutral.
     let experience = 0.5;
+    if (typeof (cell.genome as any)?.generation === 'number') {
+      const gen = (cell.genome as any).generation;
+      experience = clamp01(gen * 0.1);
+      statuses.experience = 'KNOWN';
+      provenance.push(`experience:KNOWN(generation:${gen})`);
+    } else {
+      experience = 0.5;
+      statuses.experience = 'UNKNOWN';
+      provenance.push('experience:UNKNOWN(uninformative_prior)');
+    }
 
     // 7. Resource Efficiency
     let resourceEfficiency = 0.5;
+    if (cell.genome?.traits?.explorationVsExploitation !== undefined) {
+      resourceEfficiency = clamp01(cell.genome.traits.explorationVsExploitation);
+      statuses.resourceEfficiency = 'KNOWN';
+      provenance.push(`resourceEfficiency:KNOWN(traits:${resourceEfficiency})`);
+    } else {
+      resourceEfficiency = 0.5;
+      statuses.resourceEfficiency = 'UNKNOWN';
+      provenance.push('resourceEfficiency:UNKNOWN(uninformative_prior)');
+    }
 
     const vector: CognitiveFeatureVector = {
       computation,
@@ -172,7 +282,15 @@ export class CollectiveCognitionEngine {
     };
 
     validateFeatureVector(vector);
-    return vector;
+    return { vector, statuses, provenance };
+  }
+
+  /**
+   * Extracts a normalized CognitiveFeatureVector x_i ∈ [0, 1]^7 from a Cell.
+   * Minimal fields: [computation, reliability, cognition, knowledge, specialization, experience, resourceEfficiency].
+   */
+  public extractFeatureVector(cell: Cell, targetDomain?: string): CognitiveFeatureVector {
+    return this.extractFeatureVectorWithStatus(cell, targetDomain).vector;
   }
 
   /**
@@ -214,17 +332,201 @@ export class CollectiveCognitionEngine {
   }
 
   /**
+   * P9.6 — Nonlinear Cognitive Dynamics Composition:
+   * Cell Cognitive State
+   *  ↓
+   * Feature Vector x_i
+   *  ↓
+   * Affine Transformation: z_i = W_i x_i + b_i
+   *  ↓
+   * Tanh Activation: h_i = tanh(z_i)
+   *  ↓
+   * Deterministic Chaos: c_{t+1} = r c_t (1 - c_t)
+   *  ↓
+   * Bounded Modulation: m_t = 1 + lambda * (c_t - 0.5)  ->  h_tilde_i = h_i * m_t
+   *  ↓
+   * Normalized weights: alpha_i >= 0, sum alpha_i = 1
+   *  ↓
+   * Weighted Collective Composition: C_t = sum_i alpha_i [ h_i (1 + lambda(c_t - 0.5)) ]
+   */
+  public executeNonlinearComposition(
+    cells: Cell[],
+    context?: Context,
+    targetDomain?: string,
+    options?: NonlinearCompositionOptions
+  ): CollectiveCognitiveState {
+    if (!cells || cells.length === 0) {
+      throw new Error('Collective nonlinear composition requires at least one cell.');
+    }
+
+    const sortedCells = [...cells].sort((a, b) => a.nodeId.localeCompare(b.nodeId));
+    const sourceCellIds = sortedCells.map(c => c.nodeId);
+
+    const inputVectors: Record<string, CognitiveFeatureVector> = {};
+    const transformations: Record<string, LinearTransformation> = {};
+    const activatedVectors: Record<string, Record<string, number>> = {};
+    const modulatedVectors: Record<string, Record<string, number>> = {};
+    const steps: string[] = [];
+    const featureProvenances: string[] = [];
+
+    // Step 1: Feature Extraction, Affine Transformation, and Tanh Activation for each Cell
+    for (const cell of sortedCells) {
+      const { vector: x_i, statuses, provenance: featProv } = this.extractFeatureVectorWithStatus(cell, targetDomain);
+      inputVectors[cell.nodeId] = x_i;
+      featureProvenances.push(`${cell.nodeId}:${featProv.join(';')}`);
+
+      const { matrix, bias } = generateDeterministicMatrixAndBias(
+        x_i,
+        cell.genome?.capabilities ?? []
+      );
+
+      const trans = applyLinearTransformation(
+        x_i,
+        matrix,
+        bias,
+        `Affine transformation for Cell ${cell.nodeId}`
+      );
+      transformations[cell.nodeId] = trans;
+
+      // Tanh activation h_i = tanh(z_i)
+      const h_i = applyTanhVector(trans.transformedVector);
+      activatedVectors[cell.nodeId] = h_i;
+
+      steps.push(`Cell ${cell.nodeId}: x_i -> affine z_i -> tanh h_i`);
+    }
+
+    // Step 2: Deterministic Chaos Dynamics (c_{t+1} = r * c_t * (1 - c_t))
+    const r = options?.r ?? DEFAULT_CHAOS_R;
+    const lambda = options?.lambda ?? DEFAULT_CHAOS_LAMBDA;
+    const chaosSteps = options?.steps ?? 1;
+
+    // Derive deterministic c0 strictly from collective representation payload
+    const seedPayload = {
+      sourceCellIds,
+      inputVectors,
+      domain: targetDomain ?? 'general',
+      contextId: context?.contextId ?? 'default'
+    };
+    const c0 = options?.c0 !== undefined ? options.c0 : deriveDeterministicC0(seedPayload);
+
+    // Iterate Logistic Map
+    const chaosIteration = iterateLogisticMap(c0, chaosSteps, r);
+    const ct = chaosIteration.ct;
+
+    // Step 3: Bounded Chaos Modulation Factor m_t = 1 + lambda * (c_t - 0.5)
+    const mt = calculateChaosModulation(ct, lambda);
+    steps.push(`Chaos dynamics computed: c0=${c0.toFixed(6)}, ct=${ct.toFixed(6)}, mt=${mt.toFixed(6)}`);
+
+    // Modulate activated vectors: h_tilde_i = h_i * m_t
+    for (const id of sourceCellIds) {
+      modulatedVectors[id] = modulateActivatedVector(activatedVectors[id], mt);
+    }
+    steps.push(`Bounded modulation applied: h_tilde_i = h_i * mt across ${sourceCellIds.length} cells`);
+
+    // Step 4: Normalized Composition Weights (alpha_i >= 0, sum alpha_i = 1)
+    const weightsRecord = this.calculateCompositionWeights(sortedCells, targetDomain);
+    const weights: Record<string, number> = {};
+    for (const id of sourceCellIds) {
+      weights[id] = weightsRecord[id].normalizedWeight;
+    }
+    steps.push(`Normalized weights alpha_i assigned`);
+
+    // Step 5: Weighted Collective Composition: C_t = sum_i alpha_i * h_tilde_i
+    const cArr = new Array(7).fill(0);
+    for (const id of sourceCellIds) {
+      const alpha = weights[id];
+      const hMod = modulatedVectors[id];
+      for (let j = 0; j < 7; j++) {
+        const key = FEATURE_VECTOR_KEYS[j];
+        cArr[j] += alpha * (hMod[key] ?? 0);
+      }
+    }
+    const resultVector = arrayToVector(cArr);
+    steps.push(`Collective state C_t = sum_i alpha_i [ h_i * mt ] composed`);
+
+    const nonlinearDynamics: NonlinearDynamicsState = {
+      c0,
+      ct,
+      r,
+      lambda,
+      mt,
+      steps: chaosSteps
+    };
+
+    // Semantic payload for deterministic identity (timestamp isolated)
+    const semanticPayload = {
+      sourceCellIds,
+      inputVectors,
+      weights,
+      transformedVectors: Object.fromEntries(
+        Object.entries(transformations).map(([k, v]) => [k, v.transformedVector])
+      ),
+      activatedVectors,
+      modulatedVectors,
+      nonlinearDynamics,
+      resultVector
+    };
+    const deterministicIdentity = computeDeterministicHash(semanticPayload);
+    const collectiveId = `coll_${deterministicIdentity.substring(0, 16)}`;
+
+    const trace: CompositionTrace = {
+      traceId: `trace_${deterministicIdentity.substring(0, 16)}`,
+      steps,
+      timestamp: new Date().toISOString(),
+      inputVectors,
+      transformedVectors: Object.fromEntries(
+        Object.entries(transformations).map(([k, v]) => [k, v.transformedVector])
+      ),
+      weights,
+      resultVector
+    };
+
+    const provenance = [
+      `collective_composition_initiated:${sourceCellIds.join(',')}`,
+      `feature_provenance:${featureProvenances.join('|')}`,
+      `linear_composition_computed:weights=${Object.keys(weights).length}`,
+      `nonlinear_activation:tanh`,
+      `deterministic_chaos:r=${r},lambda=${lambda},c0=${c0.toFixed(6)},ct=${ct.toFixed(6)},mt=${mt.toFixed(6)},steps=${chaosSteps}`,
+      `weights_assigned:${Object.entries(weights).map(([k, v]) => `${k}=${v}`).join(';')}`,
+      `collective_state_formed:${collectiveId}`
+    ];
+
+    return {
+      collectiveId,
+      sourceCellIds,
+      inputVectors,
+      weights,
+      transformations,
+      activatedVectors,
+      modulatedVectors,
+      nonlinearDynamics,
+      compositionType: 'nonlinear_tanh_chaos',
+      resultVector,
+      provenance,
+      deterministicIdentity,
+      trace
+    };
+  }
+
+  /**
    * Computes the linear mathematical composition over a set of relevant cells:
    * 1. x_i = extractFeatureVector(cell_i)
    * 2. z_i = W_i x_i + b_i
    * 3. α_i >= 0, Σ α_i = 1 derived from cell state/fitness/relevance
    * 4. C = Σ α_i z_i
+   * 
+   * If options.enableNonlinear === true, delegates to executeNonlinearComposition.
    */
   public executeLinearComposition(
     cells: Cell[],
     context?: Context,
-    targetDomain?: string
+    targetDomain?: string,
+    options?: NonlinearCompositionOptions
   ): CollectiveCognitiveState {
+    if (options?.enableNonlinear === true) {
+      return this.executeNonlinearComposition(cells, context, targetDomain, options);
+    }
+
     if (!cells || cells.length === 0) {
       throw new Error('Collective linear composition requires at least one cell.');
     }

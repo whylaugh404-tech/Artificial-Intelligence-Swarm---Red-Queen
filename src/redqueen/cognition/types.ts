@@ -52,12 +52,27 @@ export const CompositionTraceSchema = z.object({
 
 export type CompositionTrace = z.infer<typeof CompositionTraceSchema>;
 
+export const NonlinearDynamicsSchema = z.object({
+  c0: z.number().min(0.0).max(1.0),
+  ct: z.number().min(0.0).max(1.0),
+  r: z.number().min(3.57).max(4.0),
+  lambda: z.number().min(0.0).max(0.2),
+  mt: z.number().positive(),
+  steps: z.number().int().nonnegative()
+});
+
+export type NonlinearDynamics = z.infer<typeof NonlinearDynamicsSchema>;
+
 export const CollectiveCognitiveStateSchema = z.object({
   collectiveId: z.string().min(1),
   sourceCellIds: z.array(z.string()).min(1),
   inputVectors: z.record(z.string(), CognitiveFeatureVectorSchema),
   weights: z.record(z.string(), z.number()),
   transformations: z.record(z.string(), LinearTransformationSchema),
+  activatedVectors: z.record(z.string(), z.record(z.string(), z.number())).optional(),
+  modulatedVectors: z.record(z.string(), z.record(z.string(), z.number())).optional(),
+  nonlinearDynamics: NonlinearDynamicsSchema.optional(),
+  compositionType: z.enum(['linear', 'nonlinear_tanh_chaos']).optional(),
   resultVector: CognitiveFeatureVectorSchema,
   provenance: z.array(z.string()),
   deterministicIdentity: z.string().min(1),
@@ -66,6 +81,14 @@ export const CollectiveCognitiveStateSchema = z.object({
 });
 
 export type CollectiveCognitiveState = z.infer<typeof CollectiveCognitiveStateSchema>;
+
+export interface NonlinearCompositionOptions {
+  enableNonlinear?: boolean;
+  r?: number;
+  lambda?: number;
+  steps?: number;
+  c0?: number;
+}
 
 /**
  * Clamps and validates a finite number into [0, 1].
