@@ -20,8 +20,11 @@ import {
   CognitiveFeatureVector,
   LinearTransformation,
   generateDeterministicMatrixAndBias,
-  applyLinearTransformation
+  applyLinearTransformation,
+  getEpistemicMask,
+  getEpistemicMaskRecord
 } from '../src/redqueen/cognition/types';
+import { calculateEmergenceMetrics } from '../src/redqueen/cognition/collective/emergence';
 
 describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Deterministic Chaos', () => {
   let engine: CollectiveCognitionEngine;
@@ -426,7 +429,7 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
 
       const { vector, statuses, provenance } = engine.extractFeatureVectorWithStatus(cellEmpty);
 
-      // Section 2A: No heuristic 0.5 prior! Unknown is explicitly 0.0 and UNKNOWN.
+      // Section 2A: No heuristic 0.5 prior! Unknown is explicitly undefined and UNKNOWN.
       expect(statuses.computation).toBe('UNKNOWN');
       expect(statuses.reliability).toBe('UNKNOWN');
       expect(statuses.cognition).toBe('UNKNOWN');
@@ -435,13 +438,13 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
       expect(statuses.experience).toBe('UNKNOWN');
       expect(statuses.resourceEfficiency).toBe('UNKNOWN');
 
-      expect(vector.computation).toBe(0.0);
-      expect(vector.reliability).toBe(0.0);
-      expect(vector.cognition).toBe(0.0);
-      expect(vector.knowledge).toBe(0.0);
-      expect(vector.specialization).toBe(0.0);
-      expect(vector.experience).toBe(0.0);
-      expect(vector.resourceEfficiency).toBe(0.0);
+      expect(vector.computation).toBeUndefined();
+      expect(vector.reliability).toBeUndefined();
+      expect(vector.cognition).toBeUndefined();
+      expect(vector.knowledge).toBeUndefined();
+      expect(vector.specialization).toBeUndefined();
+      expect(vector.experience).toBeUndefined();
+      expect(vector.resourceEfficiency).toBeUndefined();
 
       expect(provenance.some(p => p.includes('computation:UNKNOWN(no_actual_state)'))).toBe(true);
       expect(provenance.some(p => p.includes('cognition:UNKNOWN(no_actual_state)'))).toBe(true);
@@ -475,13 +478,13 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
 
       const { vector, statuses, provenance } = engine.extractFeatureVectorWithStatus(cellWithRealState, 'quantum');
 
-      expect(statuses.computation).toBe('KNOWN');
-      expect(statuses.reliability).toBe('KNOWN');
-      expect(statuses.cognition).toBe('KNOWN');
-      expect(statuses.knowledge).toBe('KNOWN');
-      expect(statuses.specialization).toBe('KNOWN');
-      expect(statuses.experience).toBe('KNOWN');
-      expect(statuses.resourceEfficiency).toBe('KNOWN');
+      expect(statuses.computation).toBe('KNOWN_VALUE');
+      expect(statuses.reliability).toBe('KNOWN_VALUE');
+      expect(statuses.cognition).toBe('KNOWN_VALUE');
+      expect(statuses.knowledge).toBe('KNOWN_VALUE');
+      expect(statuses.specialization).toBe('KNOWN_VALUE');
+      expect(statuses.experience).toBe('KNOWN_VALUE');
+      expect(statuses.resourceEfficiency).toBe('KNOWN_VALUE');
 
       expect(vector.computation).toBe(0.85);
       expect(vector.reliability).toBe(0.95);
@@ -491,8 +494,8 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
       expect(vector.experience).toBe(0.60);
       expect(vector.resourceEfficiency).toBe(0.80);
 
-      expect(provenance.some(p => p.includes('computation:KNOWN(cell_state:0.85)'))).toBe(true);
-      expect(provenance.some(p => p.includes('specialization:KNOWN(domain_match:QUANTUM_COMPUTING_matches_quantum)'))).toBe(true);
+      expect(provenance.some(p => p.includes('computation:KNOWN_VALUE(cell_state:0.85)'))).toBe(true);
+      expect(provenance.some(p => p.includes('specialization:KNOWN_VALUE(domain_match:QUANTUM_COMPUTING_matches_quantum)'))).toBe(true);
     });
 
     it('perubahan metadata tidak mengubah cognitive feature secara palsu jika actual state tidak berubah', () => {
@@ -528,9 +531,9 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
       // Computation and reliability come strictly from baseCellState
       expect(feat1.vector.computation).toBe(feat2.vector.computation);
       expect(feat1.vector.reliability).toBe(feat2.vector.reliability);
-      // Cognition is NOT fabricated from capabilities
-      expect(feat1.vector.cognition).toBe(0.0);
-      expect(feat2.vector.cognition).toBe(0.0);
+      // Cognition is NOT fabricated from capabilities, remains undefined and UNKNOWN
+      expect(feat1.vector.cognition).toBeUndefined();
+      expect(feat2.vector.cognition).toBeUndefined();
       expect(feat1.statuses.cognition).toBe('UNKNOWN');
       expect(feat2.statuses.cognition).toBe('UNKNOWN');
     });
@@ -599,9 +602,9 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
       expect(result.featureDetails![cellAlpha.nodeId]).toBeDefined();
       const alphaDetails = result.featureDetails![cellAlpha.nodeId];
 
-      expect(alphaDetails.reliability.status).toBe('KNOWN');
+      expect(alphaDetails.reliability.status).toBe('KNOWN_VALUE');
       expect(alphaDetails.reliability.provenance).toContain('reliability:');
-      expect(alphaDetails.specialization.status).toBe('KNOWN');
+      expect(alphaDetails.specialization.status).toBe('KNOWN_VALUE');
       expect(alphaDetails.specialization.provenance).toContain('domain_match');
       expect(alphaDetails.computation.status).toBe('UNKNOWN');
       expect(alphaDetails.computation.provenance).toContain('computation:UNKNOWN');
@@ -676,6 +679,258 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
       const weights = engine.calculateCompositionWeights([cellNoFitness]);
       expect(weights['cell_no_fitness']).toBeDefined();
       expect(weights['cell_no_fitness'].normalizedWeight).toBe(1.0);
+    });
+  });
+
+  describe('7. P9.6.1 Precision Repairs: Epistemic Distinctions, Perturbation Stability & Strict Emergence Gates', () => {
+    it('membuktikan bahwa UNKNOWN !== KNOWN_ZERO secara epistemik dan representasional', () => {
+      const cellZero: Cell = {
+        nodeId: 'cell_zero_test',
+        lineageId: 'lin_1',
+        genome: { genomeId: 'g1', lineageId: 'lin_1' } as any,
+        getState: vi.fn().mockReturnValue({ computation: 0.0 }) // Known zero
+      } as any;
+
+      const cellMissing: Cell = {
+        nodeId: 'cell_missing_test',
+        lineageId: 'lin_1',
+        genome: { genomeId: 'g2', lineageId: 'lin_1' } as any,
+        getState: vi.fn().mockReturnValue({}) // No computation field at all
+      } as any;
+
+      const resZero = engine.extractFeatureVectorWithStatus(cellZero);
+      const resMissing = engine.extractFeatureVectorWithStatus(cellMissing);
+
+      // 1. Explicit distinction
+      expect(resZero.statuses.computation).toBe('KNOWN_ZERO');
+      expect(resZero.vector.computation).toBe(0.0);
+
+      expect(resMissing.statuses.computation).toBe('UNKNOWN');
+      expect(resMissing.vector.computation).toBeUndefined();
+
+      // 2. UNKNOWN must not equal KNOWN_ZERO
+      expect(resMissing.statuses.computation).not.toBe(resZero.statuses.computation);
+      expect(resMissing.vector.computation).not.toBe(resZero.vector.computation);
+
+      // 3. Epistemic mask validity
+      const maskZero = getEpistemicMaskRecord(resZero.vector);
+      const maskMissing = getEpistemicMaskRecord(resMissing.vector);
+
+      expect(maskZero.computation).toBe(true);
+      expect(maskMissing.computation).toBe(false);
+    });
+
+    it('membuktikan bahwa UNKNOWN tidak diperlakukan sebagai numeric zero dalam transformasi matematis', () => {
+      // Vector A has computation = 0.0 (KNOWN_ZERO), reliability = 0.8
+      const vecKnownZero: CognitiveFeatureVector = {
+        computation: 0.0,
+        reliability: 0.8,
+        cognition: 0.5,
+        knowledge: 0.5,
+        specialization: 0.5,
+        experience: 0.5,
+        resourceEfficiency: 0.5
+      };
+
+      // Vector B has computation = undefined (UNKNOWN), reliability = 0.8
+      const vecUnknown: CognitiveFeatureVector = {
+        computation: undefined,
+        reliability: 0.8,
+        cognition: 0.5,
+        knowledge: 0.5,
+        specialization: 0.5,
+        experience: 0.5,
+        resourceEfficiency: 0.5
+      };
+
+      const { matrix, bias } = generateDeterministicMatrixAndBias('quantum');
+
+      const transKnownZero = applyLinearTransformation(vecKnownZero, matrix, bias);
+      const transUnknown = applyLinearTransformation(vecUnknown, matrix, bias);
+
+      // In vecUnknown, computation is omitted from the valid dimension set and weights re-normalized over known features
+      // In vecKnownZero, computation enters the dot product as 0.0 with full 7-dim weighting
+      // Therefore transUnknown MUST NOT equal transKnownZero!
+      expect(transUnknown.transformedVector.computation).not.toEqual(transKnownZero.transformedVector.computation);
+      expect(transUnknown.transformedVector.reliability).not.toEqual(transKnownZero.transformedVector.reliability);
+    });
+
+    it('membuktikan stabilitas emergence berbasis perturbasi input riil (dual-pass sensitivity)', () => {
+      const { matrix, bias } = generateDeterministicMatrixAndBias('quantum');
+      const transformations: Record<string, LinearTransformation> = {
+        'cell_alpha_p96': {
+          dimension: 7,
+          matrix,
+          bias,
+          transformedVector: { computation: 0.7, reliability: 0.8, cognition: 0.75, knowledge: 0.6, specialization: 0.9, experience: 0.5, resourceEfficiency: 0.6 },
+          provenance: ['trans_alpha']
+        },
+        'cell_beta_p96': {
+          dimension: 7,
+          matrix,
+          bias,
+          transformedVector: { computation: 0.6, reliability: 0.7, cognition: 0.65, knowledge: 0.8, specialization: 0.7, experience: 0.6, resourceEfficiency: 0.7 },
+          provenance: ['trans_beta']
+        }
+      };
+
+      const baselineInput = {
+        'cell_alpha_p96': { computation: 0.7, reliability: 0.8, cognition: 0.75, knowledge: 0.6, specialization: 0.9, experience: 0.5, resourceEfficiency: 0.6 },
+        'cell_beta_p96': { computation: 0.6, reliability: 0.7, cognition: 0.65, knowledge: 0.8, specialization: 0.7, experience: 0.6, resourceEfficiency: 0.7 }
+      };
+
+      const weights = {
+        'cell_alpha_p96': 0.6,
+        'cell_beta_p96': 0.4
+      };
+
+      const resultVector = {
+        computation: 0.66,
+        reliability: 0.76,
+        cognition: 0.71,
+        knowledge: 0.68,
+        specialization: 0.82,
+        experience: 0.54,
+        resourceEfficiency: 0.64
+      };
+
+      const metrics = calculateEmergenceMetrics({
+        resultVector,
+        inputVectors: baselineInput,
+        weights,
+        transformations,
+        emergentStructuresCount: 1,
+        evidenceCount: 2,
+        hasEvidence: true
+      });
+
+      // Sensitivity and stability are derived from dual-pass perturbed execution
+      expect(metrics.sensitivity).toBeDefined();
+      expect(metrics.sensitivity).toBeGreaterThanOrEqual(0);
+      expect(metrics.stability).toBeCloseTo(1 / (1 + metrics.sensitivity!), 5);
+      expect(metrics.gates.isReproducible).toBe(true);
+    });
+
+    it('memverifikasi bahwa isEmergent adalah Strict Boolean Gate yang membutuhkan semua 7 kondisi', () => {
+      const { matrix, bias } = generateDeterministicMatrixAndBias('quantum');
+      const transformations: Record<string, LinearTransformation> = {
+        'cell_alpha_p96': {
+          dimension: 7,
+          matrix,
+          bias,
+          transformedVector: { computation: 0.8, reliability: 0.9, cognition: 0.85, knowledge: 0.7, specialization: 0.95, experience: 0.6, resourceEfficiency: 0.7 },
+          provenance: ['trans_alpha']
+        },
+        'cell_beta_p96': {
+          dimension: 7,
+          matrix,
+          bias,
+          transformedVector: { computation: 0.3, reliability: 0.4, cognition: 0.35, knowledge: 0.5, specialization: 0.4, experience: 0.5, resourceEfficiency: 0.4 },
+          provenance: ['trans_beta']
+        }
+      };
+
+      const baselineInput = {
+        'cell_alpha_p96': { computation: 0.8, reliability: 0.9, cognition: 0.85, knowledge: 0.7, specialization: 0.95, experience: 0.6, resourceEfficiency: 0.7 },
+        'cell_beta_p96': { computation: 0.3, reliability: 0.4, cognition: 0.35, knowledge: 0.5, specialization: 0.4, experience: 0.5, resourceEfficiency: 0.4 }
+      };
+
+      const weights = {
+        'cell_alpha_p96': 0.5,
+        'cell_beta_p96': 0.5
+      };
+
+      // Result with high synergy and baseline divergence
+      const resultVector = {
+        computation: 0.75,
+        reliability: 0.85,
+        cognition: 0.80,
+        knowledge: 0.75,
+        specialization: 0.90,
+        experience: 0.70,
+        resourceEfficiency: 0.75
+      };
+
+      // Condition 1: Missing evidence -> isEmergent must be FALSE
+      const metricsNoEvidence = calculateEmergenceMetrics({
+        resultVector,
+        inputVectors: baselineInput,
+        weights,
+        transformations,
+        emergentStructuresCount: 2,
+        evidenceCount: 0,
+        hasEvidence: false
+      });
+      expect(metricsNoEvidence.isEmergent).toBe(false);
+
+      // Condition 2: No structural novelty -> isEmergent must be FALSE
+      const metricsNoNovelty = calculateEmergenceMetrics({
+        resultVector,
+        inputVectors: baselineInput,
+        weights,
+        transformations,
+        emergentStructuresCount: 0,
+        evidenceCount: 3,
+        hasEvidence: true
+      });
+      expect(metricsNoNovelty.isEmergent).toBe(false);
+
+      // Condition 3: Single cell (no interaction) -> isEmergent must be FALSE
+      const metricsSingleCell = calculateEmergenceMetrics({
+        resultVector,
+        inputVectors: { 'cell_alpha_p96': baselineInput['cell_alpha_p96'] },
+        weights: { 'cell_alpha_p96': 1.0 },
+        transformations: { 'cell_alpha_p96': transformations['cell_alpha_p96'] },
+        emergentStructuresCount: 2,
+        evidenceCount: 3,
+        hasEvidence: true
+      });
+      expect(metricsSingleCell.isEmergent).toBe(false);
+
+      // Condition 4: Zero baseline deviation -> isEmergent must be FALSE
+      const avgVec = {
+        computation: 0.55,
+        reliability: 0.65,
+        cognition: 0.60,
+        knowledge: 0.60,
+        specialization: 0.675,
+        experience: 0.55,
+        resourceEfficiency: 0.55
+      };
+      const metricsNoDev = calculateEmergenceMetrics({
+        resultVector: avgVec,
+        inputVectors: baselineInput,
+        weights,
+        transformations,
+        emergentStructuresCount: 2,
+        evidenceCount: 3,
+        hasEvidence: true
+      });
+      expect(metricsNoDev.isEmergent).toBe(false);
+
+      // Condition 5: All conditions satisfied -> isEmergent is strictly evaluated
+      const fullMetrics = calculateEmergenceMetrics({
+        resultVector,
+        inputVectors: baselineInput,
+        weights,
+        transformations,
+        emergentStructuresCount: 2,
+        evidenceCount: 3,
+        hasEvidence: true
+      });
+      // The gate summary must explicitly document all 7 boolean gates
+      expect(fullMetrics.gates).toBeDefined();
+      expect(typeof fullMetrics.gates.hasInteraction).toBe('boolean');
+      expect(typeof fullMetrics.gates.hasBaselineDeviation).toBe('boolean');
+      expect(typeof fullMetrics.gates.hasInformationGain).toBe('boolean');
+      expect(typeof fullMetrics.gates.hasStructuralNovelty).toBe('boolean');
+      expect(typeof fullMetrics.gates.hasEvidence).toBe('boolean');
+      expect(typeof fullMetrics.gates.isReproducible).toBe('boolean');
+      expect(typeof fullMetrics.gates.hasValidStability).toBe('boolean');
+
+      const g = fullMetrics.gates;
+      const expectedEmergent = g.hasInteraction && g.hasBaselineDeviation && g.hasInformationGain && g.hasStructuralNovelty && g.hasEvidence && g.isReproducible && g.hasValidStability;
+      expect(fullMetrics.isEmergent).toBe(expectedEmergent);
     });
   });
 });

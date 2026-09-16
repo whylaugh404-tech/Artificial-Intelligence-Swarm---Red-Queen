@@ -45,7 +45,15 @@ describe('P9.5 — Linear Mathematical Cognitive Model & Collective Cognition', 
       evolutionEngine: {} as any,
       start: vi.fn(),
       stop: vi.fn(),
-      getState: vi.fn().mockReturnValue({ mode: 'active', reliability: 0.95 }),
+      getState: vi.fn().mockReturnValue({
+        mode: 'active',
+        reliability: 0.95,
+        computation: caps.includes('INFO_PROCESSING') ? 0.9 : 0.5,
+        cognition: caps.includes('COGNITIVE_REASONING') ? 0.8 : 0.4,
+        knowledge: 0.7,
+        experience: 0.6,
+        resourceEfficiency: 0.75
+      }),
       submitTask: vi.fn()
     } as any;
   };

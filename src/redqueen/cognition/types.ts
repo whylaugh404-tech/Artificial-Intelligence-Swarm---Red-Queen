@@ -10,13 +10,13 @@ export const EPSILON_TOLERANCE = 1e-4;
  */
 
 export const CognitiveFeatureVectorSchema = z.object({
-  computation: z.number().min(0.0).max(1.0),
-  reliability: z.number().min(0.0).max(1.0),
-  cognition: z.number().min(0.0).max(1.0),
-  knowledge: z.number().min(0.0).max(1.0),
-  specialization: z.number().min(0.0).max(1.0),
-  experience: z.number().min(0.0).max(1.0),
-  resourceEfficiency: z.number().min(0.0).max(1.0)
+  computation: z.number().min(0.0).max(1.0).nullable().optional(),
+  reliability: z.number().min(0.0).max(1.0).nullable().optional(),
+  cognition: z.number().min(0.0).max(1.0).nullable().optional(),
+  knowledge: z.number().min(0.0).max(1.0).nullable().optional(),
+  specialization: z.number().min(0.0).max(1.0).nullable().optional(),
+  experience: z.number().min(0.0).max(1.0).nullable().optional(),
+  resourceEfficiency: z.number().min(0.0).max(1.0).nullable().optional()
 });
 
 export type CognitiveFeatureVector = z.infer<typeof CognitiveFeatureVectorSchema>;
@@ -26,7 +26,8 @@ export const LinearTransformationSchema = z.object({
   matrix: z.array(z.array(z.number())),
   bias: z.array(z.number()),
   transformedVector: z.record(z.string(), z.number()), // Unbounded intermediate linear result z_i
-  description: z.string().optional()
+  description: z.string().optional(),
+  provenance: z.array(z.string()).optional()
 });
 
 export type LinearTransformation = z.infer<typeof LinearTransformationSchema>;
@@ -83,11 +84,23 @@ export const NonlinearDynamicsSchema = z.object({
 
 export type NonlinearDynamics = z.infer<typeof NonlinearDynamicsSchema>;
 
-export const FeatureStatusSchema = z.enum(['KNOWN', 'UNKNOWN', 'DERIVED', 'ESTIMATED', 'OBSERVED']);
+export const FeatureStatusSchema = z.enum([
+  'KNOWN_ZERO',
+  'KNOWN_VALUE',
+  'UNKNOWN',
+  'KNOWN',
+  'DERIVED',
+  'ESTIMATED',
+  'OBSERVED'
+]);
 export type FeatureStatus = z.infer<typeof FeatureStatusSchema>;
 
+export function isKnownStatus(status: FeatureStatus): boolean {
+  return status === 'KNOWN_ZERO' || status === 'KNOWN_VALUE' || status === 'KNOWN' || status === 'DERIVED' || status === 'ESTIMATED' || status === 'OBSERVED';
+}
+
 export const EpistemicFeatureValueSchema = z.object({
-  value: z.number().min(0.0).max(1.0).optional(),
+  value: z.number().min(0.0).max(1.0).nullable().optional(),
   status: FeatureStatusSchema,
   provenance: z.string()
 });
@@ -155,18 +168,42 @@ export function clamp01(val: number): number {
 }
 
 /**
- * Validates that all fields in CognitiveFeatureVector are finite and bounded in [0, 1].
+ * Validates that all defined fields in CognitiveFeatureVector are finite and bounded in [0, 1].
+ * UNKNOWN fields (undefined or null) are explicitly permitted without numeric defaults.
  */
 export function validateFeatureVector(v: CognitiveFeatureVector): boolean {
-  return (
-    Number.isFinite(v.computation) && v.computation >= 0 && v.computation <= 1 &&
-    Number.isFinite(v.reliability) && v.reliability >= 0 && v.reliability <= 1 &&
-    Number.isFinite(v.cognition) && v.cognition >= 0 && v.cognition <= 1 &&
-    Number.isFinite(v.knowledge) && v.knowledge >= 0 && v.knowledge <= 1 &&
-    Number.isFinite(v.specialization) && v.specialization >= 0 && v.specialization <= 1 &&
-    Number.isFinite(v.experience) && v.experience >= 0 && v.experience <= 1 &&
-    Number.isFinite(v.resourceEfficiency) && v.resourceEfficiency >= 0 && v.resourceEfficiency <= 1
-  );
+  for (const k of FEATURE_VECTOR_KEYS) {
+    const val = v[k];
+    if (val !== undefined && val !== null) {
+      if (!Number.isFinite(val) || val < 0.0 || val > 1.0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * Derives an epistemic mask over the 7 cognitive dimensions.
+ * Returns true for KNOWN dimensions (KNOWN_ZERO or KNOWN_VALUE), false for UNKNOWN.
+ */
+export function getEpistemicMask(v: CognitiveFeatureVector): boolean[] {
+  return FEATURE_VECTOR_KEYS.map(k => {
+    const val = v[k];
+    return val !== undefined && val !== null && Number.isFinite(val);
+  });
+}
+
+/**
+ * Derives an epistemic mask record keyed by dimension name.
+ */
+export function getEpistemicMaskRecord(v: CognitiveFeatureVector): Record<keyof CognitiveFeatureVector, boolean> {
+  const record: Partial<Record<keyof CognitiveFeatureVector, boolean>> = {};
+  for (const k of FEATURE_VECTOR_KEYS) {
+    const val = v[k];
+    record[k] = val !== undefined && val !== null && Number.isFinite(val);
+  }
+  return record as Record<keyof CognitiveFeatureVector, boolean>;
 }
 
 /**
@@ -184,16 +221,17 @@ export const FEATURE_VECTOR_KEYS: Array<keyof CognitiveFeatureVector> = [
 
 /**
  * Converts a CognitiveFeatureVector to an array of 7 numbers.
+ * UNKNOWN fields default to 0 for raw numerical array operations when necessary.
  */
 export function vectorToArray(v: CognitiveFeatureVector): number[] {
   return [
-    clamp01(v.computation),
-    clamp01(v.reliability),
-    clamp01(v.cognition),
-    clamp01(v.knowledge),
-    clamp01(v.specialization),
-    clamp01(v.experience),
-    clamp01(v.resourceEfficiency)
+    v.computation !== undefined && v.computation !== null ? clamp01(v.computation) : 0,
+    v.reliability !== undefined && v.reliability !== null ? clamp01(v.reliability) : 0,
+    v.cognition !== undefined && v.cognition !== null ? clamp01(v.cognition) : 0,
+    v.knowledge !== undefined && v.knowledge !== null ? clamp01(v.knowledge) : 0,
+    v.specialization !== undefined && v.specialization !== null ? clamp01(v.specialization) : 0,
+    v.experience !== undefined && v.experience !== null ? clamp01(v.experience) : 0,
+    v.resourceEfficiency !== undefined && v.resourceEfficiency !== null ? clamp01(v.resourceEfficiency) : 0
   ];
 }
 
@@ -214,23 +252,43 @@ export function arrayToVector(arr: number[]): CognitiveFeatureVector {
 
 /**
  * Computes linear transformation: z = W x + b
- * Clamping each element of z into [0, 1].
+ * Uses epistemic mask / valid-dimension set: UNKNOWN dimensions do not drag output down to zero.
  */
 export function applyLinearTransformation(
   x: CognitiveFeatureVector,
   matrix: number[][],
   bias: number[],
-  description?: string
+  description?: string,
+  epistemicMask?: boolean[]
 ): LinearTransformation {
-  const xArr = vectorToArray(x);
+  const mask = epistemicMask ?? getEpistemicMask(x);
   const zArr: number[] = new Array(7).fill(0);
 
   for (let i = 0; i < 7; i++) {
     let sum = bias[i] ?? 0;
     const row = matrix[i] ?? [];
+    let validWeight = 0;
+    let totalWeight = 0;
+    let weightedValidSum = 0;
+
     for (let j = 0; j < 7; j++) {
-      sum += (row[j] ?? 0) * xArr[j];
+      const key = FEATURE_VECTOR_KEYS[j];
+      const val = x[key];
+      const w = row[j] ?? 0;
+      totalWeight += Math.abs(w);
+      if (mask[j] && val !== undefined && val !== null && Number.isFinite(val)) {
+        validWeight += Math.abs(w);
+        weightedValidSum += w * clamp01(val);
+      }
     }
+
+    if (validWeight > 0 && totalWeight > 0) {
+      // Scale weighted observed dimensions so UNKNOWN is not penalized as numerical zero
+      sum += (weightedValidSum / validWeight) * totalWeight;
+    } else {
+      sum += weightedValidSum;
+    }
+
     zArr[i] = sum;
   }
 

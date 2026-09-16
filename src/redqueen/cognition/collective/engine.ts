@@ -29,6 +29,7 @@ import {
   NonlinearCompositionOptions,
   EpistemicFeatureRecord,
   EpistemicFeatureValue,
+  FeatureStatus,
   applyLinearTransformation,
   generateDeterministicMatrixAndBias,
   vectorToArray,
@@ -148,11 +149,11 @@ export class CollectiveCognitionEngine {
     targetDomain?: string
   ): {
     vector: CognitiveFeatureVector;
-    statuses: Record<keyof CognitiveFeatureVector, 'KNOWN' | 'UNKNOWN'>;
+    statuses: Record<keyof CognitiveFeatureVector, FeatureStatus>;
     provenance: string[];
     details: EpistemicFeatureRecord;
   } {
-    const statuses: Record<keyof CognitiveFeatureVector, 'KNOWN' | 'UNKNOWN'> = {
+    const statuses: Record<keyof CognitiveFeatureVector, FeatureStatus> = {
       computation: 'UNKNOWN',
       reliability: 'UNKNOWN',
       cognition: 'UNKNOWN',
@@ -171,89 +172,140 @@ export class CollectiveCognitionEngine {
 
     // 1. Computation
     // Derived strictly from actual recorded computational metrics or procedural execution
-    let computation = 0.0;
+    let computation: number | undefined = undefined;
     if (cellState && typeof cellState.computation === 'number' && Number.isFinite(cellState.computation)) {
-      computation = clamp01(cellState.computation);
-      statuses.computation = 'KNOWN';
-      provenance.push(`computation:KNOWN(cell_state:${computation})`);
-    } else if (cogState?.memoryStats && typeof cogState.memoryStats.procedural === 'number' && cogState.memoryStats.procedural > 0) {
-      computation = clamp01(cogState.memoryStats.procedural / 10);
-      statuses.computation = 'KNOWN';
-      provenance.push(`computation:KNOWN(procedural_memories:${cogState.memoryStats.procedural})`);
+      const cVal = clamp01(cellState.computation);
+      if (cVal === 0.0) {
+        computation = 0.0;
+        statuses.computation = 'KNOWN_ZERO';
+        provenance.push(`computation:KNOWN_ZERO(cell_state:0)`);
+      } else {
+        computation = cVal;
+        statuses.computation = 'KNOWN_VALUE';
+        provenance.push(`computation:KNOWN_VALUE(cell_state:${computation})`);
+      }
+    } else if (cogState?.memoryStats && typeof cogState.memoryStats.procedural === 'number') {
+      const procCount = cogState.memoryStats.procedural;
+      if (procCount === 0) {
+        computation = 0.0;
+        statuses.computation = 'KNOWN_ZERO';
+        provenance.push(`computation:KNOWN_ZERO(procedural_memories:0)`);
+      } else {
+        computation = clamp01(procCount / 10);
+        statuses.computation = 'KNOWN_VALUE';
+        provenance.push(`computation:KNOWN_VALUE(procedural_memories:${procCount})`);
+      }
     } else {
-      computation = 0.0;
+      computation = undefined;
       statuses.computation = 'UNKNOWN';
       provenance.push('computation:UNKNOWN(no_actual_state)');
     }
 
     // 2. Reliability
     // Derived strictly from actual operational reliability or operational confidence
-    let reliability = 0.0;
+    let reliability: number | undefined = undefined;
     if (cellState && typeof cellState.reliability === 'number' && Number.isFinite(cellState.reliability)) {
-      reliability = clamp01(cellState.reliability);
-      statuses.reliability = 'KNOWN';
-      provenance.push(`reliability:KNOWN(cell_state:${reliability})`);
+      const rVal = clamp01(cellState.reliability);
+      if (rVal === 0.0) {
+        reliability = 0.0;
+        statuses.reliability = 'KNOWN_ZERO';
+        provenance.push(`reliability:KNOWN_ZERO(cell_state:0)`);
+      } else {
+        reliability = rVal;
+        statuses.reliability = 'KNOWN_VALUE';
+        provenance.push(`reliability:KNOWN_VALUE(cell_state:${reliability})`);
+      }
     } else if (cogState && typeof cogState.operationalConfidence === 'number' && Number.isFinite(cogState.operationalConfidence)) {
-      reliability = clamp01(cogState.operationalConfidence);
-      statuses.reliability = 'KNOWN';
-      provenance.push(`reliability:KNOWN(operational_confidence:${reliability})`);
+      const confVal = clamp01(cogState.operationalConfidence);
+      if (confVal === 0.0) {
+        reliability = 0.0;
+        statuses.reliability = 'KNOWN_ZERO';
+        provenance.push(`reliability:KNOWN_ZERO(operational_confidence:0)`);
+      } else {
+        reliability = confVal;
+        statuses.reliability = 'KNOWN_VALUE';
+        provenance.push(`reliability:KNOWN_VALUE(operational_confidence:${reliability})`);
+      }
     } else {
-      reliability = 0.0;
+      reliability = undefined;
       statuses.reliability = 'UNKNOWN';
       provenance.push('reliability:UNKNOWN(no_actual_state)');
     }
 
     // 3. Cognition
     // Derived strictly from actual active cognitive state (operationalConfidence, active reasoning state)
-    let cognition = 0.0;
+    let cognition: number | undefined = undefined;
     if (cogState && typeof cogState.operationalConfidence === 'number' && Number.isFinite(cogState.operationalConfidence)) {
-      cognition = clamp01(cogState.operationalConfidence);
-      statuses.cognition = 'KNOWN';
-      provenance.push(`cognition:KNOWN(operational_confidence:${cognition})`);
+      const cogVal = clamp01(cogState.operationalConfidence);
+      if (cogVal === 0.0) {
+        cognition = 0.0;
+        statuses.cognition = 'KNOWN_ZERO';
+        provenance.push(`cognition:KNOWN_ZERO(operational_confidence:0)`);
+      } else {
+        cognition = cogVal;
+        statuses.cognition = 'KNOWN_VALUE';
+        provenance.push(`cognition:KNOWN_VALUE(operational_confidence:${cognition})`);
+      }
     } else if (cellState && typeof cellState.cognition === 'number' && Number.isFinite(cellState.cognition)) {
-      cognition = clamp01(cellState.cognition);
-      statuses.cognition = 'KNOWN';
-      provenance.push(`cognition:KNOWN(cell_state:${cognition})`);
+      const cogVal = clamp01(cellState.cognition);
+      if (cogVal === 0.0) {
+        cognition = 0.0;
+        statuses.cognition = 'KNOWN_ZERO';
+        provenance.push(`cognition:KNOWN_ZERO(cell_state:0)`);
+      } else {
+        cognition = cogVal;
+        statuses.cognition = 'KNOWN_VALUE';
+        provenance.push(`cognition:KNOWN_VALUE(cell_state:${cognition})`);
+      }
     } else {
-      cognition = 0.0;
+      cognition = undefined;
       statuses.cognition = 'UNKNOWN';
       provenance.push('cognition:UNKNOWN(no_actual_state)');
     }
 
     // 4. Knowledge
     // Derived strictly from verified knowledge references, concepts, or semantic memory count
-    //
-    // NORMALIZATION SEMANTICS:
-    // - domain: [0, ∞) representing total countable knowledge items
-    // - codomain: [0, 1] representing saturated knowledge feature value
-    // - meaning: Translates discrete knowledge item counts into a continuous feature space.
-    // - monotonicity: Monotonically increasing.
-    // - saturation behavior: Linearly saturates to 1.0 at MAX_KNOWLEDGE_COUNT.
-    // - provenance: derived from aggregated internal memory metrics.
-    // - status: DERIVED.
-    const MAX_KNOWLEDGE_COUNT = 10; // Explicit model parameter, not intrinsic intelligence.
-    
-    let knowledge = 0.0;
-    const kCount = (cogState?.knowledgeReferences?.length ?? 0) +
-                   (cogState?.conceptReferences?.length ?? 0) +
-                   (cogState?.memoryStats?.semantic ?? 0);
-    if (kCount > 0) {
-      knowledge = clamp01(kCount / MAX_KNOWLEDGE_COUNT);
-      statuses.knowledge = 'KNOWN';
-      provenance.push(`knowledge:KNOWN(references_and_concepts:${kCount})`);
+    const MAX_KNOWLEDGE_COUNT = 10;
+    let knowledge: number | undefined = undefined;
+    const hasKnowledgeData = cogState && (
+      (cogState.knowledgeReferences && cogState.knowledgeReferences.length > 0) ||
+      (cogState.conceptReferences && cogState.conceptReferences.length > 0) ||
+      (cogState.memoryStats && typeof cogState.memoryStats.semantic === 'number')
+    );
+
+    if (hasKnowledgeData) {
+      const kCount = (cogState?.knowledgeReferences?.length ?? 0) +
+                     (cogState?.conceptReferences?.length ?? 0) +
+                     (cogState?.memoryStats?.semantic ?? 0);
+      if (kCount === 0) {
+        knowledge = 0.0;
+        statuses.knowledge = 'KNOWN_ZERO';
+        provenance.push(`knowledge:KNOWN_ZERO(references_and_concepts:0)`);
+      } else {
+        knowledge = clamp01(kCount / MAX_KNOWLEDGE_COUNT);
+        statuses.knowledge = 'KNOWN_VALUE';
+        provenance.push(`knowledge:KNOWN_VALUE(references_and_concepts:${kCount})`);
+      }
     } else if (cellState && typeof cellState.knowledge === 'number' && Number.isFinite(cellState.knowledge)) {
-      knowledge = clamp01(cellState.knowledge);
-      statuses.knowledge = 'KNOWN';
-      provenance.push(`knowledge:KNOWN(cell_state:${knowledge})`);
+      const kVal = clamp01(cellState.knowledge);
+      if (kVal === 0.0) {
+        knowledge = 0.0;
+        statuses.knowledge = 'KNOWN_ZERO';
+        provenance.push(`knowledge:KNOWN_ZERO(cell_state:0)`);
+      } else {
+        knowledge = kVal;
+        statuses.knowledge = 'KNOWN_VALUE';
+        provenance.push(`knowledge:KNOWN_VALUE(cell_state:${knowledge})`);
+      }
     } else {
-      knowledge = 0.0;
+      knowledge = undefined;
       statuses.knowledge = 'UNKNOWN';
       provenance.push('knowledge:UNKNOWN(no_actual_state)');
     }
 
     // 5. Specialization
     // Derived from declared domain specialization (domain alignment check, NOT intelligence)
-    let specialization = 0.0;
+    let specialization: number | undefined = undefined;
     const declaredSpec = ((cell as any).cognitiveState && typeof (cell as any).cognitiveState.getSpecialization === 'function'
       ? (cell as any).cognitiveState.getSpecialization()
       : null) ?? cell.genome?.specialization ?? null;
@@ -263,79 +315,100 @@ export class CollectiveCognitionEngine {
       if (targetDomain && targetDomain.trim().length > 0) {
         if (trimmedSpec.toUpperCase().includes(targetDomain.trim().toUpperCase())) {
           specialization = 1.0;
-          statuses.specialization = 'KNOWN';
-          provenance.push(`specialization:KNOWN(domain_match:${trimmedSpec}_matches_${targetDomain})`);
+          statuses.specialization = 'KNOWN_VALUE';
+          provenance.push(`specialization:KNOWN_VALUE(domain_match:${trimmedSpec}_matches_${targetDomain})`);
         } else {
           specialization = 0.0;
-          statuses.specialization = 'KNOWN';
-          provenance.push(`specialization:KNOWN(domain_mismatch:${trimmedSpec})`);
+          statuses.specialization = 'KNOWN_ZERO';
+          provenance.push(`specialization:KNOWN_ZERO(domain_mismatch:${trimmedSpec})`);
         }
       } else {
         specialization = 1.0;
-        statuses.specialization = 'KNOWN';
-        provenance.push(`specialization:KNOWN(declared:${trimmedSpec})`);
+        statuses.specialization = 'KNOWN_VALUE';
+        provenance.push(`specialization:KNOWN_VALUE(declared:${trimmedSpec})`);
       }
     } else {
-      specialization = 0.0;
+      specialization = undefined;
       statuses.specialization = 'UNKNOWN';
       provenance.push('specialization:UNKNOWN(no_specialization_declared)');
     }
 
     // 6. Experience
     // Derived strictly from actual accumulated memories, completed goals, or task executions (NOT generation metadata)
-    //
-    // NORMALIZATION SEMANTICS:
-    // - domain: [0, ∞) representing total countable experience events
-    // - codomain: [0, 1] representing saturated experience feature value
-    // - meaning: Translates discrete historical events into a continuous feature space.
-    // - monotonicity: Monotonically increasing.
-    // - saturation behavior: Linearly saturates to 1.0 at MAX_EXPERIENCE_EVENTS.
-    // - provenance: derived from aggregated internal memory and execution metrics.
-    // - status: DERIVED.
-    const MAX_EXPERIENCE_EVENTS = 50; // Explicit model parameter, not intrinsic intelligence.
+    const MAX_EXPERIENCE_EVENTS = 50;
+    let experience: number | undefined = undefined;
+    const hasExpData = cogState && (
+      (cogState.memoryStats && typeof cogState.memoryStats.total === 'number') ||
+      ((cogState as any).completedGoals && Array.isArray((cogState as any).completedGoals))
+    );
 
-    let experience = 0.0;
-    const totalMem = cogState?.memoryStats?.total ?? 0;
-    const completedGoals = (cogState as any)?.completedGoals?.length ?? 0;
-    const taskCount = typeof (cell as any).getCompletedTaskCount === 'function'
-      ? (cell as any).getCompletedTaskCount()
-      : 0;
-    const totalExpEvents = totalMem + completedGoals + taskCount;
-
-    if (totalExpEvents > 0) {
-      experience = clamp01(totalExpEvents / MAX_EXPERIENCE_EVENTS);
-      statuses.experience = 'KNOWN';
-      provenance.push(`experience:KNOWN(memory_and_goals:${totalExpEvents})`);
+    if (hasExpData) {
+      const totalMem = cogState?.memoryStats?.total ?? 0;
+      const completedGoals = (cogState as any)?.completedGoals?.length ?? 0;
+      const taskCount = typeof (cell as any).getCompletedTaskCount === 'function'
+        ? (cell as any).getCompletedTaskCount()
+        : 0;
+      const totalExpEvents = totalMem + completedGoals + taskCount;
+      if (totalExpEvents === 0) {
+        experience = 0.0;
+        statuses.experience = 'KNOWN_ZERO';
+        provenance.push(`experience:KNOWN_ZERO(memory_and_goals:0)`);
+      } else {
+        experience = clamp01(totalExpEvents / MAX_EXPERIENCE_EVENTS);
+        statuses.experience = 'KNOWN_VALUE';
+        provenance.push(`experience:KNOWN_VALUE(memory_and_goals:${totalExpEvents})`);
+      }
     } else if (cellState && typeof cellState.experience === 'number' && Number.isFinite(cellState.experience)) {
-      experience = clamp01(cellState.experience);
-      statuses.experience = 'KNOWN';
-      provenance.push(`experience:KNOWN(cell_state:${experience})`);
+      const eVal = clamp01(cellState.experience);
+      if (eVal === 0.0) {
+        experience = 0.0;
+        statuses.experience = 'KNOWN_ZERO';
+        provenance.push(`experience:KNOWN_ZERO(cell_state:0)`);
+      } else {
+        experience = eVal;
+        statuses.experience = 'KNOWN_VALUE';
+        provenance.push(`experience:KNOWN_VALUE(cell_state:${experience})`);
+      }
     } else {
-      experience = 0.0;
+      experience = undefined;
       statuses.experience = 'UNKNOWN';
       provenance.push('experience:UNKNOWN(no_actual_state)');
     }
 
     // 7. Resource Efficiency
     // Derived strictly from actual resource efficiency telemetry
-    let resourceEfficiency = 0.0;
+    let resourceEfficiency: number | undefined = undefined;
     if (cellState && typeof cellState.resourceEfficiency === 'number' && Number.isFinite(cellState.resourceEfficiency)) {
-      resourceEfficiency = clamp01(cellState.resourceEfficiency);
-      statuses.resourceEfficiency = 'KNOWN';
-      provenance.push(`resourceEfficiency:KNOWN(cell_state:${resourceEfficiency})`);
+      const effVal = clamp01(cellState.resourceEfficiency);
+      if (effVal === 0.0) {
+        resourceEfficiency = 0.0;
+        statuses.resourceEfficiency = 'KNOWN_ZERO';
+        provenance.push(`resourceEfficiency:KNOWN_ZERO(cell_state:0)`);
+      } else {
+        resourceEfficiency = effVal;
+        statuses.resourceEfficiency = 'KNOWN_VALUE';
+        provenance.push(`resourceEfficiency:KNOWN_VALUE(cell_state:${resourceEfficiency})`);
+      }
     } else if (cogState?.metadata && typeof cogState.metadata['resourceEfficiency'] === 'string') {
       const parsed = parseFloat(cogState.metadata['resourceEfficiency']);
       if (Number.isFinite(parsed)) {
-        resourceEfficiency = clamp01(parsed);
-        statuses.resourceEfficiency = 'KNOWN';
-        provenance.push(`resourceEfficiency:KNOWN(metadata:${resourceEfficiency})`);
+        const effVal = clamp01(parsed);
+        if (effVal === 0.0) {
+          resourceEfficiency = 0.0;
+          statuses.resourceEfficiency = 'KNOWN_ZERO';
+          provenance.push(`resourceEfficiency:KNOWN_ZERO(metadata:0)`);
+        } else {
+          resourceEfficiency = effVal;
+          statuses.resourceEfficiency = 'KNOWN_VALUE';
+          provenance.push(`resourceEfficiency:KNOWN_VALUE(metadata:${resourceEfficiency})`);
+        }
       } else {
-        resourceEfficiency = 0.0;
+        resourceEfficiency = undefined;
         statuses.resourceEfficiency = 'UNKNOWN';
         provenance.push('resourceEfficiency:UNKNOWN(invalid_telemetry)');
       }
     } else {
-      resourceEfficiency = 0.0;
+      resourceEfficiency = undefined;
       statuses.resourceEfficiency = 'UNKNOWN';
       provenance.push('resourceEfficiency:UNKNOWN(no_actual_state)');
     }
@@ -354,37 +427,37 @@ export class CollectiveCognitionEngine {
 
     const details: EpistemicFeatureRecord = {
       computation: {
-        value: statuses.computation === 'UNKNOWN' ? undefined : computation,
+        value: computation,
         status: statuses.computation,
         provenance: provenance.find(p => p.startsWith('computation:')) ?? 'computation:UNKNOWN'
       },
       reliability: {
-        value: statuses.reliability === 'UNKNOWN' ? undefined : reliability,
+        value: reliability,
         status: statuses.reliability,
         provenance: provenance.find(p => p.startsWith('reliability:')) ?? 'reliability:UNKNOWN'
       },
       cognition: {
-        value: statuses.cognition === 'UNKNOWN' ? undefined : cognition,
+        value: cognition,
         status: statuses.cognition,
         provenance: provenance.find(p => p.startsWith('cognition:')) ?? 'cognition:UNKNOWN'
       },
       knowledge: {
-        value: statuses.knowledge === 'UNKNOWN' ? undefined : knowledge,
+        value: knowledge,
         status: statuses.knowledge,
         provenance: provenance.find(p => p.startsWith('knowledge:')) ?? 'knowledge:UNKNOWN'
       },
       specialization: {
-        value: statuses.specialization === 'UNKNOWN' ? undefined : specialization,
+        value: specialization,
         status: statuses.specialization,
         provenance: provenance.find(p => p.startsWith('specialization:')) ?? 'specialization:UNKNOWN'
       },
       experience: {
-        value: statuses.experience === 'UNKNOWN' ? undefined : experience,
+        value: experience,
         status: statuses.experience,
         provenance: provenance.find(p => p.startsWith('experience:')) ?? 'experience:UNKNOWN'
       },
       resourceEfficiency: {
-        value: statuses.resourceEfficiency === 'UNKNOWN' ? undefined : resourceEfficiency,
+        value: resourceEfficiency,
         status: statuses.resourceEfficiency,
         provenance: provenance.find(p => p.startsWith('resourceEfficiency:')) ?? 'resourceEfficiency:UNKNOWN'
       }
@@ -1055,8 +1128,12 @@ export class CollectiveCognitionEngine {
       resultVector: collectiveState.resultVector,
       inputVectors: collectiveState.inputVectors,
       weights: collectiveState.weights,
+      transformations: collectiveState.transformations,
       modulatedVectors: collectiveState.modulatedVectors,
-      modulationFactors
+      modulationFactors,
+      emergentStructuresCount: emergentStructures.length,
+      evidenceCount: evidences.length,
+      hasEvidence: evidences.length > 0
     });
 
     provenance.push(`emergent_structures_generated:${emergentStructures.length}`);

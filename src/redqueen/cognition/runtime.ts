@@ -228,7 +228,8 @@ export class CognitiveRuntime {
                      : 0.1;
       }
       
-      const confidence = Math.min(1.0, Math.max(0.01, collectiveState.resultVector.cognition * beliefBase));
+      const collectiveCognition = collectiveState.resultVector.cognition ?? 0.5;
+      const confidence = Math.min(1.0, Math.max(0.01, collectiveCognition * beliefBase));
 
       // Deterministic Identity: Semantic equivalence isolated from timestamps and transient chaos
       const sanitizedContext: Record<string, any> = { ...request.context };
