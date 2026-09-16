@@ -32,7 +32,7 @@ import {
   FeatureStatus,
   applyLinearTransformation,
   generateDeterministicMatrixAndBias,
-  getEpistemicVector,
+  vectorToArray,
   arrayToVector,
   clamp01,
   validateFeatureVector,

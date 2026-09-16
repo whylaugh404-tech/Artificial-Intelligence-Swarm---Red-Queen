@@ -223,31 +223,11 @@ export const FEATURE_VECTOR_KEYS: Array<keyof CognitiveFeatureVector> = [
  * Epistemic mathematical representation that preserves the distinction
  * between KNOWN values (including 0.0) and UNKNOWN dimensions.
  */
-export interface EpistemicVector {
-  values: number[]; // Guaranteed 0.0 for unknown dimensions, but mask protects it
-  mask: boolean[];  // true if KNOWN, false if UNKNOWN
-}
-
-/**
- * Converts a CognitiveFeatureVector to an epistemic mathematical array.
- * UNKNOWN dimensions will be masked out (false), rather than silently converted to 0.
- */
-export function getEpistemicVector(v: CognitiveFeatureVector): EpistemicVector {
-  const values: number[] = [];
-  const mask: boolean[] = [];
-  
-  for (const key of FEATURE_VECTOR_KEYS) {
+export function vectorToArray(v: CognitiveFeatureVector): Array<number | undefined> {
+  return FEATURE_VECTOR_KEYS.map(key => {
     const val = v[key];
-    if (val !== undefined && val !== null) {
-      values.push(clamp01(val));
-      mask.push(true);
-    } else {
-      values.push(0.0);
-      mask.push(false);
-    }
-  }
-  
-  return { values, mask };
+    return val !== undefined && val !== null ? clamp01(val) : undefined;
+  });
 }
 
 /**

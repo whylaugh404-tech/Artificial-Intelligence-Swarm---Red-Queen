@@ -585,21 +585,25 @@ export class CognitiveRuntime {
       // If there are multiple activated cells, also provide cell-level contributions to match activated cell count
       if (premises.length < activatedCells.length) {
         activatedCells.slice(premises.length).forEach(c => {
+          const actLevel = (c as any).activationLevel;
+          const confidence = typeof actLevel === 'number' && Number.isFinite(actLevel) ? actLevel : undefined;
           premises.push({
             statement: `Cell ${c.cellId} active contribution in domain ${c.specialization || 'general'}`,
             sourceType: 'UNDERSTANDING' as const,
             sourceId: c.cellId,
-            confidence: (c as any).activationLevel
+            confidence
           });
         });
       }
     } else {
       activatedCells.forEach(c => {
+        const actLevel = (c as any).activationLevel;
+        const confidence = typeof actLevel === 'number' && Number.isFinite(actLevel) ? actLevel : undefined;
         premises.push({
           statement: `Cell ${c.cellId} active contribution in domain ${c.specialization || 'general'}`,
           sourceType: 'UNDERSTANDING' as const,
           sourceId: c.cellId,
-          confidence: (c as any).activationLevel
+          confidence
         });
       });
       if (premises.length === 0) {

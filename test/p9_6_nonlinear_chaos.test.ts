@@ -24,7 +24,7 @@ import {
   getEpistemicMask,
   getEpistemicMaskRecord
 } from '../src/redqueen/cognition/types';
-import { calculateEmergenceMetrics } from '../src/redqueen/cognition/collective/emergence';
+import { calculateEmergenceMetrics, generateDeterministicPerturbation, maskedDistance } from '../src/redqueen/cognition/collective/emergence';
 
 describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Deterministic Chaos', () => {
   let engine: CollectiveCognitionEngine;
@@ -931,3 +931,71 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
     });
   });
 });
+
+  describe('P9.6.2 - Mathematical Emergence Repairs', () => {
+    it('1. UNKNOWN !== KNOWN_ZERO', () => {
+      
+      expect(maskedDistance([undefined, 1], [0, 1])).toBe(0);
+      expect(maskedDistance([undefined], [undefined])).toBeUndefined();
+    });
+
+    it('2. PERTURBATION MUST NOT DEPEND ON CELL IDENTITY', () => {
+      
+      const base = [0.4, 0.6];
+      const perturbed = generateDeterministicPerturbation(base, 0.001);
+      expect(perturbed).not.toEqual(base);
+
+      const a = generateDeterministicPerturbation([0.4, 0.6], 0.001);
+      const b = generateDeterministicPerturbation([0.4, 0.6], 0.001);
+      expect(a).toEqual(b);
+    });
+
+    it('3. TEST VERIFIED GATE', () => {
+      
+      const inputVectors = {
+        'cell1': { computation: 0.8 },
+        'cell2': { computation: 0.1 }
+      };
+      
+      const allTrueParams = {
+        resultVector: { computation: 0.9 }, // force synergy
+        inputVectors,
+        weights: { cell1: 0.5, cell2: 0.5 },
+        hasInteraction: true,
+        hasBaselineDeviation: true,
+        hasInformationGain: true,
+        hasStructuralNovelty: true,
+        hasEvidence: true,
+        isReproducible: true,
+        hasValidStability: true
+      };
+
+      const res = calculateEmergenceMetrics(allTrueParams);
+      expect(res.isEmergent).toBe(true);
+      expect(res.status).toBe('VERIFIED');
+
+      // Test each gate individually false
+      const gatesToTest = [
+        'hasInteraction',
+        'hasBaselineDeviation',
+        'hasInformationGain',
+        'hasStructuralNovelty',
+        'hasEvidence',
+        'isReproducible',
+        'hasValidStability'
+      ];
+
+      for (const gate of gatesToTest) {
+        const testParams = { ...allTrueParams, [gate]: false };
+        const testRes = calculateEmergenceMetrics(testParams as any);
+        expect(testRes.isEmergent).toBe(false);
+        expect(testRes.status).not.toBe('VERIFIED');
+
+        // Test overriding status does not work
+        const overrideParams = { ...testParams, status: 'VERIFIED' };
+        const overrideRes = calculateEmergenceMetrics(overrideParams as any);
+        expect(overrideRes.status).not.toBe('VERIFIED');
+      }
+    });
+}
+)

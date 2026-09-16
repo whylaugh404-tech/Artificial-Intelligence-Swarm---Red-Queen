@@ -12,7 +12,7 @@ import {
   LinearTransformation,
   applyLinearTransformation,
   generateDeterministicMatrixAndBias,
-  getEpistemicVector,
+  vectorToArray,
   arrayToVector,
   clamp01,
   FEATURE_VECTOR_KEYS
