@@ -21,7 +21,8 @@ export const CognitiveStateSchema = z.object({
     semantic: z.number().int().min(0),
     procedural: z.number().int().min(0)
   }),
-  metadata: z.record(z.string(), z.string())
+  metadata: z.record(z.string(), z.string()),
+  chaosState: z.number().min(0).max(1).optional()
 });
 
 export type CognitiveState = z.infer<typeof CognitiveStateSchema>;
@@ -147,6 +148,17 @@ export class CognitiveStateManager {
   public syncLifecycleState(state: CellState): void {
     this.state.lifecycleState = state;
     this.state.lastCognitiveUpdate = new Date().toISOString();
+  }
+
+  public getChaosState(): number | undefined {
+    return this.state.chaosState;
+  }
+
+  public updateChaosState(c: number): void {
+    if (typeof c === 'number' && Number.isFinite(c) && c > 0 && c < 1) {
+      this.state.chaosState = c;
+      this.state.lastCognitiveUpdate = new Date().toISOString();
+    }
   }
 
   public updateMemoryStats(stats: MemoryStats): void {

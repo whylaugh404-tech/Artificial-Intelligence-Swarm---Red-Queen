@@ -414,42 +414,33 @@ export class CollectiveCognitionEngine {
       const extracted = this.extractFeatureVectorWithStatus(cell, targetDomain);
       const details = extracted.details;
       
-      const rawFitness = (cell.genome as any)?.fitness ?? (typeof (cell as any).evolution?.getFitness === 'function' ? (cell as any).evolution.getFitness() : null);
-      const specBonus = (cell.genome?.specialization && targetDomain && cell.genome.specialization.toUpperCase().includes(targetDomain.toUpperCase())) ? 0.35 : (cell.genome?.specialization ? 0.15 : 0.0);
-
       let rawScore = 0.0;
       let totalWeight = 0.0;
 
-      // Fitness component
-      if (typeof rawFitness === 'number' && Number.isFinite(rawFitness)) {
-        rawScore += clamp01(rawFitness) * 0.4;
-        totalWeight += 0.4;
-      }
-
       // Reliability component
       if (details.reliability.status !== 'UNKNOWN' && details.reliability.value !== undefined) {
-        const weight = totalWeight > 0 ? 0.3 : 0.45;
-        rawScore += details.reliability.value * weight;
-        totalWeight += weight;
+        rawScore += details.reliability.value * 0.4;
+        totalWeight += 0.4;
       }
 
       // Cognition component
       if (details.cognition.status !== 'UNKNOWN' && details.cognition.value !== undefined) {
-        const weight = totalWeight > 0 ? 0.2 : 0.35;
-        rawScore += details.cognition.value * weight;
-        totalWeight += weight;
+        rawScore += details.cognition.value * 0.4;
+        totalWeight += 0.4;
       }
 
       // Specialization component
-      rawScore += specBonus;
-      // We don't track totalWeight for specBonus because it's an additive bonus, not an averageable metric.
+      if (details.specialization.status !== 'UNKNOWN' && details.specialization.value !== undefined) {
+        rawScore += details.specialization.value * 0.2;
+        totalWeight += 0.2;
+      }
 
-      // If no metrics were known, assign a default baseline score, else normalize.
+      // Normalize raw score
       if (totalWeight > 0) {
         rawScore = rawScore / totalWeight;
       } else {
-        // Fallback for completely unknown cell (0.5 neutral baseline)
-        rawScore = 0.5 + specBonus;
+        // Fallback for completely unknown cell (neutral baseline)
+        rawScore = 0.5;
       }
 
       rawScores[cell.nodeId] = Math.max(0.01, rawScore);
@@ -567,7 +558,10 @@ export class CollectiveCognitionEngine {
         domain: targetDomain
       };
 
-      const c0Override = options?.cellC0?.[cell.nodeId] ?? (sortedCells.length === 1 ? options?.c0 : undefined);
+      let c0Override = options?.cellC0?.[cell.nodeId] ?? (sortedCells.length === 1 ? options?.c0 : undefined);
+      if (c0Override === undefined && cell.cognitiveState && typeof cell.cognitiveState.getChaosState === 'function') {
+        c0Override = cell.cognitiveState.getChaosState();
+      }
 
       const cellChaos = computeCellChaosDynamics({
         seedInput,
@@ -576,6 +570,10 @@ export class CollectiveCognitionEngine {
         lambda,
         initialC0: c0Override
       });
+      
+      if (cell.cognitiveState && typeof cell.cognitiveState.updateChaosState === 'function') {
+        cell.cognitiveState.updateChaosState(cellChaos.ct);
+      }
 
       cellChaosStates[cell.nodeId] = cellChaos;
 
@@ -903,25 +901,12 @@ export class CollectiveCognitionEngine {
   ): CollectiveRepresentation {
     const activeCells = cells ?? (this.localCell ? [this.localCell] : []);
     
-    // Perform linear mathematical composition
-    let collectiveState: CollectiveCognitiveState;
-    if (activeCells.length > 0) {
-      collectiveState = this.executeLinearComposition(activeCells, context, context?.domain);
-    } else {
-      // Construct from contributions metadata
-      const uniqueCellIds = Array.from(new Set(contributions.map(c => c.cellId))).sort();
-      const mockCells: any[] = uniqueCellIds.map(id => ({
-        nodeId: id,
-        genome: {
-          genomeId: `gen_${id}`,
-          generation: 1,
-          fitness: 0.9,
-          capabilities: ['COGNITIVE_REASONING'],
-          specialization: 'LOGIC'
-        }
-      }));
-      collectiveState = this.executeLinearComposition(mockCells, context, context?.domain);
+    if (activeCells.length === 0) {
+      throw new Error('Collective composition requires at least one active real Cell. Cannot compose from empty population.');
     }
+
+    // Perform linear mathematical composition
+    let collectiveState: CollectiveCognitiveState = this.executeLinearComposition(activeCells, context, context?.domain);
 
     const emergentStructures: EmergentStructure[] = [];
     const hypotheses: any[] = [];
@@ -982,13 +967,13 @@ export class CollectiveCognitionEngine {
         ])).sort();
 
         const resultingStructure = {
-          type: 'HYPOTHESIS',
+          type: status === RepresentationVerificationStatus.SUPPORTED ? 'EMERGENT_STRUCTURE' : 'HYPOTHESIS',
           statement: `${relContent.subjectConceptId} ${relContent.predicate} ${relContent.objectConceptId}`,
           context: {
             contextId: context.contextId,
             domain: context.domain
           },
-          status: 'HYPOTHESIS',
+          status: status === RepresentationVerificationStatus.SUPPORTED ? 'CONFIRMED' : 'PENDING',
           linearConfidence: collectiveState.resultVector.cognition
         };
 

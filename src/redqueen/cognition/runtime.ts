@@ -220,13 +220,26 @@ export class CognitiveRuntime {
       provenance.push(`beliefs_updated:${collectiveRepresentation.beliefs.length}_beliefs`);
 
       // Step 10: Final AI Response Construction
-      const confidence = Math.min(1.0, Math.max(0.1, collectiveState.resultVector.cognition * (reasoning.conclusion?.uncertainty?.belief ?? 0.85)));
+      // Confidence relies on Collective Mathematical Composition and Reasoning Conclusion
+      let beliefBase = reasoning.conclusion?.uncertainty?.belief;
+      if (beliefBase === undefined) {
+          beliefBase = (understanding.verificationStatus === RepresentationVerificationStatus.VERIFIED) ? 0.9 
+                     : (understanding.verificationStatus === RepresentationVerificationStatus.SUPPORTED) ? 0.7 
+                     : 0.1;
+      }
+      
+      const confidence = Math.min(1.0, Math.max(0.01, collectiveState.resultVector.cognition * beliefBase));
 
       // Deterministic Identity: Semantic equivalence isolated from timestamps
+      const sanitizedContext = { ...request.context };
+      if (sanitizedContext.temporal) {
+        delete sanitizedContext.temporal;
+      }
+      
       const semanticPayload = {
         requestId: request.requestId,
         creatorInput: request.creatorInput,
-        context: request.context,
+        context: sanitizedContext,
         understandingId: understanding.understandingId,
         activatedCells: activatedCells.map(c => c.cellId).sort(),
         collectiveIdentity: collectiveState.deterministicIdentity,

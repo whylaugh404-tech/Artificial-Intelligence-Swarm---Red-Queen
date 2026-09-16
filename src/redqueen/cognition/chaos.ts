@@ -133,13 +133,13 @@ export function deriveCellSemanticC0(input: CellSemanticChaosSeedInput): number 
 
   const canonicalPayload = {
     featureVector: {
-      computation: Number(input.featureVector.computation.toFixed(6)),
-      reliability: Number(input.featureVector.reliability.toFixed(6)),
-      cognition: Number(input.featureVector.cognition.toFixed(6)),
-      knowledge: Number(input.featureVector.knowledge.toFixed(6)),
-      specialization: Number(input.featureVector.specialization.toFixed(6)),
-      experience: Number(input.featureVector.experience.toFixed(6)),
-      resourceEfficiency: Number(input.featureVector.resourceEfficiency.toFixed(6))
+      computation: input.featureVector.computation,
+      reliability: input.featureVector.reliability,
+      cognition: input.featureVector.cognition,
+      knowledge: input.featureVector.knowledge,
+      specialization: input.featureVector.specialization,
+      experience: input.featureVector.experience,
+      resourceEfficiency: input.featureVector.resourceEfficiency
     },
     specialization: (input.specialization ?? '').trim().toUpperCase(),
     traits: input.traits ? Object.fromEntries(

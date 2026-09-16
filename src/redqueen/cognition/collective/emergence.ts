@@ -61,34 +61,32 @@ export function calculateEmergenceMetrics(params: EmergenceMetricParams): Emerge
   const cArr: number[] = FEATURE_VECTOR_KEYS.map(k => (resultVector as any)[k] ?? 0);
   const cNorm = vectorNorm(cArr);
 
-  // 1. Calculate Synergy: S = ||C|| - sum_i alpha_i ||x_i||
-  let weightedInputNormSum = 0;
-  for (const id of cellIds) {
-    const alpha = weights[id] ?? (1.0 / cellIds.length);
-    const xArr = vectorToArray(inputVectors[id]);
-    weightedInputNormSum += alpha * vectorNorm(xArr);
-  }
-  const rawSynergy = cNorm - weightedInputNormSum;
-  const synergy = Number(rawSynergy.toFixed(6));
-
-  // 2. Calculate Information Gain: D_KL(P || Q)
-  // Construct probability distribution P from collective state
-  const cSum = cArr.reduce((sum, v) => sum + Math.max(0, v), 0) + EPSILON * 7;
-  const P = cArr.map(v => (Math.max(0, v) + EPSILON) / cSum);
-
-  // Construct weighted baseline distribution Q from inputs
+  // Baseline Q is independent baseline sum(alpha * x_i)
   const qArr = new Array(7).fill(0);
   for (const id of cellIds) {
     const alpha = weights[id] ?? (1.0 / cellIds.length);
     const xArr = vectorToArray(inputVectors[id]);
     for (let j = 0; j < 7; j++) {
-      qArr[j] += alpha * Math.max(0, xArr[j]);
+      qArr[j] += alpha * xArr[j];
     }
   }
-  const qSum = qArr.reduce((sum, v) => sum + v, 0) + EPSILON * 7;
-  const Q = qArr.map(v => (v + EPSILON) / qSum);
 
-  // Kullback-Leibler divergence
+  // 1. Calculate Synergy: distance(actualCollective, independentBaseline)
+  let synergyDistSq = 0;
+  for (let j = 0; j < 7; j++) {
+    const diff = cArr[j] - qArr[j];
+    synergyDistSq += diff * diff;
+  }
+  const rawSynergy = Math.sqrt(synergyDistSq);
+  const synergy = Number(rawSynergy.toFixed(6));
+
+  // 2. Calculate Information Gain: D_KL(P || Q)
+  const cSum = cArr.reduce((sum, v) => sum + Math.max(0, v), 0) + EPSILON * 7;
+  const P = cArr.map(v => (Math.max(0, v) + EPSILON) / cSum);
+
+  const qSum = qArr.reduce((sum, v) => sum + Math.max(0, v), 0) + EPSILON * 7;
+  const Q = qArr.map(v => (Math.max(0, v) + EPSILON) / qSum);
+
   let klDiv = 0;
   for (let j = 0; j < 7; j++) {
     klDiv += P[j] * Math.log(P[j] / Q[j]);
@@ -104,7 +102,6 @@ export function calculateEmergenceMetrics(params: EmergenceMetricParams): Emerge
     const xNorm = vectorNorm(xArr);
     if (xNorm > EPSILON && cNorm > EPSILON) {
       const cosSim = Math.max(-1.0, Math.min(1.0, dotProduct(xArr, cArr) / (xNorm * cNorm)));
-      // Normalize cosine [-1, 1] to [0, 1]
       const normalizedSim = (cosSim + 1.0) / 2.0;
       coherenceSum += alpha * normalizedSim;
       validCoherenceWeight += alpha;
@@ -114,28 +111,34 @@ export function calculateEmergenceMetrics(params: EmergenceMetricParams): Emerge
     (validCoherenceWeight > 0 ? coherenceSum / validCoherenceWeight : 1.0).toFixed(6)
   );
 
-  // 4. Calculate Stability: 1 / (1 + standard_deviation)
-  let variance = 0;
-  if (modulationFactors && Object.keys(modulationFactors).length > 0) {
-    const factors = Object.values(modulationFactors);
-    const mean = factors.reduce((sum, f) => sum + f, 0) / factors.length;
-    variance = factors.reduce((sum, f) => sum + (f - mean) * (f - mean), 0) / factors.length;
-  } else if (modulatedVectors && Object.keys(modulatedVectors).length > 0) {
-    const modVals: number[] = [];
-    for (const vec of Object.values(modulatedVectors)) {
-      for (const k of FEATURE_VECTOR_KEYS) {
-        modVals.push(vec[k] ?? 0);
+  // 4. Calculate Stability: response against deterministic perturbation (distance(C0, C1))
+  const c0Arr = new Array(7).fill(0);
+  if (modulatedVectors && modulationFactors && Object.keys(modulatedVectors).length > 0) {
+    for (const id of cellIds) {
+      const alpha = weights[id] ?? (1.0 / cellIds.length);
+      const modVec = modulatedVectors[id];
+      const mt = modulationFactors[id] || 1.0;
+      for (let j = 0; j < 7; j++) {
+        const key = FEATURE_VECTOR_KEYS[j];
+        const hi = (modVec[key] ?? 0) / mt;
+        c0Arr[j] += alpha * hi;
       }
     }
-    const mean = modVals.reduce((sum, v) => sum + v, 0) / (modVals.length || 1);
-    variance = modVals.reduce((sum, v) => sum + (v - mean) * (v - mean), 0) / (modVals.length || 1);
+  } else {
+    for (let j = 0; j < 7; j++) c0Arr[j] = cArr[j];
   }
-  const stdDev = Math.sqrt(Math.max(0, variance));
-  const stability = Number((1.0 / (1.0 + stdDev)).toFixed(6));
 
-  // Genuine emergence threshold: non-zero information gain or non-zero synergy
+  let distC0C1Sq = 0;
+  for (let j = 0; j < 7; j++) {
+    const diff = cArr[j] - c0Arr[j];
+    distC0C1Sq += diff * diff;
+  }
+  const distC0C1 = Math.sqrt(distC0C1Sq);
+  const stability = Number((1.0 / (1.0 + distC0C1)).toFixed(6));
+
+  // Genuine emergence: Require evidence + structural novelty (no threshold-only logic)
   const threshold = params.threshold ?? 0.001;
-  const isEmergent = Math.abs(synergy) > threshold || informationGain > threshold;
+  const isEmergent = synergy > threshold && informationGain > threshold;
 
   const metricSummary = `Emergence analysis across ${cellIds.length} cell(s): synergy=${synergy}, infoGain=${informationGain}, coherence=${coherence}, stability=${stability} (isEmergent=${isEmergent})`;
 
