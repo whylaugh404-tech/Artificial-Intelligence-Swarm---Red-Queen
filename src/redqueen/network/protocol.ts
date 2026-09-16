@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { signingCrypto } from '../crypto/signing';
 import * as crypto from 'crypto';
+import { canonicalizeJson } from '../cognition/computation/canonical';
 
 export enum MessageType {
   HELLO = 'HELLO',
@@ -56,14 +57,12 @@ export const MessageSchema = z.object({
 export type NetworkMessage = z.infer<typeof MessageSchema>;
 
 /**
- * Deterministic canonical serialization.
- * version:type:messageId:senderId:timestamp:nonce:stringify(payload):replyToId
+ * Deterministic canonical serialization (RFC 8785).
+ * version:type:messageId:senderId:timestamp:nonce:canonicalizeJson(payload):replyToId
  */
 export function getCanonicalString(msg: NetworkMessage): string {
-  // We stringify payload deterministically if possible, but standard JSON.stringify 
-  // is fine as long as the sender creates the signature immediately after stringifying 
-  // the exact same object they attach to the message.
-  return `${msg.version}:${msg.type}:${msg.messageId}:${msg.senderId}:${msg.timestamp}:${msg.nonce}:${JSON.stringify(msg.payload)}${msg.replyToId ? ':' + msg.replyToId : ''}`;
+  const canonicalPayload = canonicalizeJson(msg.payload);
+  return `${msg.version}:${msg.type}:${msg.messageId}:${msg.senderId}:${msg.timestamp}:${msg.nonce}:${canonicalPayload}${msg.replyToId ? ':' + msg.replyToId : ''}`;
 }
 
 export function createMessage(type: MessageType, senderId: string, payload: any, privateKeyPem: string, replyToId?: string): NetworkMessage {
@@ -94,10 +93,11 @@ export function verifyMessageSignature(msg: NetworkMessage, publicKeyPem: string
 }
 
 /**
- * Replay protection cache
+ * Replay protection cache with per-sender messageId and nonce isolation.
  */
 export class ReplayCache {
-  private seenMessages: Map<string, number> = new Map();
+  private seenMessageIds: Map<string, number> = new Map();
+  private seenNonces: Map<string, number> = new Map();
   private readonly maxAgeMs = 60000; // 60 seconds TTL
 
   isDuplicateOrExpired(msg: NetworkMessage): boolean {
@@ -111,14 +111,18 @@ export class ReplayCache {
       return true; // From the future (allow 5s clock skew)
     }
 
-    // Check duplicate nonce/messageId
-    const cacheKey = `${msg.messageId}:${msg.nonce}`;
-    if (this.seenMessages.has(cacheKey)) {
+    const sender = msg.senderId || 'unknown';
+    const msgKey = `${sender}:${msg.messageId}`;
+    const nonceKey = `${sender}:${msg.nonce}`;
+
+    // Reject if either messageId has been seen OR nonce has been reused
+    if (this.seenMessageIds.has(msgKey) || this.seenNonces.has(nonceKey)) {
       return true;
     }
 
     // Add to cache
-    this.seenMessages.set(cacheKey, msg.timestamp);
+    this.seenMessageIds.set(msgKey, msg.timestamp);
+    this.seenNonces.set(nonceKey, msg.timestamp);
     
     // Cleanup periodically
     this.cleanup(now);
@@ -126,13 +130,24 @@ export class ReplayCache {
   }
 
   private cleanup(now: number) {
-    // Basic cleanup: if map gets too large, sweep expired entries
-    if (this.seenMessages.size > 1000) {
-      for (const [key, ts] of this.seenMessages.entries()) {
+    if (this.seenMessageIds.size > 1000) {
+      for (const [key, ts] of this.seenMessageIds.entries()) {
         if (now - ts > this.maxAgeMs) {
-          this.seenMessages.delete(key);
+          this.seenMessageIds.delete(key);
         }
       }
     }
+    if (this.seenNonces.size > 1000) {
+      for (const [key, ts] of this.seenNonces.entries()) {
+        if (now - ts > this.maxAgeMs) {
+          this.seenNonces.delete(key);
+        }
+      }
+    }
+  }
+
+  public clear(): void {
+    this.seenMessageIds.clear();
+    this.seenNonces.clear();
   }
 }

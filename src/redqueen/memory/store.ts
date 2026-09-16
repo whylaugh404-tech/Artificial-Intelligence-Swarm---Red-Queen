@@ -1,6 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { logger } from '../core/logger';
+import { computeDeterministicHash } from '../cognition/computation/canonical';
 
 export enum MemoryCategory {
   EPISODIC = 'EPISODIC',   // Events, actions, and historical observations
@@ -207,6 +208,24 @@ export class JsonFileMemoryStore implements MemoryStore {
     // Default version
     if (entry.version === undefined) {
       entry.version = 1;
+    }
+
+    // Ensure deterministic content hash if missing or empty
+    if (!entry.hash || entry.hash === '') {
+      entry.hash = computeDeterministicHash(entry.content);
+    }
+
+    // Ensure ISO timestamps
+    if (!entry.createdAt) {
+      entry.createdAt = new Date().toISOString();
+    }
+    if (!entry.updatedAt) {
+      entry.updatedAt = new Date().toISOString();
+    }
+
+    // Ensure provenance tracking
+    if (!Array.isArray(entry.provenance) || entry.provenance.length === 0) {
+      entry.provenance = [entry.cellId || 'local'];
     }
 
     this.memoryMap.set(entry.id, entry);

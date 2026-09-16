@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { RedQueenCellVisualizer } from './components/RedQueenCell';
 import { ChatInterface } from './components/Chat';
-import { Database, Shield, Zap, MessageSquare, LayoutDashboard } from 'lucide-react';
+import { BenchmarkPanel } from './components/BenchmarkPanel';
+import { Database, Shield, Zap, MessageSquare, LayoutDashboard, Activity } from 'lucide-react';
 
 export default function App() {
   const [health, setHealth] = useState<any>(null);
   const [memories, setMemories] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'chat' | 'dashboard' | 'memory'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'dashboard' | 'memory' | 'benchmark'>('benchmark');
 
   const fetchState = async () => {
     try {
@@ -71,6 +72,7 @@ export default function App() {
         {/* Mobile Tabs */}
         <div className="flex lg:hidden bg-neutral-900/50 p-1 rounded-lg border border-neutral-800 shrink-0">
           <TabButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} icon={<MessageSquare className="w-4 h-4"/>} label="Red Queen" />
+          <TabButton active={activeTab === 'benchmark'} onClick={() => setActiveTab('benchmark')} icon={<Activity className="w-4 h-4"/>} label="Benchmark" />
           <TabButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard className="w-4 h-4"/>} label="Dashboard" />
           <TabButton active={activeTab === 'memory'} onClick={() => setActiveTab('memory')} icon={<Database className="w-4 h-4"/>} label="Memory" />
         </div>
@@ -78,10 +80,18 @@ export default function App() {
         {/* Main Grid */}
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-0">
           
-          {/* Left Column: Visualizer & System Stats */}
+          {/* Left Column: Navigation (Desktop) & Visualizer */}
           <div className={`lg:col-span-4 flex-col gap-6 lg:h-full lg:min-h-0 ${activeTab === 'dashboard' || activeTab === 'memory' ? 'flex h-auto' : 'hidden lg:flex'}`}>
             
-            <div className={`lg:h-2/3 shrink-0 ${activeTab === 'dashboard' ? 'h-auto py-8' : 'hidden lg:block'}`}>
+            {/* Desktop Nav */}
+            <div className="hidden lg:flex flex-col gap-2 bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-3 shrink-0">
+              <DesktopNavButton active={activeTab === 'benchmark'} onClick={() => setActiveTab('benchmark')} icon={<Activity className="w-4 h-4" />} label="Distributed Benchmark" />
+              <DesktopNavButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} icon={<MessageSquare className="w-4 h-4" />} label="Agent Interface" />
+              <DesktopNavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard className="w-4 h-4" />} label="Cell Visualizer" />
+              <DesktopNavButton active={activeTab === 'memory'} onClick={() => setActiveTab('memory')} icon={<Database className="w-4 h-4" />} label="Memory Logs" />
+            </div>
+
+            <div className={`shrink-0 ${activeTab === 'dashboard' ? 'h-auto py-8 lg:flex-1' : 'hidden lg:block'}`}>
               <RedQueenCellVisualizer health={health} memoriesCount={memories.length} />
             </div>
             
@@ -106,9 +116,10 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right Column: Chat Interface */}
-          <div className={`lg:col-span-8 lg:h-full lg:min-h-0 w-full ${activeTab === 'chat' ? 'block h-[600px] lg:h-full' : 'hidden lg:block'}`}>
-            <ChatInterface />
+          {/* Right Column: Chat Interface or Benchmark Panel */}
+          <div className={`lg:col-span-8 lg:h-full lg:min-h-0 w-full ${(activeTab === 'chat' || activeTab === 'benchmark') ? 'block h-[600px] lg:h-full' : 'hidden lg:block'}`}>
+            {activeTab === 'benchmark' && <BenchmarkPanel />}
+            {activeTab === 'chat' && <ChatInterface />}
           </div>
           
         </div>
@@ -119,8 +130,24 @@ export default function App() {
 
 function TabButton({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
   return (
-    <button onClick={onClick} className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-md text-xs font-bold uppercase tracking-wider transition-colors ${active ? 'bg-red-900/20 text-red-500' : 'text-neutral-500 hover:text-neutral-300'}`}>
-      {icon} <span className="hidden sm:inline">{label}</span><span className="sm:hidden">{label.split(' ')[0]}</span>
+    <button onClick={onClick} className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-colors ${active ? 'bg-red-900/20 text-red-500' : 'text-neutral-500 hover:text-neutral-300'}`}>
+      {icon} <span className="hidden sm:inline">{label}</span>
+    </button>
+  );
+}
+
+function DesktopNavButton({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
+  return (
+    <button 
+      onClick={onClick} 
+      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
+        active 
+          ? 'bg-red-950/30 text-red-400 border border-red-900/50' 
+          : 'bg-transparent text-neutral-500 border border-transparent hover:bg-neutral-800 hover:text-neutral-300'
+      }`}
+    >
+      {icon}
+      {label}
     </button>
   );
 }

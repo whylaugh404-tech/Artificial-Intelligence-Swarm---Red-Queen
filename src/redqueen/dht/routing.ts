@@ -241,9 +241,11 @@ export class RoutingTable {
       }
     }
 
+    const boundedLimit = Math.max(1, Math.min(Number.isFinite(limit) && limit > 0 ? limit : this.k, 100));
+
     return allPeers
       .sort((a, b) => compareDistance(targetId, a.nodeId, b.nodeId))
-      .slice(0, limit);
+      .slice(0, boundedLimit);
   }
 
   getAllPeers(): PeerInfo[] {

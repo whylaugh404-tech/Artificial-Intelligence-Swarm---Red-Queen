@@ -1,11 +1,49 @@
 import express from 'express';
 import path from 'path';
+import * as fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { Cell } from './src/redqueen/core/cell';
 import { logger } from './src/redqueen/core/logger';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+function parseCSV(text: string) {
+  const lines: string[][] = [];
+  let row: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+    if (char === '\"') {
+      if (inQuotes && nextChar === '\"') {
+        current += '\"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      row.push(current);
+      current = '';
+    } else if ((char === '\r' || char === '\n') && !inQuotes) {
+      if (char === '\r' && nextChar === '\n') i++;
+      row.push(current);
+      if (row.length > 0 && (row.length > 1 || row[0] !== '')) {
+        lines.push(row);
+      }
+      row = [];
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  if (current || row.length > 0) {
+    row.push(current);
+    lines.push(row);
+  }
+  return lines;
+}
 
 async function startServer() {
   const app = express();
@@ -42,6 +80,92 @@ async function startServer() {
       status: 'healthy',
       cell: cell.getStatus()
     });
+  });
+
+  app.get('/api/benchmark/dataset', async (req, res) => {
+    try {
+      const memBefore = process.memoryUsage().heapUsed;
+      const startTime = Date.now();
+
+      // Read real dataset
+      const csvPath = path.join(process.cwd(), 'test', 'fixtures', 'input_dataset.csv');
+      const csvData = fs.readFileSync(csvPath, 'utf-8');
+      const rows = parseCSV(csvData);
+      const records = rows.slice(1).map((parts, idx) => ({
+        id: idx + 1,
+        kalimat: parts[0],
+        sentiment: parseInt(parts[1], 10) || 0
+      }));
+
+      // Setup cells
+      const orch = new Cell(':memory:', 'bench_orch', undefined, undefined, undefined, { capabilities: ['SWARM_COORDINATION'] as any, specialization: 'ORCHESTRATOR' });
+      const w1 = new Cell(':memory:', 'bench_w1', undefined, undefined, undefined, { capabilities: ['INFO_PROCESSING'] as any, specialization: 'WORKER_ALPHA' });
+      const w2 = new Cell(':memory:', 'bench_w2', undefined, undefined, undefined, { capabilities: ['INFO_PROCESSING'] as any, specialization: 'WORKER_BETA' });
+      const w3 = new Cell(':memory:', 'bench_w3', undefined, undefined, undefined, { capabilities: ['INFO_PROCESSING'] as any, specialization: 'WORKER_GAMMA' });
+
+      await orch.start(41101);
+      await w1.start(41102);
+      await w2.start(41103);
+      await w3.start(41104);
+
+      await orch.connectToPeer('ws://localhost:41102');
+      await orch.connectToPeer('ws://localhost:41103');
+      await orch.connectToPeer('ws://localhost:41104');
+      await new Promise(r => setTimeout(r, 1500)); // Handshake delay
+
+      const numPartitions = 3;
+      const chunkSize = Math.ceil(records.length / numPartitions);
+      const subtasks = [];
+      const specializations = ['WORKER_ALPHA', 'WORKER_BETA', 'WORKER_GAMMA'];
+      
+      for (let i = 0; i < numPartitions; i++) {
+        const chunk = records.slice(i * chunkSize, (i + 1) * chunkSize);
+        if (chunk.length > 0) {
+          subtasks.push({
+            type: 'DATA_TRANSFORMATION',
+            payload: { items: chunk, transformation: 'SENTIMENT_FREQUENCY_AGGREGATION' },
+            requiredCapabilities: ['INFO_PROCESSING'],
+            requiredSpecialization: specializations[i]
+          });
+        }
+      }
+
+      const task = orch.collectiveComputation.createTask({
+        goal: 'Distributed Dataset Processing Benchmark',
+        computationType: 'DATA_TRANSFORMATION',
+        payload: { subtasks }
+      });
+
+      const dispatchStart = Date.now();
+      const executionResult = await orch.collectiveComputation.executeTask(task);
+      const dispatchTime = Date.now() - dispatchStart;
+
+      await orch.stop();
+      await w1.stop();
+      await w2.stop();
+      await w3.stop();
+
+      const memAfter = process.memoryUsage().heapUsed;
+      const memOverhead = memAfter - memBefore;
+      const totalTime = Date.now() - startTime;
+
+      res.json({
+        metrics: {
+          datasetSize: records.length,
+          partitions: numPartitions,
+          nodesUsed: 4,
+          dispatchAndExecutionTimeMs: dispatchTime,
+          communicationCostMs: (executionResult.finalOutput as any).costs?.communicationCost || 0,
+          synchronizationCostMs: (executionResult.finalOutput as any).costs?.synchronizationCost || 0,
+          verificationCostMs: (executionResult.finalOutput as any).costs?.verificationCost || 0,
+          totalRoundTripTimeMs: totalTime,
+          memoryOverheadMb: parseFloat((memOverhead / 1024 / 1024).toFixed(2))
+        },
+        executionResult
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get('/api/cell/status', (req, res) => {
