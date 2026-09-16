@@ -83,8 +83,15 @@ export const NonlinearDynamicsSchema = z.object({
 
 export type NonlinearDynamics = z.infer<typeof NonlinearDynamicsSchema>;
 
-export const FeatureStatusSchema = z.enum(['KNOWN', 'UNKNOWN']);
+export const FeatureStatusSchema = z.enum(['KNOWN', 'UNKNOWN', 'DERIVED', 'ESTIMATED', 'OBSERVED']);
 export type FeatureStatus = z.infer<typeof FeatureStatusSchema>;
+
+export const EpistemicFeatureValueSchema = z.object({
+  value: z.number().min(0.0).max(1.0).optional(),
+  status: FeatureStatusSchema,
+  provenance: z.string()
+});
+export type EpistemicFeatureValue = z.infer<typeof EpistemicFeatureValueSchema>;
 
 export const FeatureAvailabilitySchema = z.object({
   computation: FeatureStatusSchema,
@@ -96,6 +103,17 @@ export const FeatureAvailabilitySchema = z.object({
   resourceEfficiency: FeatureStatusSchema
 });
 export type FeatureAvailability = z.infer<typeof FeatureAvailabilitySchema>;
+
+export const EpistemicFeatureRecordSchema = z.object({
+  computation: EpistemicFeatureValueSchema,
+  reliability: EpistemicFeatureValueSchema,
+  cognition: EpistemicFeatureValueSchema,
+  knowledge: EpistemicFeatureValueSchema,
+  specialization: EpistemicFeatureValueSchema,
+  experience: EpistemicFeatureValueSchema,
+  resourceEfficiency: EpistemicFeatureValueSchema
+});
+export type EpistemicFeatureRecord = z.infer<typeof EpistemicFeatureRecordSchema>;
 
 export const CollectiveCognitiveStateSchema = z.object({
   collectiveId: z.string().min(1),
@@ -109,6 +127,7 @@ export const CollectiveCognitiveStateSchema = z.object({
   compositionType: z.enum(['linear', 'nonlinear_tanh_chaos']).optional(),
   nonlinearCollectiveVector: z.record(z.string(), z.number()).optional(),
   featureStatuses: z.record(z.string(), FeatureAvailabilitySchema).optional(),
+  featureDetails: z.record(z.string(), EpistemicFeatureRecordSchema).optional(),
   resultVector: CognitiveFeatureVectorSchema,
   provenance: z.array(z.string()),
   deterministicIdentity: z.string().min(1),

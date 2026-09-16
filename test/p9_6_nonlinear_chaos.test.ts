@@ -590,5 +590,92 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
     it('menolak iterasi chaos yang melebihi batas kedalaman siklus maksimum (MAX_COGNITIVE_CYCLE_DEPTH)', () => {
       expect(() => iterateLogisticMap(0.5, 101)).toThrow(/satisfying 0 <= steps <= 100/);
     });
+
+    it('menghasilkan EpistemicFeatureRecord dengan granular provenance pada featureDetails', () => {
+      const population = [cellAlpha, cellBeta];
+      const result = engine.executeNonlinearComposition(population, undefined, 'quantum');
+
+      expect(result.featureDetails).toBeDefined();
+      expect(result.featureDetails![cellAlpha.nodeId]).toBeDefined();
+      const alphaDetails = result.featureDetails![cellAlpha.nodeId];
+
+      expect(alphaDetails.reliability.status).toBe('KNOWN');
+      expect(alphaDetails.reliability.provenance).toContain('reliability:');
+      expect(alphaDetails.specialization.status).toBe('KNOWN');
+      expect(alphaDetails.specialization.provenance).toContain('domain_match');
+      expect(alphaDetails.computation.status).toBe('UNKNOWN');
+      expect(alphaDetails.computation.provenance).toContain('computation:UNKNOWN');
+    });
+
+    it('menghitung kuantifikasi metrik Emergence secara matematis dalam CollectiveRepresentation', () => {
+      const mockUnderstanding: any = {
+        understandingId: 'und_test',
+        conceptId: 'con_alpha',
+        epistemicStatus: 'BELIEVED',
+        confidence: 0.8,
+        groundingEvidenceIds: [],
+        uncertaintyFactors: [],
+        timestamp: '2026-09-16T00:00:00.000Z'
+      };
+
+      const context = {
+        contextId: 'ctx_emergence',
+        domain: 'quantum',
+        environment: 'swarm',
+        activeGoals: ['synthesize'],
+        constraints: [],
+        timestamp: '2026-09-16T00:00:00.000Z'
+      };
+
+      const contributions = [
+        {
+          cellId: cellAlpha.nodeId,
+          contributionType: 'CONCEPT' as const,
+          content: { conceptId: 'con_alpha', canonicalName: 'EntangledQubit' }
+        },
+        {
+          cellId: cellBeta.nodeId,
+          contributionType: 'CONCEPT' as const,
+          content: { conceptId: 'con_beta', canonicalName: 'SuperpositionState' }
+        }
+      ];
+
+      const representation = engine.compose(mockUnderstanding, contributions, context);
+
+      expect(representation.emergenceMetrics).toBeDefined();
+      const em = representation.emergenceMetrics!;
+      expect(typeof em.synergy).toBe('number');
+      expect(typeof em.informationGain).toBe('number');
+      expect(typeof em.coherence).toBe('number');
+      expect(typeof em.stability).toBe('number');
+      expect(typeof em.isEmergent).toBe('boolean');
+      expect(em.metricSummary).toBeDefined();
+      expect(representation.provenance.some(p => p.startsWith('emergence_metrics_computed:'))).toBe(true);
+    });
+
+    it('menghitung bobot komposisi secara deterministik tanpa fallback prior fitness palsu 0.8', () => {
+      const cellNoFitness: Cell = {
+        nodeId: 'cell_no_fitness',
+        lineageId: 'lin_1',
+        genome: {
+          genomeId: 'gen_1',
+          lineageId: 'lin_1'
+        } as unknown as CellGenome,
+        memoryStore: {} as any,
+        p2pTransport: {} as any,
+        evolutionEngine: {} as any,
+        start: vi.fn(),
+        stop: vi.fn(),
+        getState: vi.fn().mockReturnValue({
+          reliability: 0.8,
+          cognition: 0.6
+        }),
+        submitTask: vi.fn()
+      } as any;
+
+      const weights = engine.calculateCompositionWeights([cellNoFitness]);
+      expect(weights['cell_no_fitness']).toBeDefined();
+      expect(weights['cell_no_fitness'].normalizedWeight).toBe(1.0);
+    });
   });
 });

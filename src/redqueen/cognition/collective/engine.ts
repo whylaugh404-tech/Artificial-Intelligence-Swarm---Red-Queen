@@ -27,6 +27,8 @@ import {
   CompositionTrace,
   CollectiveCognitiveState,
   NonlinearCompositionOptions,
+  EpistemicFeatureRecord,
+  EpistemicFeatureValue,
   applyLinearTransformation,
   generateDeterministicMatrixAndBias,
   vectorToArray,
@@ -35,6 +37,7 @@ import {
   validateFeatureVector,
   FEATURE_VECTOR_KEYS
 } from '../types';
+import { calculateEmergenceMetrics, EmergenceMetrics } from './emergence';
 
 export interface PeerSelectionCriteria {
   requiredCapabilities?: string[];
@@ -85,6 +88,7 @@ export interface BeliefState {
 
 export interface CollectiveRepresentation {
   emergentStructures: EmergentStructure[];
+  emergenceMetrics?: EmergenceMetrics;
   hypotheses: any[];
   beliefs: BeliefState[];
   contradictions: any[];
@@ -146,6 +150,7 @@ export class CollectiveCognitionEngine {
     vector: CognitiveFeatureVector;
     statuses: Record<keyof CognitiveFeatureVector, 'KNOWN' | 'UNKNOWN'>;
     provenance: string[];
+    details: EpistemicFeatureRecord;
   } {
     const statuses: Record<keyof CognitiveFeatureVector, 'KNOWN' | 'UNKNOWN'> = {
       computation: 'UNKNOWN',
@@ -324,7 +329,46 @@ export class CollectiveCognitionEngine {
     };
 
     validateFeatureVector(vector);
-    return { vector, statuses, provenance };
+
+    const details: EpistemicFeatureRecord = {
+      computation: {
+        value: statuses.computation === 'UNKNOWN' ? undefined : computation,
+        status: statuses.computation,
+        provenance: provenance.find(p => p.startsWith('computation:')) ?? 'computation:UNKNOWN'
+      },
+      reliability: {
+        value: statuses.reliability === 'UNKNOWN' ? undefined : reliability,
+        status: statuses.reliability,
+        provenance: provenance.find(p => p.startsWith('reliability:')) ?? 'reliability:UNKNOWN'
+      },
+      cognition: {
+        value: statuses.cognition === 'UNKNOWN' ? undefined : cognition,
+        status: statuses.cognition,
+        provenance: provenance.find(p => p.startsWith('cognition:')) ?? 'cognition:UNKNOWN'
+      },
+      knowledge: {
+        value: statuses.knowledge === 'UNKNOWN' ? undefined : knowledge,
+        status: statuses.knowledge,
+        provenance: provenance.find(p => p.startsWith('knowledge:')) ?? 'knowledge:UNKNOWN'
+      },
+      specialization: {
+        value: statuses.specialization === 'UNKNOWN' ? undefined : specialization,
+        status: statuses.specialization,
+        provenance: provenance.find(p => p.startsWith('specialization:')) ?? 'specialization:UNKNOWN'
+      },
+      experience: {
+        value: statuses.experience === 'UNKNOWN' ? undefined : experience,
+        status: statuses.experience,
+        provenance: provenance.find(p => p.startsWith('experience:')) ?? 'experience:UNKNOWN'
+      },
+      resourceEfficiency: {
+        value: statuses.resourceEfficiency === 'UNKNOWN' ? undefined : resourceEfficiency,
+        status: statuses.resourceEfficiency,
+        provenance: provenance.find(p => p.startsWith('resourceEfficiency:')) ?? 'resourceEfficiency:UNKNOWN'
+      }
+    };
+
+    return { vector, statuses, provenance, details };
   }
 
   /**
@@ -346,9 +390,16 @@ export class CollectiveCognitionEngine {
     const rawScores: Record<string, number> = {};
     for (const cell of cells) {
       const x_i = this.extractFeatureVector(cell, targetDomain);
-      const fitness = (cell.genome as any)?.fitness ?? 0.8;
+      const rawFitness = (cell.genome as any)?.fitness ?? (typeof (cell as any).evolution?.getFitness === 'function' ? (cell as any).evolution.getFitness() : null);
       const specBonus = (cell.genome?.specialization && targetDomain && cell.genome.specialization.toUpperCase().includes(targetDomain.toUpperCase())) ? 0.35 : (cell.genome?.specialization ? 0.15 : 0.0);
-      const rawScore = Math.max(0.01, (fitness * 0.4) + (x_i.reliability * 0.3) + specBonus + (x_i.cognition * 0.2));
+
+      let rawScore: number;
+      if (typeof rawFitness === 'number' && Number.isFinite(rawFitness)) {
+        rawScore = Math.max(0.01, (clamp01(rawFitness) * 0.4) + (x_i.reliability * 0.3) + specBonus + (x_i.cognition * 0.2));
+      } else {
+        // No arbitrary prior: derive score purely from observable cell reliability, cognition, and domain specialization
+        rawScore = Math.max(0.01, (x_i.reliability * 0.45) + (x_i.cognition * 0.35) + specBonus);
+      }
       rawScores[cell.nodeId] = rawScore;
     }
 
@@ -411,12 +462,14 @@ export class CollectiveCognitionEngine {
     const steps: string[] = [];
     const featureProvenances: string[] = [];
     const featureStatuses: Record<string, any> = {};
+    const featureDetails: Record<string, EpistemicFeatureRecord> = {};
 
     // Step 1: Feature Extraction, Affine Transformation, and Tanh Activation for each Cell
     for (const cell of sortedCells) {
-      const { vector: x_i, statuses, provenance: featProv } = this.extractFeatureVectorWithStatus(cell, targetDomain);
+      const { vector: x_i, statuses, provenance: featProv, details } = this.extractFeatureVectorWithStatus(cell, targetDomain);
       inputVectors[cell.nodeId] = x_i;
       featureStatuses[cell.nodeId] = statuses;
+      featureDetails[cell.nodeId] = details;
       featureProvenances.push(`${cell.nodeId}:${featProv.join(';')}`);
 
       const { matrix, bias } = generateDeterministicMatrixAndBias(
@@ -596,6 +649,7 @@ export class CollectiveCognitionEngine {
       compositionType: 'nonlinear_tanh_chaos',
       nonlinearCollectiveVector,
       featureStatuses,
+      featureDetails,
       resultVector,
       provenance,
       deterministicIdentity,
@@ -632,13 +686,18 @@ export class CollectiveCognitionEngine {
 
     const inputVectors: Record<string, CognitiveFeatureVector> = {};
     const transformations: Record<string, LinearTransformation> = {};
-    const rawScores: Record<string, number> = {};
     const steps: string[] = [];
+    const featureProvenances: string[] = [];
+    const featureStatuses: Record<string, any> = {};
+    const featureDetails: Record<string, EpistemicFeatureRecord> = {};
 
-    // Step 1 & 2: Feature extraction and linear transformation for each Cell
+    // Step 1: Feature extraction with epistemic status and linear transformation for each Cell
     for (const cell of sortedCells) {
-      const x_i = this.extractFeatureVector(cell, targetDomain);
+      const { vector: x_i, statuses, provenance: featProv, details } = this.extractFeatureVectorWithStatus(cell, targetDomain);
       inputVectors[cell.nodeId] = x_i;
+      featureStatuses[cell.nodeId] = statuses;
+      featureDetails[cell.nodeId] = details;
+      featureProvenances.push(`${cell.nodeId}:${featProv.join(';')}`);
 
       const { matrix, bias } = generateDeterministicMatrixAndBias(
         x_i,
@@ -654,33 +713,20 @@ export class CollectiveCognitionEngine {
       );
       transformations[cell.nodeId] = trans;
 
-      // Calculate state/fitness/relevance raw score s_i > 0
-      const fitness = (cell.genome as any)?.fitness ?? 0.8;
-      const specBonus = (cell.genome?.specialization && targetDomain && cell.genome.specialization.toUpperCase().includes(targetDomain.toUpperCase())) ? 0.35 : (cell.genome?.specialization ? 0.15 : 0.0);
-      const rawScore = Math.max(0.01, (fitness * 0.4) + (x_i.reliability * 0.3) + specBonus + (x_i.cognition * 0.2));
-      rawScores[cell.nodeId] = rawScore;
-
       steps.push(`Cell ${cell.nodeId} transformed: x_i -> z_i`);
     }
 
-    // Step 3: Compute normalized weights α_i >= 0, Σ α_i = 1
-    const totalScore = Object.values(rawScores).reduce((sum, s) => sum + s, 0) || 1.0;
+    // Step 2: Unified authoritative weight calculation across all cells (no fake fitness priors)
+    const calculatedWeights = this.calculateCompositionWeights(sortedCells, targetDomain);
     const weights: Record<string, number> = {};
-    const cellIds = Object.keys(rawScores);
-
-    for (const id of cellIds) {
-      weights[id] = Number((rawScores[id] / totalScore).toFixed(6));
+    for (const cell of sortedCells) {
+      weights[cell.nodeId] = calculatedWeights[cell.nodeId].normalizedWeight;
     }
+    steps.push(`Normalized composition weights calculated across ${sortedCells.length} cells`);
 
-    // Adjust last weight to ensure mathematically exact sum = 1.0
-    if (cellIds.length > 0) {
-      const sumExceptLast = cellIds.slice(0, -1).reduce((s, id) => s + weights[id], 0);
-      weights[cellIds[cellIds.length - 1]] = Number((1.0 - sumExceptLast).toFixed(6));
-    }
-    steps.push(`Normalized composition weights calculated across ${cellIds.length} cells`);
-
-    // Step 4: Weighted composition C = Σ α_i z_i
+    // Step 3: Weighted composition C = Σ α_i z_i
     const cArr = new Array(7).fill(0);
+    const cellIds = Object.keys(weights);
     for (const id of cellIds) {
       const alpha = weights[id];
       const zRecord = transformations[id].transformedVector;
@@ -719,6 +765,7 @@ export class CollectiveCognitionEngine {
 
     const provenance = [
       `collective_linear_composition_initiated:${sourceCellIds.join(',')}`,
+      `feature_provenance:${featureProvenances.join('|')}`,
       `weights_assigned:${Object.entries(weights).map(([k, v]) => `${k}=${v}`).join(';')}`,
       `collective_state_formed:${collectiveId}`
     ];
@@ -729,6 +776,8 @@ export class CollectiveCognitionEngine {
       inputVectors,
       weights,
       transformations,
+      featureStatuses,
+      featureDetails,
       resultVector,
       provenance,
       deterministicIdentity,
@@ -805,7 +854,7 @@ export class CollectiveCognitionEngine {
     // Perform linear mathematical composition
     let collectiveState: CollectiveCognitiveState;
     if (activeCells.length > 0) {
-      collectiveState = this.executeLinearComposition(activeCells, context, context.domain);
+      collectiveState = this.executeLinearComposition(activeCells, context, context?.domain);
     } else {
       // Construct from contributions metadata
       const uniqueCellIds = Array.from(new Set(contributions.map(c => c.cellId))).sort();
@@ -819,7 +868,7 @@ export class CollectiveCognitionEngine {
           specialization: 'LOGIC'
         }
       }));
-      collectiveState = this.executeLinearComposition(mockCells, context, context.domain);
+      collectiveState = this.executeLinearComposition(mockCells, context, context?.domain);
     }
 
     const emergentStructures: EmergentStructure[] = [];
@@ -907,7 +956,7 @@ export class CollectiveCognitionEngine {
           sourceStructures: [relContent, ...relatedConcepts.map(c => c.content)],
           transformation: 'CROSS_CELL_RELATION_MATCH',
           resultingStructure,
-          confidence: Math.max(rel.confidence ?? 0.8, 0.1),
+          confidence: Math.max(typeof rel.confidence === 'number' && Number.isFinite(rel.confidence) ? rel.confidence : 0.6, 0.1),
           provenance: [`interaction:${rel.cellId}_with_multiple_cells`, `collective_state:${collectiveState.collectiveId}`],
           deterministicIdentity,
           verificationStatus: status
@@ -918,7 +967,7 @@ export class CollectiveCognitionEngine {
 
         beliefs.push({
           conceptId: relContent.relationId ?? 'rel_unknown',
-          belief: status === RepresentationVerificationStatus.SUPPORTED ? 0.9 : (status === RepresentationVerificationStatus.CONTRADICTED ? 0.5 : 0.1),
+          belief: status === RepresentationVerificationStatus.SUPPORTED ? 0.9 : (status === RepresentationVerificationStatus.CONTRADICTED ? 0.1 : 0.5),
           supportingEvidence: supportingEvs.map(e => e.content?.evidenceId ?? 'ev_unknown'),
           contradictingEvidence: contradictingEvs.map(e => e.content?.evidenceId ?? 'ev_unknown'),
           status
@@ -959,10 +1008,26 @@ export class CollectiveCognitionEngine {
       hypotheses.push(resultingStructure);
     }
 
+    // Calculate genuine mathematical emergence metrics across constituent cells
+    const cellStates = collectiveState.nonlinearDynamics?.cellStates;
+    const modulationFactors = cellStates
+      ? Object.fromEntries(Object.entries(cellStates).map(([k, v]) => [k, v.modulationFactor]))
+      : undefined;
+
+    const emergenceMetrics = calculateEmergenceMetrics({
+      resultVector: collectiveState.resultVector,
+      inputVectors: collectiveState.inputVectors,
+      weights: collectiveState.weights,
+      modulatedVectors: collectiveState.modulatedVectors,
+      modulationFactors
+    });
+
     provenance.push(`emergent_structures_generated:${emergentStructures.length}`);
+    provenance.push(`emergence_metrics_computed:${emergenceMetrics.metricSummary}`);
 
     const representation: CollectiveRepresentation = {
       emergentStructures,
+      emergenceMetrics,
       hypotheses,
       beliefs,
       contradictions,
