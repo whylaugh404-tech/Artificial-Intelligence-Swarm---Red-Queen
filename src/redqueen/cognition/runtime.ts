@@ -589,7 +589,7 @@ export class CognitiveRuntime {
             statement: `Cell ${c.cellId} active contribution in domain ${c.specialization || 'general'}`,
             sourceType: 'UNDERSTANDING' as const,
             sourceId: c.cellId,
-            confidence: (c as any).activationLevel ?? 0.8
+            confidence: (c as any).activationLevel
           });
         });
       }
@@ -599,7 +599,7 @@ export class CognitiveRuntime {
           statement: `Cell ${c.cellId} active contribution in domain ${c.specialization || 'general'}`,
           sourceType: 'UNDERSTANDING' as const,
           sourceId: c.cellId,
-          confidence: (c as any).activationLevel ?? 0.8
+          confidence: (c as any).activationLevel
         });
       });
       if (premises.length === 0) {

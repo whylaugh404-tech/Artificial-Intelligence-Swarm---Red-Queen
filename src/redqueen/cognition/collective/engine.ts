@@ -32,7 +32,7 @@ import {
   FeatureStatus,
   applyLinearTransformation,
   generateDeterministicMatrixAndBias,
-  vectorToArray,
+  getEpistemicVector,
   arrayToVector,
   clamp01,
   validateFeatureVector,
@@ -511,12 +511,11 @@ export class CollectiveCognitionEngine {
       // Normalize raw score
       if (totalWeight > 0) {
         rawScore = rawScore / totalWeight;
+        rawScores[cell.nodeId] = Math.max(0.01, rawScore);
       } else {
-        // Fallback for completely unknown cell (neutral baseline)
-        rawScore = 0.5;
+        // Fallback for completely unknown cell (excluded)
+        rawScores[cell.nodeId] = 0.0;
       }
-
-      rawScores[cell.nodeId] = Math.max(0.01, rawScore);
     }
 
     const totalScore = Object.values(rawScores).reduce((sum, s) => sum + s, 0) || 1.0;

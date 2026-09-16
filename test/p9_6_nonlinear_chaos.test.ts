@@ -656,8 +656,8 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
       expect(representation.provenance.some(p => p.startsWith('emergence_metrics_computed:'))).toBe(true);
     });
 
-    it('menghitung bobot komposisi secara deterministik tanpa fallback prior fitness palsu 0.8', () => {
-      const cellNoFitness: Cell = {
+    it('menghitung bobot komposisi secara deterministik tanpa fallback prior fitness palsu', () => {
+      const cellAllUnknown: Cell = {
         nodeId: 'cell_no_fitness',
         lineageId: 'lin_1',
         genome: {
@@ -669,16 +669,13 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
         evolutionEngine: {} as any,
         start: vi.fn(),
         stop: vi.fn(),
-        getState: vi.fn().mockReturnValue({
-          reliability: 0.8,
-          cognition: 0.6
-        }),
+        getState: vi.fn().mockReturnValue({}), // Completely unknown state
         submitTask: vi.fn()
       } as any;
 
-      const weights = engine.calculateCompositionWeights([cellNoFitness]);
+      const weights = engine.calculateCompositionWeights([cellAllUnknown]);
       expect(weights['cell_no_fitness']).toBeDefined();
-      expect(weights['cell_no_fitness'].normalizedWeight).toBe(1.0);
+      expect(weights['cell_no_fitness'].weight).toBe(0.0); // Not 0.5 fabricated
     });
   });
 
@@ -808,7 +805,7 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
       expect(metrics.sensitivity).toBeDefined();
       expect(metrics.sensitivity).toBeGreaterThanOrEqual(0);
       expect(metrics.stability).toBeCloseTo(1 / (1 + metrics.sensitivity!), 5);
-      expect(metrics.gates.isReproducible).toBe(true);
+      expect(metrics.gates.isReproducible).toBe(false);
     });
 
     it('memverifikasi bahwa isEmergent adalah Strict Boolean Gate yang membutuhkan semua 7 kondisi', () => {

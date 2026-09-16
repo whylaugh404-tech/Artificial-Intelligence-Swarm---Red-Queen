@@ -2,7 +2,7 @@ import { z } from 'zod';
 import {
   CognitiveFeatureVector,
   FEATURE_VECTOR_KEYS,
-  vectorToArray,
+  getEpistemicVector,
   clamp01,
   applyLinearTransformation,
   LinearTransformation
@@ -100,9 +100,14 @@ export function generateDeterministicPerturbation(
 
   for (const [cellId, vec] of Object.entries(inputVectors)) {
     const perturbed: CognitiveFeatureVector = { ...vec };
-    let seed = 0;
-    for (let i = 0; i < cellId.length; i++) {
-      seed = (seed * 31 + cellId.charCodeAt(i)) >>> 0;
+    
+    // Mathematically derive seed from semantic state, explicitly excluding cell identity
+    let seed = 12345;
+    for (const key of FEATURE_VECTOR_KEYS) {
+      const val = vec[key];
+      if (val !== undefined && val !== null && Number.isFinite(val)) {
+        seed = (seed * 31 + Math.round(val * 1000000)) >>> 0;
+      }
     }
 
     for (let j = 0; j < FEATURE_VECTOR_KEYS.length; j++) {
@@ -167,46 +172,56 @@ export function calculateEmergenceMetrics(params: EmergenceMetricParams): Emerge
         hasInformationGain: false,
         hasStructuralNovelty: false,
         hasEvidence: false,
-        isReproducible: true,
-        hasValidStability: true
+        isReproducible: false,
+        hasValidStability: false
       },
       metricSummary: 'Zero constituent cells; trivial identity state.',
       isEmergent: false
     };
   }
 
-  const cArr: number[] = FEATURE_VECTOR_KEYS.map(k => (resultVector as any)[k] ?? 0);
-  const cNorm = vectorNorm(cArr);
+  const cEpis = getEpistemicVector(resultVector as CognitiveFeatureVector);
+  const cArr = cEpis.values;
+  const cMask = cEpis.mask;
+
+  const cNormSq = cArr.reduce((sum, val, idx) => sum + (cMask[idx] ? val * val : 0), 0);
+  const cNorm = Math.sqrt(cNormSq);
 
   // Baseline Q is independent weighted prior sum(alpha * x_i)
   const qArr = new Array(7).fill(0);
   for (const id of cellIds) {
     const alpha = weights[id] ?? (1.0 / cellIds.length);
-    const xArr = vectorToArray(inputVectors[id]);
+    const xEpis = getEpistemicVector(inputVectors[id]);
     for (let j = 0; j < 7; j++) {
-      qArr[j] += alpha * xArr[j];
+      if (xEpis.mask[j]) {
+        qArr[j] += alpha * xEpis.values[j];
+      }
     }
   }
 
   // 1. Calculate Synergy: distance(actualCollective, independentBaseline)
   let synergyDistSq = 0;
   for (let j = 0; j < 7; j++) {
-    const diff = cArr[j] - qArr[j];
-    synergyDistSq += diff * diff;
+    if (cMask[j]) {
+      const diff = cArr[j] - qArr[j];
+      synergyDistSq += diff * diff;
+    }
   }
   const rawSynergy = Math.sqrt(synergyDistSq);
   const synergy = Number(rawSynergy.toFixed(6));
 
   // 2. Calculate Information Gain: D_KL(P || Q)
-  const cSum = cArr.reduce((sum, v) => sum + Math.max(0, v), 0) + EPSILON * 7;
-  const P = cArr.map(v => (Math.max(0, v) + EPSILON) / cSum);
+  const cSum = cArr.reduce((sum, v, idx) => sum + (cMask[idx] ? Math.max(0, v) : 0), 0) + EPSILON * 7;
+  const P = cArr.map((v, idx) => cMask[idx] ? (Math.max(0, v) + EPSILON) / cSum : 0);
 
-  const qSum = qArr.reduce((sum, v) => sum + Math.max(0, v), 0) + EPSILON * 7;
-  const Q = qArr.map(v => (Math.max(0, v) + EPSILON) / qSum);
+  const qSum = qArr.reduce((sum, v, idx) => sum + (cMask[idx] ? Math.max(0, v) : 0), 0) + EPSILON * 7;
+  const Q = qArr.map((v, idx) => cMask[idx] ? (Math.max(0, v) + EPSILON) / qSum : 0);
 
   let klDiv = 0;
   for (let j = 0; j < 7; j++) {
-    klDiv += P[j] * Math.log(P[j] / Q[j]);
+    if (cMask[j]) {
+      klDiv += P[j] * Math.log(P[j] / Q[j]);
+    }
   }
   const informationGain = Number(Math.max(0.0, klDiv).toFixed(6));
 
@@ -215,10 +230,23 @@ export function calculateEmergenceMetrics(params: EmergenceMetricParams): Emerge
   let validCoherenceWeight = 0;
   for (const id of cellIds) {
     const alpha = weights[id] ?? (1.0 / cellIds.length);
-    const xArr = vectorToArray(inputVectors[id]);
-    const xNorm = vectorNorm(xArr);
+    const xEpis = getEpistemicVector(inputVectors[id]);
+    const xArr = xEpis.values;
+    
+    let dp = 0;
+    let xNormSq = 0;
+    for (let j = 0; j < 7; j++) {
+      if (xEpis.mask[j]) {
+        xNormSq += xArr[j] * xArr[j];
+        if (cMask[j]) {
+          dp += xArr[j] * cArr[j];
+        }
+      }
+    }
+    const xNorm = Math.sqrt(xNormSq);
+
     if (xNorm > EPSILON && cNorm > EPSILON) {
-      const cosSim = Math.max(-1.0, Math.min(1.0, dotProduct(xArr, cArr) / (xNorm * cNorm)));
+      const cosSim = Math.max(-1.0, Math.min(1.0, dp / (xNorm * cNorm)));
       const normalizedSim = (cosSim + 1.0) / 2.0;
       coherenceSum += alpha * normalizedSim;
       validCoherenceWeight += alpha;
@@ -231,9 +259,6 @@ export function calculateEmergenceMetrics(params: EmergenceMetricParams): Emerge
   // 4. True Perturbation Stability:
   // BASELINE: X -> collective -> C_base
   // PERTURBED: X' = X + deterministic ε -> collective computation -> C_perturbed
-  // Δinput = distance(X, X')
-  // Δoutput = distance(C_base, C_perturbed)
-  // stability = 1 / (1 + (Δoutput / (Δinput + ε)))
   const { perturbedInputs, deltaInput } = generateDeterministicPerturbation(inputVectors);
 
   const cPerturbedArr = new Array(7).fill(0);
@@ -242,10 +267,8 @@ export function calculateEmergenceMetrics(params: EmergenceMetricParams): Emerge
     if (Array.isArray(customResult)) {
       for (let j = 0; j < 7; j++) cPerturbedArr[j] = customResult[j] ?? 0;
     } else {
-      for (let j = 0; j < 7; j++) {
-        const key = FEATURE_VECTOR_KEYS[j];
-        cPerturbedArr[j] = (customResult as any)[key] ?? 0;
-      }
+      const customEpis = getEpistemicVector(customResult as CognitiveFeatureVector);
+      for (let j = 0; j < 7; j++) cPerturbedArr[j] = customEpis.mask[j] ? customEpis.values[j] : 0;
     }
   } else if (transformations && Object.keys(transformations).length > 0) {
     // Recompute collective mathematical engine: affine -> tanh -> chaos modulation -> weighted sum
@@ -261,26 +284,32 @@ export function calculateEmergenceMetrics(params: EmergenceMetricParams): Emerge
           cPerturbedArr[j] += alpha * (hPert[key] ?? 0) * mt;
         }
       } else {
-        const xArr = vectorToArray(perturbedInputs[id]);
+        const xEpis = getEpistemicVector(perturbedInputs[id]);
         for (let j = 0; j < 7; j++) {
-          cPerturbedArr[j] += alpha * xArr[j];
+          if (xEpis.mask[j]) {
+            cPerturbedArr[j] += alpha * xEpis.values[j];
+          }
         }
       }
     }
   } else {
     for (const id of cellIds) {
       const alpha = weights[id] ?? (1.0 / cellIds.length);
-      const xArr = vectorToArray(perturbedInputs[id]);
+      const xEpis = getEpistemicVector(perturbedInputs[id]);
       for (let j = 0; j < 7; j++) {
-        cPerturbedArr[j] += alpha * xArr[j];
+        if (xEpis.mask[j]) {
+          cPerturbedArr[j] += alpha * xEpis.values[j];
+        }
       }
     }
   }
 
   let deltaOutputSq = 0;
   for (let j = 0; j < 7; j++) {
-    const diff = cPerturbedArr[j] - cArr[j];
-    deltaOutputSq += diff * diff;
+    if (cMask[j]) {
+      const diff = cPerturbedArr[j] - cArr[j];
+      deltaOutputSq += diff * diff;
+    }
   }
   const deltaOutput = Number(Math.sqrt(deltaOutputSq).toFixed(6));
 
@@ -298,13 +327,13 @@ export function calculateEmergenceMetrics(params: EmergenceMetricParams): Emerge
     hasInformationGain: Boolean(params.hasInformationGain ?? (informationGain > threshold)),
     hasStructuralNovelty: Boolean(
       params.hasStructuralNovelty ??
-      (params.emergentStructuresCount !== undefined ? params.emergentStructuresCount > 0 : true)
+      (params.emergentStructuresCount !== undefined ? params.emergentStructuresCount > 0 : false)
     ),
     hasEvidence: Boolean(
       params.hasEvidence ??
       (params.evidenceCount !== undefined ? params.evidenceCount > 0 : false)
     ),
-    isReproducible: Boolean(params.isReproducible ?? true),
+    isReproducible: Boolean(params.isReproducible ?? false),
     hasValidStability: Boolean(params.hasValidStability ?? (stability >= 0.2 && stability <= 1.0))
   };
 

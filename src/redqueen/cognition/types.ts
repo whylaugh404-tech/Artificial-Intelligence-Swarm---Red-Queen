@@ -220,19 +220,34 @@ export const FEATURE_VECTOR_KEYS: Array<keyof CognitiveFeatureVector> = [
 ];
 
 /**
- * Converts a CognitiveFeatureVector to an array of 7 numbers.
- * UNKNOWN fields default to 0 for raw numerical array operations when necessary.
+ * Epistemic mathematical representation that preserves the distinction
+ * between KNOWN values (including 0.0) and UNKNOWN dimensions.
  */
-export function vectorToArray(v: CognitiveFeatureVector): number[] {
-  return [
-    v.computation !== undefined && v.computation !== null ? clamp01(v.computation) : 0,
-    v.reliability !== undefined && v.reliability !== null ? clamp01(v.reliability) : 0,
-    v.cognition !== undefined && v.cognition !== null ? clamp01(v.cognition) : 0,
-    v.knowledge !== undefined && v.knowledge !== null ? clamp01(v.knowledge) : 0,
-    v.specialization !== undefined && v.specialization !== null ? clamp01(v.specialization) : 0,
-    v.experience !== undefined && v.experience !== null ? clamp01(v.experience) : 0,
-    v.resourceEfficiency !== undefined && v.resourceEfficiency !== null ? clamp01(v.resourceEfficiency) : 0
-  ];
+export interface EpistemicVector {
+  values: number[]; // Guaranteed 0.0 for unknown dimensions, but mask protects it
+  mask: boolean[];  // true if KNOWN, false if UNKNOWN
+}
+
+/**
+ * Converts a CognitiveFeatureVector to an epistemic mathematical array.
+ * UNKNOWN dimensions will be masked out (false), rather than silently converted to 0.
+ */
+export function getEpistemicVector(v: CognitiveFeatureVector): EpistemicVector {
+  const values: number[] = [];
+  const mask: boolean[] = [];
+  
+  for (const key of FEATURE_VECTOR_KEYS) {
+    const val = v[key];
+    if (val !== undefined && val !== null) {
+      values.push(clamp01(val));
+      mask.push(true);
+    } else {
+      values.push(0.0);
+      mask.push(false);
+    }
+  }
+  
+  return { values, mask };
 }
 
 /**
