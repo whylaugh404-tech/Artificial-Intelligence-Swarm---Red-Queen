@@ -232,16 +232,32 @@ export function vectorToArray(v: CognitiveFeatureVector): Array<number | undefin
 
 /**
  * Converts an array of 7 numbers back to a CognitiveFeatureVector clamped in [0, 1].
+ * Preserves undefined for epistemically unknown dimensions without converting them to 0.
  */
-export function arrayToVector(arr: number[]): CognitiveFeatureVector {
+export function arrayToVector(
+  arr: Array<number | undefined>
+): CognitiveFeatureVector {
   return {
-    computation: clamp01(arr[0] ?? 0),
-    reliability: clamp01(arr[1] ?? 0),
-    cognition: clamp01(arr[2] ?? 0),
-    knowledge: clamp01(arr[3] ?? 0),
-    specialization: clamp01(arr[4] ?? 0),
-    experience: clamp01(arr[5] ?? 0),
-    resourceEfficiency: clamp01(arr[6] ?? 0)
+    computation:
+      arr[0] === undefined ? undefined : clamp01(arr[0]),
+
+    reliability:
+      arr[1] === undefined ? undefined : clamp01(arr[1]),
+
+    cognition:
+      arr[2] === undefined ? undefined : clamp01(arr[2]),
+
+    knowledge:
+      arr[3] === undefined ? undefined : clamp01(arr[3]),
+
+    specialization:
+      arr[4] === undefined ? undefined : clamp01(arr[4]),
+
+    experience:
+      arr[5] === undefined ? undefined : clamp01(arr[5]),
+
+    resourceEfficiency:
+      arr[6] === undefined ? undefined : clamp01(arr[6])
   };
 }
 

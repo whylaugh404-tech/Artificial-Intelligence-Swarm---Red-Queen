@@ -98,9 +98,71 @@ export function generateDeterministicPerturbation(
     if (value === undefined || !Number.isFinite(value)) {
       return undefined;
     }
-    const direction = index % 2 === 0 ? 1 : -1;
+
+    const direction =
+      value <= 0
+        ? 1
+        : value >= 1
+          ? -1
+          : index % 2 === 0
+            ? 1
+            : -1;
+
     return clamp01(value + direction * epsilon);
   });
+}
+
+export function maskedKLDivergence(
+  p: Array<number | undefined>,
+  q: Array<number | undefined>
+): number | undefined {
+  const validIndices: number[] = [];
+
+  for (let i = 0; i < Math.min(p.length, q.length); i++) {
+    const pv = p[i];
+    const qv = q[i];
+
+    if (
+      pv !== undefined &&
+      qv !== undefined &&
+      Number.isFinite(pv) &&
+      Number.isFinite(qv)
+    ) {
+      validIndices.push(i);
+    }
+  }
+
+  if (validIndices.length === 0) {
+    return undefined;
+  }
+
+  let pSum = 0;
+  let qSum = 0;
+
+  for (const i of validIndices) {
+    pSum += Math.max(0, p[i]!);
+    qSum += Math.max(0, q[i]!);
+  }
+
+  if (pSum <= 0 || qSum <= 0) {
+    return undefined;
+  }
+
+  let kl = 0;
+
+  for (const i of validIndices) {
+    const pi =
+      (Math.max(0, p[i]!) + EPSILON) /
+      (pSum + EPSILON * validIndices.length);
+
+    const qi =
+      (Math.max(0, q[i]!) + EPSILON) /
+      (qSum + EPSILON * validIndices.length);
+
+    kl += pi * Math.log(pi / qi);
+  }
+
+  return Math.max(0, kl);
 }
 
 export function calculateEmergenceMetrics(params: EmergenceMetricParams): EmergenceMetrics {
@@ -152,22 +214,8 @@ export function calculateEmergenceMetrics(params: EmergenceMetricParams): Emerge
     }
   }
 
-  const rawSynergy = maskedDistance(cArr, qArr) ?? 0.0;
-  const synergy = Number(rawSynergy.toFixed(6));
-
-  const cSum = cArr.reduce((sum, v) => sum! + (v !== undefined ? Math.max(0, v) : 0), 0)! + EPSILON * 7;
-  const P = cArr.map(v => v !== undefined ? (Math.max(0, v) + EPSILON) / cSum : 0);
-
-  const qSum = qArr.reduce((sum, v) => sum! + (v !== undefined ? Math.max(0, v) : 0), 0)! + EPSILON * 7;
-  const Q = qArr.map(v => v !== undefined ? (Math.max(0, v) + EPSILON) / qSum : 0);
-
-  let klDiv = 0;
-  for (let j = 0; j < 7; j++) {
-    if (cArr[j] !== undefined) {
-      klDiv += P[j] * Math.log(P[j] / Q[j]);
-    }
-  }
-  const informationGain = Number(Math.max(0.0, klDiv).toFixed(6));
+  const synergy = maskedDistance(cArr, qArr) ?? 0.0;
+  const informationGain = maskedKLDivergence(cArr, qArr) ?? 0.0;
 
   let coherenceSum = 0;
   let validCoherenceWeight = 0;

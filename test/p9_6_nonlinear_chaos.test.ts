@@ -22,9 +22,15 @@ import {
   generateDeterministicMatrixAndBias,
   applyLinearTransformation,
   getEpistemicMask,
-  getEpistemicMaskRecord
+  getEpistemicMaskRecord,
+  arrayToVector
 } from '../src/redqueen/cognition/types';
-import { calculateEmergenceMetrics, generateDeterministicPerturbation, maskedDistance } from '../src/redqueen/cognition/collective/emergence';
+import {
+  calculateEmergenceMetrics,
+  generateDeterministicPerturbation,
+  maskedDistance,
+  maskedKLDivergence
+} from '../src/redqueen/cognition/collective/emergence';
 
 describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Deterministic Chaos', () => {
   let engine: CollectiveCognitionEngine;
@@ -932,33 +938,77 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
   });
 });
 
-  describe('P9.6.2 - Mathematical Emergence Repairs', () => {
-    it('1. UNKNOWN !== KNOWN_ZERO', () => {
-      
-      expect(maskedDistance([undefined, 1], [0, 1])).toBe(0);
-      expect(maskedDistance([undefined], [undefined])).toBeUndefined();
+  describe('P9.6.2 — Final Mathematical Integrity Repairs', () => {
+    it('TEST A — preserves UNKNOWN as undefined in arrayToVector', () => {
+      const result = arrayToVector([
+        undefined,
+        1,
+        0,
+        undefined,
+        0.5,
+        undefined,
+        0.9
+      ]);
+
+      expect(result.computation).toBeUndefined();
+      expect(result.reliability).toBe(1);
+      expect(result.cognition).toBe(0);
+      expect(result.knowledge).toBeUndefined();
+      expect(result.specialization).toBe(0.5);
+      expect(result.experience).toBeUndefined();
+      expect(result.resourceEfficiency).toBe(0.9);
     });
 
-    it('2. PERTURBATION MUST NOT DEPEND ON CELL IDENTITY', () => {
-      
-      const base = [0.4, 0.6];
-      const perturbed = generateDeterministicPerturbation(base, 0.001);
-      expect(perturbed).not.toEqual(base);
+    it('TEST B — distinguishes known zero from UNKNOWN', () => {
+      const result = arrayToVector([
+        0,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined
+      ]);
 
-      const a = generateDeterministicPerturbation([0.4, 0.6], 0.001);
-      const b = generateDeterministicPerturbation([0.4, 0.6], 0.001);
-      expect(a).toEqual(b);
+      expect(result.computation).toBe(0);
+      expect(result.reliability).toBeUndefined();
     });
 
-    it('3. TEST VERIFIED GATE', () => {
-      
+    it('TEST C — handles known dimension + unknown baseline in KL divergence without NaN or Infinity', () => {
+      const p = [0.4, undefined];
+      const q = [0.2, undefined];
+      const kl = maskedKLDivergence(p, q);
+      expect(kl).toBeDefined();
+      expect(Number.isFinite(kl)).toBe(true);
+      expect(isNaN(kl!)).toBe(false);
+
+      const res = calculateEmergenceMetrics({
+        resultVector: { computation: 0.8, reliability: undefined, cognition: 0.5 },
+        inputVectors: {
+          cell1: { computation: undefined, reliability: 0.7, cognition: 0.3 }
+        },
+        weights: { cell1: 1.0 }
+      });
+      expect(Number.isFinite(res.informationGain)).toBe(true);
+      expect(isNaN(res.informationGain)).toBe(false);
+    });
+
+    it('TEST D — perturbs boundary values 0 and 1 deterministically with positive epsilon', () => {
+      const perturbed = generateDeterministicPerturbation([0, 1, 0.5], 0.02);
+      expect(perturbed[0]).toBeGreaterThan(0);
+      expect(perturbed[1]).toBeLessThan(1);
+      expect(perturbed[0]).toBeCloseTo(0.02, 6);
+      expect(perturbed[1]).toBeCloseTo(0.98, 6);
+    });
+
+    it('TEST E — requires all seven emergence gates to be true for isEmergent === true', () => {
       const inputVectors = {
-        'cell1': { computation: 0.8 },
-        'cell2': { computation: 0.1 }
+        cell1: { computation: 0.8 },
+        cell2: { computation: 0.1 }
       };
-      
+
       const allTrueParams = {
-        resultVector: { computation: 0.9 }, // force synergy
+        resultVector: { computation: 0.9 },
         inputVectors,
         weights: { cell1: 0.5, cell2: 0.5 },
         hasInteraction: true,
@@ -974,7 +1024,6 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
       expect(res.isEmergent).toBe(true);
       expect(res.status).toBe('VERIFIED');
 
-      // Test each gate individually false
       const gatesToTest = [
         'hasInteraction',
         'hasBaselineDeviation',
@@ -983,19 +1032,66 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
         'hasEvidence',
         'isReproducible',
         'hasValidStability'
-      ];
+      ] as const;
 
       for (const gate of gatesToTest) {
         const testParams = { ...allTrueParams, [gate]: false };
         const testRes = calculateEmergenceMetrics(testParams as any);
         expect(testRes.isEmergent).toBe(false);
         expect(testRes.status).not.toBe('VERIFIED');
-
-        // Test overriding status does not work
-        const overrideParams = { ...testParams, status: 'VERIFIED' };
-        const overrideRes = calculateEmergenceMetrics(overrideParams as any);
-        expect(overrideRes.status).not.toBe('VERIFIED');
       }
     });
-}
-)
+
+    it('TEST F — defaults hasEvidence, hasStructuralNovelty, and isReproducible to false when missing', () => {
+      const inputVectors = {
+        cell1: { computation: 0.8 },
+        cell2: { computation: 0.2 }
+      };
+
+      const res = calculateEmergenceMetrics({
+        resultVector: { computation: 0.9 },
+        inputVectors,
+        weights: { cell1: 0.5, cell2: 0.5 }
+      });
+
+      expect(res.gates.hasEvidence).toBe(false);
+      expect(res.gates.hasStructuralNovelty).toBe(false);
+      expect(res.gates.isReproducible).toBe(false);
+      expect(res.isEmergent).toBe(false);
+    });
+
+    it('TEST G — prevents caller from forcing VERIFIED status when conditions are not satisfied', () => {
+      const inputVectors = {
+        cell1: { computation: 0.8 },
+        cell2: { computation: 0.2 }
+      };
+
+      const overrideParams = {
+        resultVector: { computation: 0.9 },
+        inputVectors,
+        weights: { cell1: 0.5, cell2: 0.5 },
+        status: 'VERIFIED' as const,
+        hasEvidence: false,
+        hasStructuralNovelty: false,
+        isReproducible: false
+      };
+
+      const res = calculateEmergenceMetrics(overrideParams as any);
+      expect(res.status).not.toBe('VERIFIED');
+    });
+
+    it('calculates maskedDistance ignoring undefined and returning undefined if no shared dimensions', () => {
+      expect(maskedDistance([undefined, 1], [0, 1])).toBe(0);
+      expect(maskedDistance([undefined], [undefined])).toBeUndefined();
+    });
+
+    it('generates perturbation independent of cell identity', () => {
+      const base = [0.4, 0.6];
+      const perturbed = generateDeterministicPerturbation(base, 0.001);
+      expect(perturbed).not.toEqual(base);
+
+      const a = generateDeterministicPerturbation([0.4, 0.6], 0.001);
+      const b = generateDeterministicPerturbation([0.4, 0.6], 0.001);
+      expect(a).toEqual(b);
+    });
+  });
