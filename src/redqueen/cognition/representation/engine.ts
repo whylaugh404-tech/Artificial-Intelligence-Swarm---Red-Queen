@@ -100,7 +100,7 @@ export class CognitiveRepresentationEngine {
     // Representation confidence is derived from structural facts completeness & knowledge confidence
     const representationConfidence = Math.min(
       0.95,
-      Number(((knowledge.confidence * 0.7) + (Math.min(factsList.length, 5) * 0.05)).toFixed(3))
+      (knowledge.confidence * 0.7) + (Math.min(factsList.length, 5) * 0.05)
     );
 
     const primaryConceptId = `concept_${uuidv4()}`;
@@ -140,7 +140,7 @@ export class CognitiveRepresentationEngine {
             sourceKnowledgeIds: [knowledge.knowledgeId],
             sourceExperienceIds: experience ? [experience.experienceId] : [],
             originatingCellId: this.cellId,
-            confidence: Number((representationConfidence * 0.9).toFixed(3)),
+            confidence: representationConfidence * 0.9,
             verificationStatus: RepresentationVerificationStatus.SUPPORTED,
             createdAt: now,
             updatedAt: now,
@@ -155,7 +155,7 @@ export class CognitiveRepresentationEngine {
             subjectConceptId: coreConceptId,
             predicate: CognitiveRelationPredicate.PART_OF,
             objectConceptId: primaryConcept.conceptId,
-            confidence: Number((representationConfidence * 0.9).toFixed(3)),
+            confidence: representationConfidence * 0.9,
             provenance: provenanceTrail,
             verificationStatus: RepresentationVerificationStatus.SUPPORTED,
             createdAt: now,
@@ -189,7 +189,7 @@ export class CognitiveRepresentationEngine {
           sourceKnowledgeIds: [knowledge.knowledgeId],
           sourceExperienceIds: experience ? [experience.experienceId] : [],
           originatingCellId: this.cellId,
-          confidence: Number((representationConfidence * 0.85).toFixed(3)),
+          confidence: representationConfidence * 0.85,
           verificationStatus: RepresentationVerificationStatus.PENDING,
           createdAt: now,
           updatedAt: now,
@@ -206,7 +206,7 @@ export class CognitiveRepresentationEngine {
         subjectConceptId: primaryConcept.conceptId,
         predicate: relationPredicate,
         objectConceptId: targetConceptId,
-        confidence: Number((rel.confidence || representationConfidence).toFixed(3)),
+        confidence: rel.confidence || representationConfidence,
         provenance: provenanceTrail,
         verificationStatus: RepresentationVerificationStatus.SUPPORTED,
         createdAt: now,
@@ -251,7 +251,7 @@ export class CognitiveRepresentationEngine {
         retainedStructure: abstractionPattern.retainedStructure,
         discardedDetails: abstractionPattern.discardedDetails,
         confidence: isMultiEvidence
-          ? Math.min(0.92, Number((0.65 + (supportingConceptIds.length * 0.08)).toFixed(3)))
+          ? Math.min(0.92, 0.65 + (supportingConceptIds.length * 0.08))
           : 0.40,
         provenance: provenanceTrail,
         originatingCellId: this.cellId,
@@ -468,7 +468,7 @@ export class CognitiveRepresentationEngine {
       pattern: patternInfo.pattern,
       supportingEvidence: Array.from(new Set(supportingEvidence)),
       confidence: isMultiEvidence
-        ? Math.min(0.92, Number((0.5 + (supportingEvidence.length * 0.12)).toFixed(3)))
+        ? Math.min(0.92, 0.5 + (supportingEvidence.length * 0.12))
         : 0.45,
       verificationStatus,
       provenance: [this.cellId],
@@ -551,14 +551,14 @@ export class CognitiveRepresentationEngine {
       // Compute actual structural similarity from mapping coverage and topology
       const maxRelCount = Math.max(uniqueSourceRels.length, targetRels.length, 1);
       const coverage = mappedRelations.length / maxRelCount;
-      const structuralSimilarity = Number(((coverage * 0.7) + (cand.signatureSimilarity * 0.3)).toFixed(3));
+      const structuralSimilarity = (coverage * 0.7) + (cand.signatureSimilarity * 0.3);
 
       if (structuralSimilarity < 0.25) {
         continue;
       }
 
       // Compute dynamic confidence
-      const confidence = Number((Math.min(concept.confidence, target.confidence) * structuralSimilarity).toFixed(3));
+      const confidence = Math.min(concept.confidence, target.confidence) * structuralSimilarity;
 
       const sourceDomain = String(concept.category || 'SourceDomain');
       const targetDomain = String(target.category || 'TargetDomain');

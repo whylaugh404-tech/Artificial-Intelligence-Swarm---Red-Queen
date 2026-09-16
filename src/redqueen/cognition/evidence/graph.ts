@@ -94,7 +94,7 @@ export class EvidenceDependencyGraph {
       return {
         type: EvidenceDependencyType.CORRELATED,
         basis: `Shared observation ID: ${evA.observationId}`,
-        confidence: 0.85
+        confidence: Math.min(evA.confidence ?? 1.0, evB.confidence ?? 1.0)
       };
     }
 

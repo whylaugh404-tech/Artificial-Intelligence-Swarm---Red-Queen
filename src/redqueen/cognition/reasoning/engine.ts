@@ -160,7 +160,7 @@ export class ReasoningEngine {
       let statement = pInput.statement;
       let sourceType: PremiseSourceType = pInput.sourceType || 'OBSERVATION';
       let sourceId = pInput.sourceId || '';
-      let confidence = pInput.confidence !== undefined ? pInput.confidence : 1.0;
+      let confidence = pInput.confidence;
       let epistemicStatus = pInput.epistemicStatus;
       const premiseEvidences: string[] = [...(pInput.evidenceIds || [])];
       const premiseProvenance: string[] = [...(pInput.provenance || [])];
@@ -282,7 +282,7 @@ export class ReasoningEngine {
           targetConceptId: h.targetConceptId,
           targetRelationId: h.targetRelationId,
           predicate: h.predicate,
-          confidence: h.confidence !== undefined ? h.confidence : 0.5,
+          confidence: h.confidence,
           status: h.status || EpistemicStatus.HYPOTHESIS,
           rationale: h.rationale || ''
         });
@@ -297,7 +297,7 @@ export class ReasoningEngine {
       const hypObj = ReasoningHypothesisSchema.parse({
         hypothesisId,
         statement,
-        confidence: primaryPremise ? primaryPremise.confidence : 0.5,
+        confidence: primaryPremise ? primaryPremise.confidence : undefined,
         status: EpistemicStatus.HYPOTHESIS,
         rationale: 'Hypothesis formed automatically from reasoning premises.'
       });
@@ -324,7 +324,7 @@ export class ReasoningEngine {
           premiseIds,
           assumptions,
           derivedHypothesisId,
-          intermediateConfidence: stepInput.intermediateConfidence !== undefined ? stepInput.intermediateConfidence : 1.0
+          intermediateConfidence: stepInput.intermediateConfidence,
         });
         loadedInferenceSteps.push(stepObj);
       }
@@ -345,7 +345,7 @@ export class ReasoningEngine {
         premiseIds,
         assumptions,
         derivedHypothesisId,
-        intermediateConfidence: loadedPremises.reduce((acc, p) => acc * p.confidence, 1.0)
+        intermediateConfidence: loadedPremises.reduce((acc, p) => acc * (p.confidence !== undefined ? p.confidence : 1.0), 1.0)
       });
       loadedInferenceSteps.push(stepObj);
     }
@@ -503,17 +503,16 @@ export class ReasoningEngine {
         if (ev) {
           this.evidenceCache.set(evId, ev);
           if (ev.provenance?.sourceId) provenanceSet.add(ev.provenance.sourceId);
-          verifiedCount++;
-          // Use real evidence confidence if available, otherwise default to a high but non-perfect value
-          totalEvidenceConfidence += ev.confidence !== undefined ? ev.confidence : 0.85;
-        } else {
-          // Id reference without full cached object
-          totalEvidenceConfidence += 0.8;
+          if (ev.confidence !== undefined) {
+            totalEvidenceConfidence += ev.confidence;
+            verifiedCount++;
+          }
         }
       }
 
-      const avgEvidenceConfidence = totalEvidenceConfidence / supportingEvidenceArray.length;
-      const combinedConfidence = Math.min(1.0, (targetHypothesis.confidence * 0.4) + (avgEvidenceConfidence * 0.6));
+      const avgEvidenceConfidence = verifiedCount > 0 ? totalEvidenceConfidence / verifiedCount : 0.0;
+      const hypConfidence = targetHypothesis.confidence !== undefined ? targetHypothesis.confidence : 0.0;
+      const combinedConfidence = Math.min(1.0, (hypConfidence * 0.4) + (avgEvidenceConfidence * 0.6));
 
       if (combinedConfidence < minThreshold) {
         // Insufficient confidence threshold -> UNKNOWN

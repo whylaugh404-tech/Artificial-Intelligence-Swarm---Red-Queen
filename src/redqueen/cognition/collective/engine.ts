@@ -222,12 +222,23 @@ export class CollectiveCognitionEngine {
 
     // 4. Knowledge
     // Derived strictly from verified knowledge references, concepts, or semantic memory count
+    //
+    // NORMALIZATION SEMANTICS:
+    // - domain: [0, ∞) representing total countable knowledge items
+    // - codomain: [0, 1] representing saturated knowledge feature value
+    // - meaning: Translates discrete knowledge item counts into a continuous feature space.
+    // - monotonicity: Monotonically increasing.
+    // - saturation behavior: Linearly saturates to 1.0 at MAX_KNOWLEDGE_COUNT.
+    // - provenance: derived from aggregated internal memory metrics.
+    // - status: DERIVED.
+    const MAX_KNOWLEDGE_COUNT = 10; // Explicit model parameter, not intrinsic intelligence.
+    
     let knowledge = 0.0;
     const kCount = (cogState?.knowledgeReferences?.length ?? 0) +
                    (cogState?.conceptReferences?.length ?? 0) +
                    (cogState?.memoryStats?.semantic ?? 0);
     if (kCount > 0) {
-      knowledge = clamp01(kCount / 10);
+      knowledge = clamp01(kCount / MAX_KNOWLEDGE_COUNT);
       statuses.knowledge = 'KNOWN';
       provenance.push(`knowledge:KNOWN(references_and_concepts:${kCount})`);
     } else if (cellState && typeof cellState.knowledge === 'number' && Number.isFinite(cellState.knowledge)) {
@@ -272,6 +283,17 @@ export class CollectiveCognitionEngine {
 
     // 6. Experience
     // Derived strictly from actual accumulated memories, completed goals, or task executions (NOT generation metadata)
+    //
+    // NORMALIZATION SEMANTICS:
+    // - domain: [0, ∞) representing total countable experience events
+    // - codomain: [0, 1] representing saturated experience feature value
+    // - meaning: Translates discrete historical events into a continuous feature space.
+    // - monotonicity: Monotonically increasing.
+    // - saturation behavior: Linearly saturates to 1.0 at MAX_EXPERIENCE_EVENTS.
+    // - provenance: derived from aggregated internal memory and execution metrics.
+    // - status: DERIVED.
+    const MAX_EXPERIENCE_EVENTS = 50; // Explicit model parameter, not intrinsic intelligence.
+
     let experience = 0.0;
     const totalMem = cogState?.memoryStats?.total ?? 0;
     const completedGoals = (cogState as any)?.completedGoals?.length ?? 0;
@@ -281,7 +303,7 @@ export class CollectiveCognitionEngine {
     const totalExpEvents = totalMem + completedGoals + taskCount;
 
     if (totalExpEvents > 0) {
-      experience = clamp01(totalExpEvents / 50);
+      experience = clamp01(totalExpEvents / MAX_EXPERIENCE_EVENTS);
       statuses.experience = 'KNOWN';
       provenance.push(`experience:KNOWN(memory_and_goals:${totalExpEvents})`);
     } else if (cellState && typeof cellState.experience === 'number' && Number.isFinite(cellState.experience)) {
@@ -389,18 +411,48 @@ export class CollectiveCognitionEngine {
   ): Record<string, { weight: number; normalizedWeight: number }> {
     const rawScores: Record<string, number> = {};
     for (const cell of cells) {
-      const x_i = this.extractFeatureVector(cell, targetDomain);
+      const extracted = this.extractFeatureVectorWithStatus(cell, targetDomain);
+      const details = extracted.details;
+      
       const rawFitness = (cell.genome as any)?.fitness ?? (typeof (cell as any).evolution?.getFitness === 'function' ? (cell as any).evolution.getFitness() : null);
       const specBonus = (cell.genome?.specialization && targetDomain && cell.genome.specialization.toUpperCase().includes(targetDomain.toUpperCase())) ? 0.35 : (cell.genome?.specialization ? 0.15 : 0.0);
 
-      let rawScore: number;
+      let rawScore = 0.0;
+      let totalWeight = 0.0;
+
+      // Fitness component
       if (typeof rawFitness === 'number' && Number.isFinite(rawFitness)) {
-        rawScore = Math.max(0.01, (clamp01(rawFitness) * 0.4) + (x_i.reliability * 0.3) + specBonus + (x_i.cognition * 0.2));
-      } else {
-        // No arbitrary prior: derive score purely from observable cell reliability, cognition, and domain specialization
-        rawScore = Math.max(0.01, (x_i.reliability * 0.45) + (x_i.cognition * 0.35) + specBonus);
+        rawScore += clamp01(rawFitness) * 0.4;
+        totalWeight += 0.4;
       }
-      rawScores[cell.nodeId] = rawScore;
+
+      // Reliability component
+      if (details.reliability.status !== 'UNKNOWN' && details.reliability.value !== undefined) {
+        const weight = totalWeight > 0 ? 0.3 : 0.45;
+        rawScore += details.reliability.value * weight;
+        totalWeight += weight;
+      }
+
+      // Cognition component
+      if (details.cognition.status !== 'UNKNOWN' && details.cognition.value !== undefined) {
+        const weight = totalWeight > 0 ? 0.2 : 0.35;
+        rawScore += details.cognition.value * weight;
+        totalWeight += weight;
+      }
+
+      // Specialization component
+      rawScore += specBonus;
+      // We don't track totalWeight for specBonus because it's an additive bonus, not an averageable metric.
+
+      // If no metrics were known, assign a default baseline score, else normalize.
+      if (totalWeight > 0) {
+        rawScore = rawScore / totalWeight;
+      } else {
+        // Fallback for completely unknown cell (0.5 neutral baseline)
+        rawScore = 0.5 + specBonus;
+      }
+
+      rawScores[cell.nodeId] = Math.max(0.01, rawScore);
     }
 
     const totalScore = Object.values(rawScores).reduce((sum, s) => sum + s, 0) || 1.0;

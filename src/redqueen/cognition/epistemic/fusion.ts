@@ -240,9 +240,9 @@ export class EpistemicFusionEngine {
         conflictId: `conflict_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
         supportingEvidenceIds: supportingItems.map(i => i.evidence.evidenceId),
         conflictingEvidenceIds: conflictingItems.map(i => i.evidence.evidenceId),
-        supportingMass: Number(effectiveSupportMass.toFixed(4)),
-        conflictingMass: Number(effectiveConflictMass.toFixed(4)),
-        discrepancy: Number(discrepancy.toFixed(4)),
+        supportingMass: effectiveSupportMass,
+        conflictingMass: effectiveConflictMass,
+        discrepancy,
         reason: `Opposing evidence detected: ${supportingItems.length} supporting (mass: ${effectiveSupportMass.toFixed(2)}) vs ${conflictingItems.length} contradicting (mass: ${effectiveConflictMass.toFixed(2)})`
       };
     }
@@ -276,7 +276,7 @@ export class EpistemicFusionEngine {
 
     // Expected probability in Subjective Logic: E = belief + (baseRate * uncertainty)
     const expectedProbability = belief + (baseRate * uncertainty);
-    const rawConfidence = Math.max(0, Math.min(1, Number(expectedProbability.toFixed(4))));
+    const rawConfidence = Math.max(0, Math.min(1, expectedProbability));
 
     const fusedState: EpistemicState = {
       stateId: `epistemic_state_${fusionId}`,
@@ -297,8 +297,8 @@ export class EpistemicFusionEngine {
       conflictingEvidence: conflictingItems.map(i => i.evidence),
       neutralEvidence: neutralItems.map(i => i.evidence),
       dependencies: allRelevantDeps,
-      effectiveSupportMass: Number(effectiveSupportMass.toFixed(4)),
-      effectiveConflictMass: Number(effectiveConflictMass.toFixed(4)),
+      effectiveSupportMass: effectiveSupportMass,
+      effectiveConflictMass: effectiveConflictMass,
       hasConflict,
       unresolvedConflict,
       context: frozenContext,

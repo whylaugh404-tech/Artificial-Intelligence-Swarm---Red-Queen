@@ -44,7 +44,7 @@ export const ReasoningPremiseSchema = z.object({
   statement: z.string().min(1),
   sourceType: PremiseSourceTypeSchema,
   sourceId: z.string().min(1),
-  confidence: z.number().min(0).max(1).default(1.0),
+  confidence: z.number().min(0).max(1).optional(),
   epistemicStatus: EpistemicStatusSchema.optional(),
   evidenceIds: z.array(z.string().min(1)).default([]),
   provenance: z.array(z.string().min(1)).default([]),
@@ -71,7 +71,7 @@ export const InferenceStepSchema = z.object({
   premiseIds: z.array(z.string().min(1)).min(1),
   assumptions: z.array(z.string().min(1)).default([]),
   derivedHypothesisId: z.string().min(1),
-  intermediateConfidence: z.number().min(0).max(1).default(1.0)
+  intermediateConfidence: z.number().min(0).max(1).optional()
 });
 export type InferenceStep = z.infer<typeof InferenceStepSchema>;
 
@@ -81,7 +81,7 @@ export const ReasoningHypothesisSchema = z.object({
   targetConceptId: z.string().optional(),
   targetRelationId: z.string().optional(),
   predicate: z.string().optional(),
-  confidence: z.number().min(0).max(1).default(0.5),
+  confidence: z.number().min(0).max(1).optional(),
   status: EpistemicStatusSchema.default(EpistemicStatus.HYPOTHESIS),
   rationale: z.string().default('')
 });

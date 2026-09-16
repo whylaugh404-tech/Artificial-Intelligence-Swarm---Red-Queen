@@ -49,7 +49,7 @@ export class CognitiveDevelopmentEngine {
         evidenceId: `ev_exp_${experience.experienceId}`,
         sourceId: experience.experienceId,
         timestamp: nowIso,
-        confidence: experience.confidence !== undefined ? experience.confidence : 0.85,
+        confidence: experience.confidence,
         provenance: {
           sourceId: this.localCell.nodeId,
           derivedFrom: [experience.experienceId],
@@ -128,10 +128,17 @@ export class CognitiveDevelopmentEngine {
     const concept = this.localCell.cognitiveGraph.getConcept(conceptId);
     if (!concept) throw new Error(`Concept ${conceptId} not found`);
 
-    const avgEvidenceConfidence =
-      evidence.reduce((acc, e) => acc + (e.confidence ?? 0.8), 0) / evidence.length;
+    let totalConfidence = 0;
+    let count = 0;
+    for (const e of evidence) {
+      if (e.confidence !== undefined) {
+        totalConfidence += e.confidence;
+        count++;
+      }
+    }
+    const avgEvidenceConfidence = count > 0 ? totalConfidence / count : 0.0;
     const delta = (1.0 - concept.confidence) * (0.3 * avgEvidenceConfidence);
-    const newConfidence = Number(Math.min(1.0, concept.confidence + Math.max(0.04, delta)).toFixed(4));
+    const newConfidence = Math.min(1.0, concept.confidence + Math.max(0.04, delta));
 
     let newStatus = concept.verificationStatus;
     if (newConfidence >= 0.85 && newStatus !== RepresentationVerificationStatus.VERIFIED) {
@@ -177,10 +184,17 @@ export class CognitiveDevelopmentEngine {
     const concept = this.localCell.cognitiveGraph.getConcept(conceptId);
     if (!concept) throw new Error(`Concept ${conceptId} not found`);
 
-    const avgEvidenceConfidence =
-      evidence.reduce((acc, e) => acc + (e.confidence ?? 0.8), 0) / evidence.length;
+    let totalConfidence = 0;
+    let count = 0;
+    for (const e of evidence) {
+      if (e.confidence !== undefined) {
+        totalConfidence += e.confidence;
+        count++;
+      }
+    }
+    const avgEvidenceConfidence = count > 0 ? totalConfidence / count : 0.0;
     const delta = concept.confidence * (0.35 * avgEvidenceConfidence) + 0.15;
-    const newConfidence = Number(Math.max(0.0, concept.confidence - delta).toFixed(4));
+    const newConfidence = Math.max(0.0, concept.confidence - delta);
 
     let newStatus = concept.verificationStatus;
     if (newConfidence <= 0.3) {
@@ -233,10 +247,17 @@ export class CognitiveDevelopmentEngine {
     const rel = this.localCell.cognitiveGraph.getRelation(relationId);
     if (!rel) throw new Error(`Relation ${relationId} not found`);
 
-    const avgEvidenceConfidence =
-      evidence.reduce((acc, e) => acc + (e.confidence ?? 0.8), 0) / evidence.length;
+    let totalConfidence = 0;
+    let count = 0;
+    for (const e of evidence) {
+      if (e.confidence !== undefined) {
+        totalConfidence += e.confidence;
+        count++;
+      }
+    }
+    const avgEvidenceConfidence = count > 0 ? totalConfidence / count : 0.0;
     const delta = (1.0 - rel.confidence) * (0.3 * avgEvidenceConfidence);
-    const newConfidence = Number(Math.min(1.0, rel.confidence + Math.max(0.04, delta)).toFixed(4));
+    const newConfidence = Math.min(1.0, rel.confidence + Math.max(0.04, delta));
 
     let newStatus = rel.verificationStatus;
     if (newConfidence >= 0.85 && newStatus !== RepresentationVerificationStatus.VERIFIED) {
@@ -280,10 +301,17 @@ export class CognitiveDevelopmentEngine {
     const rel = this.localCell.cognitiveGraph.getRelation(relationId);
     if (!rel) throw new Error(`Relation ${relationId} not found`);
 
-    const avgEvidenceConfidence =
-      evidence.reduce((acc, e) => acc + (e.confidence ?? 0.8), 0) / evidence.length;
+    let totalConfidence = 0;
+    let count = 0;
+    for (const e of evidence) {
+      if (e.confidence !== undefined) {
+        totalConfidence += e.confidence;
+        count++;
+      }
+    }
+    const avgEvidenceConfidence = count > 0 ? totalConfidence / count : 0.0;
     const delta = rel.confidence * (0.35 * avgEvidenceConfidence) + 0.15;
-    const newConfidence = Number(Math.max(0.0, rel.confidence - delta).toFixed(4));
+    const newConfidence = Math.max(0.0, rel.confidence - delta);
 
     let newStatus = rel.verificationStatus;
     if (newConfidence <= 0.3) {

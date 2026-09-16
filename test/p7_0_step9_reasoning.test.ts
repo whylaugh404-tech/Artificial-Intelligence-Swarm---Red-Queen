@@ -159,6 +159,24 @@ describe('P7.3: Native Reasoning Engine', () => {
     await graph.insertRelation(causalRelation);
     await graph.insertEvidence(sampleEvidence);
 
+    await graph.insertEvidence({
+      evidenceId: 'ev_provisional_ping',
+      sourceId: 'ping_monitor',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      confidence: 0.7,
+      provenance: { sourceId: 'ping_monitor', timestamp: '2026-01-01T00:00:00.000Z' },
+      context: mockContext
+    });
+
+    await graph.insertEvidence({
+      evidenceId: 'ev_verified_ping',
+      sourceId: 'ping_monitor_authoritative',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      confidence: 0.95,
+      provenance: { sourceId: 'ping_monitor_authoritative', timestamp: '2026-01-01T00:00:00.000Z' },
+      context: mockContext
+    });
+
     understandingEngine = new UnderstandingEngine();
     worldModelEngine = new WorldModelEngine(graph);
     reasoningEngine = new ReasoningEngine(graph, worldModelEngine, understandingEngine);

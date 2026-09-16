@@ -67,12 +67,12 @@ export class VerificationEngine {
 
     for (const evId of evidenceIdsA) {
       const ev = graph.getEvidence(evId);
-      if (ev) scoreA += ev.confidence !== undefined ? ev.confidence : 0.8;
+      if (ev && ev.confidence !== undefined) scoreA += ev.confidence;
     }
 
     for (const evId of evidenceIdsB) {
       const ev = graph.getEvidence(evId);
-      if (ev) scoreB += ev.confidence !== undefined ? ev.confidence : 0.8;
+      if (ev && ev.confidence !== undefined) scoreB += ev.confidence;
     }
 
     let decision = ConflictResolutionDecision.UNRESOLVED;
