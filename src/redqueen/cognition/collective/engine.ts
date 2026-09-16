@@ -11,9 +11,13 @@ import {
   DEFAULT_CHAOS_R,
   DEFAULT_CHAOS_LAMBDA,
   deriveDeterministicC0,
+  deriveCellSemanticC0,
+  computeCellChaosDynamics,
   iterateLogisticMap,
   calculateChaosModulation,
   modulateActivatedVector,
+  CellSemanticChaosSeedInput,
+  CellChaosState,
   NonlinearDynamicsState
 } from '../chaos';
 import {
@@ -395,33 +399,53 @@ export class CollectiveCognitionEngine {
       steps.push(`Cell ${cell.nodeId}: x_i -> affine z_i -> tanh h_i`);
     }
 
-    // Step 2: Deterministic Chaos Dynamics (c_{t+1} = r * c_t * (1 - c_t))
+    // Step 2 & 3: Cell-Specific Deterministic Chaos Dynamics & Bounded Modulation
+    // c_{i,t+1} = r c_{i,t} (1 - c_{i,t})
+    // m_{i,t} = 1 + lambda * (c_{i,t} - 0.5)
+    // h_tilde_i = h_i * m_{i,t}
     const r = options?.r ?? DEFAULT_CHAOS_R;
     const lambda = options?.lambda ?? DEFAULT_CHAOS_LAMBDA;
     const chaosSteps = options?.steps ?? 1;
 
-    // Derive deterministic c0 strictly from collective representation payload
-    const seedPayload = {
-      sourceCellIds,
-      inputVectors,
-      domain: targetDomain ?? 'general',
-      contextId: context?.contextId ?? 'default'
-    };
-    const c0 = options?.c0 !== undefined ? options.c0 : deriveDeterministicC0(seedPayload);
+    const cellChaosStates: Record<string, CellChaosState> = {};
+    const chaosProvenances: string[] = [];
 
-    // Iterate Logistic Map
-    const chaosIteration = iterateLogisticMap(c0, chaosSteps, r);
-    const ct = chaosIteration.ct;
+    for (const cell of sortedCells) {
+      const x_i = inputVectors[cell.nodeId];
+      const seedInput: CellSemanticChaosSeedInput = {
+        featureVector: x_i,
+        specialization: cell.genome?.specialization ?? null,
+        traits: cell.genome?.traits ? { ...cell.genome.traits } : null,
+        generation: (cell.genome as any)?.generation ?? 1,
+        capabilities: cell.genome?.capabilities ? [...cell.genome.capabilities] : [],
+        domain: targetDomain
+      };
 
-    // Step 3: Bounded Chaos Modulation Factor m_t = 1 + lambda * (c_t - 0.5)
-    const mt = calculateChaosModulation(ct, lambda);
-    steps.push(`Chaos dynamics computed: c0=${c0.toFixed(6)}, ct=${ct.toFixed(6)}, mt=${mt.toFixed(6)}`);
+      const c0Override = options?.cellC0?.[cell.nodeId] ?? (sortedCells.length === 1 ? options?.c0 : undefined);
 
-    // Modulate activated vectors: h_tilde_i = h_i * m_t
-    for (const id of sourceCellIds) {
-      modulatedVectors[id] = modulateActivatedVector(activatedVectors[id], mt);
+      const cellChaos = computeCellChaosDynamics({
+        seedInput,
+        steps: chaosSteps,
+        r,
+        lambda,
+        initialC0: c0Override
+      });
+
+      cellChaosStates[cell.nodeId] = cellChaos;
+
+      // Modulate activated vector with cell-specific m_{i,t}: h_tilde_i = h_i * m_{i,t}
+      modulatedVectors[cell.nodeId] = modulateActivatedVector(
+        activatedVectors[cell.nodeId],
+        cellChaos.modulationFactor
+      );
+
+      steps.push(
+        `Cell ${cell.nodeId} chaos: c0=${cellChaos.c0.toFixed(6)}, ct=${cellChaos.ct.toFixed(6)}, mt=${cellChaos.mt.toFixed(6)}`
+      );
+      chaosProvenances.push(
+        `cell_chaos:${cell.nodeId}:c0=${cellChaos.c0.toFixed(6)},ct=${cellChaos.ct.toFixed(6)},mt=${cellChaos.mt.toFixed(6)},steps=${chaosSteps}`
+      );
     }
-    steps.push(`Bounded modulation applied: h_tilde_i = h_i * mt across ${sourceCellIds.length} cells`);
 
     // Step 4: Normalized Composition Weights (alpha_i >= 0, sum alpha_i = 1)
     const weightsRecord = this.calculateCompositionWeights(sortedCells, targetDomain);
@@ -442,15 +466,21 @@ export class CollectiveCognitionEngine {
       }
     }
     const resultVector = arrayToVector(cArr);
-    steps.push(`Collective state C_t = sum_i alpha_i [ h_i * mt ] composed`);
+    steps.push(`Collective state C_t = sum_i alpha_i [ h_i * m_{i,t} ] composed`);
+
+    const cellStateList = Object.values(cellChaosStates);
+    const avgC0 = cellStateList.reduce((s, c) => s + c.c0, 0) / cellStateList.length;
+    const avgCt = cellStateList.reduce((s, c) => s + c.ct, 0) / cellStateList.length;
+    const avgMt = cellStateList.reduce((s, c) => s + c.mt, 0) / cellStateList.length;
 
     const nonlinearDynamics: NonlinearDynamicsState = {
-      c0,
-      ct,
       r,
       lambda,
-      mt,
-      steps: chaosSteps
+      steps: chaosSteps,
+      cellStates: cellChaosStates,
+      c0: avgC0,
+      ct: avgCt,
+      mt: avgMt
     };
 
     // Semantic payload for deterministic identity (timestamp isolated)
@@ -463,7 +493,17 @@ export class CollectiveCognitionEngine {
       ),
       activatedVectors,
       modulatedVectors,
-      nonlinearDynamics,
+      nonlinearDynamics: {
+        r: nonlinearDynamics.r,
+        lambda: nonlinearDynamics.lambda,
+        steps: nonlinearDynamics.steps,
+        cellDynamics: Object.fromEntries(
+          Object.entries(cellChaosStates).map(([k, v]) => [
+            k,
+            { c0: v.c0, ct: v.ct, mt: v.mt, steps: v.steps, r: v.r, lambda: v.lambda }
+          ])
+        )
+      },
       resultVector
     };
     const deterministicIdentity = computeDeterministicHash(semanticPayload);
@@ -486,7 +526,8 @@ export class CollectiveCognitionEngine {
       `feature_provenance:${featureProvenances.join('|')}`,
       `linear_composition_computed:weights=${Object.keys(weights).length}`,
       `nonlinear_activation:tanh`,
-      `deterministic_chaos:r=${r},lambda=${lambda},c0=${c0.toFixed(6)},ct=${ct.toFixed(6)},mt=${mt.toFixed(6)},steps=${chaosSteps}`,
+      `cell_specific_chaos:${chaosProvenances.join(';')}`,
+      `deterministic_chaos_collective:cells=${sourceCellIds.length},r=${r},lambda=${lambda},steps=${chaosSteps}`,
       `weights_assigned:${Object.entries(weights).map(([k, v]) => `${k}=${v}`).join(';')}`,
       `collective_state_formed:${collectiveId}`
     ];

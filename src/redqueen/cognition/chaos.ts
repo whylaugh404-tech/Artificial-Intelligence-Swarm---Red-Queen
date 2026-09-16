@@ -1,16 +1,18 @@
 import { computeDeterministicHash } from './computation/canonical';
-import { FEATURE_VECTOR_KEYS } from './types';
+import { FEATURE_VECTOR_KEYS, CognitiveFeatureVector } from './types';
 
 /**
- * P9.6 — Deterministic Chaos: Logistic Map Dynamics & Bounded Modulation
+ * P9.6 — Deterministic Chaos: Cell-Specific Logistic Map Dynamics & Bounded Modulation
  * 
  * Implements deterministic chaotic dynamics for Red Queen collective cognition:
- * - Logistic Map: c_{t+1} = r * c_t * (1 - c_t)
- * - Domain: 0 < c_0 < 1, 3.57 < r <= 4.0 (Default r = 3.9)
- * - Deterministic seed c_0 derived strictly from collective state identity (NO Math.random)
- * - Bounded Modulation: m_t = 1 + lambda * (c_t - 0.5), with 0 <= lambda <= 0.2 (Default lambda = 0.1)
- * - Modulated activation: h_tilde_i = h_i * m_t
- * - Collective Composition: C_t = sum_i alpha_i * h_tilde_i
+ * - Logistic Map per Cell: c_{i,t+1} = r * c_{i,t} * (1 - c_{i,t})
+ * - Domain: 0 < c_{i,0} < 1, 3.57 < r <= 4.0 (Default r = 3.9)
+ * - Deterministic seed c_{i,0} derived strictly from Cell semantic/cognitive state:
+ *   featureVector (x_i), specialization, traits, generation, capabilities.
+ *   STRICT INVARIANT: NEVER uses nodeId, sourceCellId, or timestamp as mathematical seed source!
+ * - Bounded Modulation per Cell: m_{i,t} = 1 + lambda * (c_{i,t} - 0.5), with 0 <= lambda <= 0.2 (Default lambda = 0.1)
+ * - Modulated activation: h_tilde_i = h_i * m_{i,t} (Cell-specific modulation, NOT global)
+ * - Collective Composition: C_t = sum_i alpha_i * h_tilde_i = sum_i alpha_i [ h_i (1 + lambda(c_{i,t} - 0.5)) ]
  * 
  * Invariant:
  * Chaos NEVER mutates Cell memory, genome, identity, lineage, or population.
@@ -96,8 +98,70 @@ export function iterateLogisticMap(
 }
 
 /**
- * Derives initial chaotic state c0 deterministically from a collective identity or state payload.
- * Strictly guarantees 0 < c0 < 1 without using any pseudo-random functions.
+ * Input structure for deriving a Cell's deterministic initial chaos seed c_{i,0}.
+ * Strictly excludes any nodeId, sourceCellId, or timestamp.
+ */
+export interface CellSemanticChaosSeedInput {
+  featureVector: CognitiveFeatureVector;
+  specialization?: string | null;
+  traits?: Record<string, any> | null;
+  generation?: number;
+  capabilities?: string[];
+  domain?: string;
+}
+
+/**
+ * Derives initial chaotic state c_{i,0} deterministically from a Cell's semantic/cognitive state.
+ * 
+ * STRICT MANDATE:
+ * NEVER uses nodeId, sourceCellId, or timestamp.
+ * Seed is derived purely from semantic features:
+ * - featureVector (x_i)
+ * - specialization
+ * - traits
+ * - generation
+ * - capabilities
+ * - domain
+ */
+export function deriveCellSemanticC0(input: CellSemanticChaosSeedInput): number {
+  if (!input || !input.featureVector) {
+    throw new Error('Cell semantic chaos seed requires a valid featureVector.');
+  }
+
+  const canonicalPayload = {
+    featureVector: {
+      computation: Number(input.featureVector.computation.toFixed(6)),
+      reliability: Number(input.featureVector.reliability.toFixed(6)),
+      cognition: Number(input.featureVector.cognition.toFixed(6)),
+      knowledge: Number(input.featureVector.knowledge.toFixed(6)),
+      specialization: Number(input.featureVector.specialization.toFixed(6)),
+      experience: Number(input.featureVector.experience.toFixed(6)),
+      resourceEfficiency: Number(input.featureVector.resourceEfficiency.toFixed(6))
+    },
+    specialization: (input.specialization ?? '').trim().toUpperCase(),
+    traits: input.traits ? Object.fromEntries(
+      Object.entries(input.traits).sort(([a], [b]) => a.localeCompare(b))
+    ) : {},
+    generation: typeof input.generation === 'number' ? input.generation : 1,
+    capabilities: Array.isArray(input.capabilities) ? [...input.capabilities].sort() : [],
+    domain: (input.domain ?? '').trim().toUpperCase()
+  };
+
+  const hash = computeDeterministicHash(canonicalPayload);
+
+  // Take 8 hexadecimal characters (32 bits)
+  const hexSlice = hash.replace(/[^0-9a-fA-F]/g, '').padEnd(8, 'a').substring(0, 8);
+  const intVal = parseInt(hexSlice, 16);
+
+  // Map into strictly bounded open interval [0.05, 0.95] to prevent edge fixed points
+  const c0 = ((intVal % 900000) + 50000) / 1000000;
+  validateChaosState(c0);
+  return c0;
+}
+
+/**
+ * Derives initial chaotic state c0 deterministically from an arbitrary payload.
+ * Backward compatible helper for general seeds.
  */
 export function deriveDeterministicC0(seed: string | object): number {
   if (!seed) {
@@ -108,11 +172,9 @@ export function deriveDeterministicC0(seed: string | object): number {
     ? (seed.match(/^[0-9a-fA-F]+$/) ? seed : computeDeterministicHash({ seed }))
     : computeDeterministicHash(seed);
 
-  // Take 8 hexadecimal characters (32 bits)
   const hexSlice = hash.replace(/[^0-9a-fA-F]/g, '').padEnd(8, 'a').substring(0, 8);
   const intVal = parseInt(hexSlice, 16);
 
-  // Map into strictly bounded open interval [0.05, 0.95] to prevent edge fixed points
   const c0 = ((intVal % 900000) + 50000) / 1000000;
   validateChaosState(c0);
   return c0;
@@ -147,8 +209,82 @@ export function calculateChaosModulation(
 }
 
 /**
+ * Parameters for chaotic dynamics of a Cell.
+ */
+export interface CellChaosParameter {
+  r: number;
+  lambda: number;
+}
+
+/**
+ * Per-Cell Chaotic Dynamics State:
+ * Each Cell maintains:
+ * - chaosState: current chaotic state c_{i,t} ∈ (0, 1)
+ * - chaosStep: current iteration step t
+ * - chaosParameter: { r, lambda }
+ * - modulationFactor: m_{i,t} = 1 + lambda * (c_{i,t} - 0.5)
+ */
+export interface CellChaosState {
+  chaosState: number;
+  chaosStep: number;
+  chaosParameter: CellChaosParameter;
+  c0: number;
+  ct: number;
+  steps: number;
+  r: number;
+  lambda: number;
+  modulationFactor: number;
+  mt: number;
+  sequence?: number[];
+}
+
+export interface ComputeCellChaosParams {
+  seedInput: CellSemanticChaosSeedInput;
+  steps?: number;
+  r?: number;
+  lambda?: number;
+  initialC0?: number;
+}
+
+/**
+ * Computes cell-specific chaotic dynamics:
+ * 1. Derives c_{i,0} from semantic state (unless overridden).
+ * 2. Iterates c_{i,t+1} = r * c_{i,t} * (1 - c_{i,t}) for t steps.
+ * 3. Calculates m_{i,t} = 1 + lambda * (c_{i,t} - 0.5).
+ */
+export function computeCellChaosDynamics(params: ComputeCellChaosParams): CellChaosState {
+  const r = params.r ?? DEFAULT_CHAOS_R;
+  const lambda = params.lambda ?? DEFAULT_CHAOS_LAMBDA;
+  const steps = params.steps ?? 1;
+
+  validateChaosParameters(r, lambda);
+
+  const c0 = params.initialC0 !== undefined ? params.initialC0 : deriveCellSemanticC0(params.seedInput);
+  validateChaosState(c0);
+
+  const iter = iterateLogisticMap(c0, steps, r);
+  const ct = iter.ct;
+
+  const mt = calculateChaosModulation(ct, lambda);
+
+  return {
+    chaosState: ct,
+    chaosStep: steps,
+    chaosParameter: { r, lambda },
+    c0,
+    ct,
+    steps,
+    r,
+    lambda,
+    modulationFactor: mt,
+    mt,
+    sequence: iter.sequence
+  };
+}
+
+/**
  * Applies bounded modulation to an activated cognitive vector h_i:
- * h_tilde_i = h_i * m_t
+ * h_tilde_i = h_i * m_{i,t}
  */
 export function modulateActivatedVector(
   hVector: Record<string, number>,
@@ -163,13 +299,14 @@ export function modulateActivatedVector(
 }
 
 /**
- * State object recording nonlinear chaotic dynamics metadata.
+ * State object recording nonlinear chaotic dynamics metadata across all participating cells.
  */
 export interface NonlinearDynamicsState {
-  c0: number;
-  ct: number;
   r: number;
   lambda: number;
-  mt: number;
   steps: number;
+  cellStates: Record<string, CellChaosState>;
+  c0?: number;
+  ct?: number;
+  mt?: number;
 }

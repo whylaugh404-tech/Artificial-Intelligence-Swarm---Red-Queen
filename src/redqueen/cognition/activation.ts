@@ -56,6 +56,11 @@ export function applyTanhVector(
 }
 
 /**
+ * Backward compatible alias for applyTanhVector.
+ */
+export const applyTanhToVector = applyTanhVector;
+
+/**
  * Structured representation of an activated Cell cognitive state.
  */
 export interface ActivatedCognitiveVector {

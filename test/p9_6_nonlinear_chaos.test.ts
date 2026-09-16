@@ -4,6 +4,8 @@ import {
   logisticMapStep,
   iterateLogisticMap,
   deriveDeterministicC0,
+  deriveCellSemanticC0,
+  computeCellChaosDynamics,
   calculateChaosModulation,
   modulateActivatedVector,
   validateChaosParameters,
@@ -21,7 +23,7 @@ import {
   applyLinearTransformation
 } from '../src/redqueen/cognition/types';
 
-describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Deterministic Chaos', () => {
+describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Deterministic Chaos', () => {
   let engine: CollectiveCognitionEngine;
   let cellAlpha: Cell;
   let cellBeta: Cell;
@@ -187,21 +189,6 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Deterministic Chaos', ()
       expect(iterA.ct).not.toEqual(iterSlightlyDifferent.ct);
     });
 
-    it('menurunkan c0 deterministik dari state/payload tanpa Math.random()', () => {
-      const payload1 = { domain: 'quantum', nodes: ['cell_1', 'cell_2'] };
-      const payload2 = { domain: 'quantum', nodes: ['cell_1', 'cell_2'] };
-      const payloadDifferent = { domain: 'biology', nodes: ['cell_1', 'cell_2'] };
-
-      const c0_1 = deriveDeterministicC0(payload1);
-      const c0_2 = deriveDeterministicC0(payload2);
-      const c0_diff = deriveDeterministicC0(payloadDifferent);
-
-      expect(c0_1).toBe(c0_2);
-      expect(c0_1).toBeGreaterThan(0.0);
-      expect(c0_1).toBeLessThan(1.0);
-      expect(c0_1).not.toBe(c0_diff);
-    });
-
     it('menghitung faktor modulasi m_t = 1 + lambda * (c_t - 0.5) dengan batas ketat [0.9, 1.1]', () => {
       const lambda = 0.1;
 
@@ -231,54 +218,159 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Deterministic Chaos', ()
     });
   });
 
-  describe('3. Collective Composition dengan Tanh + Chaos (C_t = sum alpha_i (h_i * m_t))', () => {
-    it('menjalankan executeNonlinearComposition dengan benar dan mematuhi rumus C_t', () => {
+  describe('3. Semantic Seeding (Non-nodeId, Non-timestamp Invariant)', () => {
+    it('menurunkan c_{i,0} murni dari cognitive/semantic state tanpa nodeId atau timestamp', () => {
+      const featureVec: CognitiveFeatureVector = {
+        computation: 0.85,
+        reliability: 0.9,
+        cognition: 0.75,
+        knowledge: 0.8,
+        specialization: 0.95,
+        experience: 0.6,
+        resourceEfficiency: 0.7
+      };
+
+      const seedInput1 = {
+        featureVector: featureVec,
+        specialization: 'QUANTUM_ALGORITHMS',
+        traits: { riskTolerance: 0.2 },
+        generation: 4,
+        capabilities: ['COGNITIVE_REASONING'],
+        domain: 'QUANTUM'
+      };
+
+      // Exactly identical semantic state
+      const seedInput2 = {
+        featureVector: { ...featureVec },
+        specialization: 'QUANTUM_ALGORITHMS',
+        traits: { riskTolerance: 0.2 },
+        generation: 4,
+        capabilities: ['COGNITIVE_REASONING'],
+        domain: 'QUANTUM'
+      };
+
+      const c0_1 = deriveCellSemanticC0(seedInput1);
+      const c0_2 = deriveCellSemanticC0(seedInput2);
+
+      expect(c0_1).toBe(c0_2);
+      expect(c0_1).toBeGreaterThan(0.0);
+      expect(c0_1).toBeLessThan(1.0);
+
+      // Verify that changing semantic state (e.g. specialization or generation) changes c0
+      const seedInputDiff = {
+        ...seedInput1,
+        specialization: 'NEURAL_EMBEDDINGS'
+      };
+      const c0_diff = deriveCellSemanticC0(seedInputDiff);
+      expect(c0_1).not.toBe(c0_diff);
+    });
+
+    it('memastikan c_{i,0} identik untuk dua cell dengan semantic state sama meskipun nodeId berbeda', () => {
+      const mockCellA = createMockCell('cell_node_AAA', 'OPTIMIZATION', ['REASONING'], 0.9, 2);
+      const mockCellB = createMockCell('cell_node_BBB', 'OPTIMIZATION', ['REASONING'], 0.9, 2);
+
+      const featA = engine.extractFeatureVectorWithStatus(mockCellA).vector;
+      const featB = engine.extractFeatureVectorWithStatus(mockCellB).vector;
+
+      const c0_A = deriveCellSemanticC0({
+        featureVector: featA,
+        specialization: mockCellA.genome?.specialization,
+        traits: mockCellA.genome?.traits,
+        generation: mockCellA.genome?.generation,
+        capabilities: mockCellA.genome?.capabilities
+      });
+
+      const c0_B = deriveCellSemanticC0({
+        featureVector: featB,
+        specialization: mockCellB.genome?.specialization,
+        traits: mockCellB.genome?.traits,
+        generation: mockCellB.genome?.generation,
+        capabilities: mockCellB.genome?.capabilities
+      });
+
+      // Since semantic state is identical, c0 MUST be identical (proving nodeId is NOT used)
+      expect(c0_A).toBe(c0_B);
+    });
+  });
+
+  describe('4. Cell-Specific Chaos & Collective Composition', () => {
+    it('menghasilkan chaotic dynamics yang spesifik per Cell (bukan global m_t)', () => {
       const population = [cellAlpha, cellBeta, cellGamma];
       const result = engine.executeNonlinearComposition(population, undefined, 'quantum');
 
       expect(result).toBeDefined();
       expect(result.compositionType).toBe('nonlinear_tanh_chaos');
-      expect(result.activatedVectors).toBeDefined();
-      expect(result.modulatedVectors).toBeDefined();
       expect(result.nonlinearDynamics).toBeDefined();
 
-      // Check dynamics parameters
       const dyn = result.nonlinearDynamics!;
-      expect(dyn.r).toBe(DEFAULT_CHAOS_R);
-      expect(dyn.lambda).toBe(DEFAULT_CHAOS_LAMBDA);
-      expect(dyn.c0).toBeGreaterThan(0);
-      expect(dyn.c0).toBeLessThan(1);
-      expect(dyn.ct).toBeGreaterThan(0);
-      expect(dyn.ct).toBeLessThan(1);
-      expect(dyn.mt).toBeGreaterThanOrEqual(0.95);
-      expect(dyn.mt).toBeLessThanOrEqual(1.05);
+      expect(dyn.cellStates).toBeDefined();
+      expect(Object.keys(dyn.cellStates!)).toHaveLength(3);
 
-      // Verify that activated vectors are h_i = tanh(z_i)
-      for (const cell of population) {
-        const trans = result.transformations[cell.nodeId];
-        const h_i = result.activatedVectors![cell.nodeId];
-        expect(h_i).toBeDefined();
-        expect(h_i.computation).toBeCloseTo(Math.tanh(trans.transformedVector.computation), 6);
-        expect(h_i.reliability).toBeCloseTo(Math.tanh(trans.transformedVector.reliability), 6);
+      const stateAlpha = dyn.cellStates![cellAlpha.nodeId];
+      const stateBeta = dyn.cellStates![cellBeta.nodeId];
+      const stateGamma = dyn.cellStates![cellGamma.nodeId];
+
+      // Verify each cell has its required fields
+      for (const st of [stateAlpha, stateBeta, stateGamma]) {
+        expect(st.chaosState).toBeGreaterThan(0);
+        expect(st.chaosState).toBeLessThan(1);
+        expect(st.c0).toBeGreaterThan(0);
+        expect(st.c0).toBeLessThan(1);
+        expect(st.ct).toBeGreaterThan(0);
+        expect(st.ct).toBeLessThan(1);
+        expect(st.chaosStep).toBe(1);
+        expect(st.chaosParameter.r).toBe(DEFAULT_CHAOS_R);
+        expect(st.chaosParameter.lambda).toBe(DEFAULT_CHAOS_LAMBDA);
+        expect(st.modulationFactor).toBeGreaterThanOrEqual(0.95);
+        expect(st.modulationFactor).toBeLessThanOrEqual(1.05);
       }
 
-      // Verify that modulated vectors are h_tilde_i = h_i * m_t
+      // Crucial verification: Alpha and Beta have different semantic profiles,
+      // so their initial chaos state c_{i,0} and modulation factors m_{i,t} are DIFFERENT.
+      expect(stateAlpha.c0).not.toBe(stateBeta.c0);
+      expect(stateAlpha.modulationFactor).not.toBe(stateBeta.modulationFactor);
+
+      // Verify that each cell's modulated vector uses ITS OWN m_{i,t}
       for (const cell of population) {
         const h_i = result.activatedVectors![cell.nodeId];
         const h_tilde = result.modulatedVectors![cell.nodeId];
-        expect(h_tilde.computation).toBeCloseTo(h_i.computation * dyn.mt, 6);
+        const cellDyn = dyn.cellStates![cell.nodeId];
+
+        expect(h_tilde.computation).toBeCloseTo(h_i.computation * cellDyn.modulationFactor, 6);
+        expect(h_tilde.reliability).toBeCloseTo(h_i.reliability * cellDyn.modulationFactor, 6);
       }
 
-      // Verify weighted sum: C_t = sum alpha_i * h_tilde_i
+      // Verify weighted collective composition: C_t = sum_i alpha_i * h_tilde_i
       const expectedCComputation = population.reduce((sum, cell) => {
         const alpha = result.weights[cell.nodeId];
         const h_tilde = result.modulatedVectors![cell.nodeId];
         return sum + alpha * h_tilde.computation;
       }, 0);
 
-      // Clamped to [0, 1] in final resultVector
       const expectedClamped = Math.max(0, Math.min(1, expectedCComputation));
       expect(result.resultVector.computation).toBeCloseTo(expectedClamped, 5);
+    });
+
+    it('mendukung multi-step dynamics (steps > 1) dengan evolusi chaotic per Cell', () => {
+      const population = [cellAlpha, cellBeta];
+      const result = engine.executeNonlinearComposition(population, undefined, 'quantum', {
+        steps: 5,
+        r: 3.9,
+        lambda: 0.15
+      });
+
+      const dyn = result.nonlinearDynamics!;
+      expect(dyn.steps).toBe(5);
+
+      for (const cell of population) {
+        const cellChaos = dyn.cellStates![cell.nodeId];
+        expect(cellChaos.chaosStep).toBe(5);
+        expect(cellChaos.chaosParameter.r).toBe(3.9);
+        expect(cellChaos.chaosParameter.lambda).toBe(0.15);
+        expect(cellChaos.sequence).toBeDefined();
+        expect(cellChaos.sequence!.length).toBe(6); // [c0, c1, c2, c3, c4, c5]
+        expect(cellChaos.ct).toBe(cellChaos.sequence![5]);
+      }
     });
 
     it('menghasilkan determinisme penuh: input identik menghasilkan output identik', () => {
@@ -301,9 +393,19 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Deterministic Chaos', ()
       expect(cellAlpha.genome).toEqual(originalGenome);
       expect(cellAlpha.nodeId).toBe('cell_alpha_p96');
     });
+
+    it('mencatat provenance lengkap untuk setiap Cell chaos dan collective composition', () => {
+      const population = [cellAlpha, cellBeta];
+      const result = engine.executeNonlinearComposition(population, undefined, 'quantum');
+
+      expect(result.provenance.some(p => p.startsWith('cell_specific_chaos:'))).toBe(true);
+      expect(result.provenance.some(p => p.startsWith('deterministic_chaos_collective:'))).toBe(true);
+      expect(result.provenance.some(p => p.includes('cell_alpha_p96'))).toBe(true);
+      expect(result.provenance.some(p => p.includes('cell_beta_p96'))).toBe(true);
+    });
   });
 
-  describe('4. Feature Status Provenance (Explicit UNKNOWN handling)', () => {
+  describe('5. Feature Status Provenance (Explicit UNKNOWN handling)', () => {
     it('menangani data yang hilang dengan status UNKNOWN tanpa mengarang angka palsu', () => {
       const cellEmpty: Cell = {
         nodeId: 'cell_empty',

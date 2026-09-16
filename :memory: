@@ -1,0 +1,89 @@
+[
+  {
+    "id": "cell_identity_28a92a17667193d9a3edc64febc8c7e53fd9fea3e03325f06fa6a10789d46416",
+    "cellId": "28a92a17667193d9a3edc64febc8c7e53fd9fea3e03325f06fa6a10789d46416",
+    "category": "PROCEDURAL",
+    "content": {
+      "nodeId": "28a92a17667193d9a3edc64febc8c7e53fd9fea3e03325f06fa6a10789d46416",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAUbWoW2QDlRe4PqB3DCydl/KT2CpHOguIgOxXWFsqEvs=\n-----END PUBLIC KEY-----",
+      "privateKey": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEILZepesgyi1Zw7UACKFDLdhdQ2DAo9VZDLNr4mBb7nlK\n-----END PRIVATE KEY-----"
+    },
+    "source": "cell_initialization",
+    "createdAt": "2026-09-15T10:01:43.068Z",
+    "updatedAt": "2026-09-15T10:01:43.068Z",
+    "confidence": 1,
+    "hash": "",
+    "provenance": [
+      "28a92a17667193d9a3edc64febc8c7e53fd9fea3e03325f06fa6a10789d46416"
+    ],
+    "version": 1
+  },
+  {
+    "id": "cell_genome_28a92a17667193d9a3edc64febc8c7e53fd9fea3e03325f06fa6a10789d46416",
+    "cellId": "28a92a17667193d9a3edc64febc8c7e53fd9fea3e03325f06fa6a10789d46416",
+    "category": "SEMANTIC",
+    "content": {
+      "genomeId": "7eca78f563404f61a90d1a77a4d8b4fb",
+      "parentGenomeId": null,
+      "parentCellId": null,
+      "generation": 0,
+      "lineageId": "5ae8a01a27b849b49de1c457b7033bfe",
+      "createdAt": "2026-09-15T10:01:43.052Z",
+      "logicVersion": "1.0.0",
+      "traits": {
+        "mutationRate": 0.05,
+        "riskTolerance": 0.2,
+        "explorationVsExploitation": 0.5,
+        "maxCognitiveCycleDepth": 5
+      },
+      "capabilities": [
+        "INFO_PROCESSING"
+      ],
+      "specialization": "WORKER",
+      "genomeVersion": 1,
+      "ancestorGenomeIds": [],
+      "ancestorCellIds": []
+    },
+    "source": "cell_initialization",
+    "createdAt": "2026-09-15T10:01:43.069Z",
+    "updatedAt": "2026-09-15T10:01:43.069Z",
+    "confidence": 1,
+    "hash": "",
+    "provenance": [
+      "28a92a17667193d9a3edc64febc8c7e53fd9fea3e03325f06fa6a10789d46416"
+    ],
+    "version": 1
+  },
+  {
+    "id": "cognitive_state_28a92a17667193d9a3edc64febc8c7e53fd9fea3e03325f06fa6a10789d46416",
+    "cellId": "28a92a17667193d9a3edc64febc8c7e53fd9fea3e03325f06fa6a10789d46416",
+    "category": "SEMANTIC",
+    "content": {
+      "cellId": "28a92a17667193d9a3edc64febc8c7e53fd9fea3e03325f06fa6a10789d46416",
+      "lifecycleState": "STOPPED",
+      "specialization": "WORKER",
+      "activeGoals": [],
+      "knowledgeReferences": [],
+      "conceptReferences": [],
+      "knowledgeGaps": [],
+      "operationalConfidence": 1,
+      "lastCognitiveUpdate": "2026-09-15T10:01:45.170Z",
+      "memoryStats": {
+        "total": 2,
+        "episodic": 0,
+        "semantic": 1,
+        "procedural": 1
+      },
+      "metadata": {}
+    },
+    "source": "cognitive_state_manager",
+    "createdAt": "2026-09-15T10:01:45.170Z",
+    "updatedAt": "2026-09-15T10:01:45.170Z",
+    "confidence": 1,
+    "hash": "",
+    "provenance": [
+      "28a92a17667193d9a3edc64febc8c7e53fd9fea3e03325f06fa6a10789d46416"
+    ],
+    "version": 1
+  }
+]

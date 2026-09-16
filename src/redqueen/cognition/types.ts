@@ -52,13 +52,33 @@ export const CompositionTraceSchema = z.object({
 
 export type CompositionTrace = z.infer<typeof CompositionTraceSchema>;
 
-export const NonlinearDynamicsSchema = z.object({
+export const CellChaosDynamicsSchema = z.object({
+  chaosState: z.number().min(0.0).max(1.0),
   c0: z.number().min(0.0).max(1.0),
   ct: z.number().min(0.0).max(1.0),
+  chaosStep: z.number().int().nonnegative(),
+  steps: z.number().int().nonnegative().optional(),
+  chaosParameter: z.object({
+    r: z.number().min(3.57).max(4.0),
+    lambda: z.number().min(0.0).max(0.2)
+  }),
+  r: z.number().min(3.57).max(4.0).optional(),
+  lambda: z.number().min(0.0).max(0.2).optional(),
+  modulationFactor: z.number().positive(),
+  mt: z.number().positive().optional(),
+  sequence: z.array(z.number()).optional()
+});
+
+export type CellChaosDynamics = z.infer<typeof CellChaosDynamicsSchema>;
+
+export const NonlinearDynamicsSchema = z.object({
   r: z.number().min(3.57).max(4.0),
   lambda: z.number().min(0.0).max(0.2),
-  mt: z.number().positive(),
-  steps: z.number().int().nonnegative()
+  steps: z.number().int().nonnegative(),
+  cellStates: z.record(z.string(), CellChaosDynamicsSchema).optional(),
+  c0: z.number().min(0.0).max(1.0).optional(),
+  ct: z.number().min(0.0).max(1.0).optional(),
+  mt: z.number().positive().optional()
 });
 
 export type NonlinearDynamics = z.infer<typeof NonlinearDynamicsSchema>;
@@ -88,6 +108,7 @@ export interface NonlinearCompositionOptions {
   lambda?: number;
   steps?: number;
   c0?: number;
+  cellC0?: Record<string, number>;
 }
 
 /**
