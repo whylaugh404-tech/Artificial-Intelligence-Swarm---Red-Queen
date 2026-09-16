@@ -7,9 +7,18 @@ import { FEATURE_VECTOR_KEYS, CognitiveFeatureVector } from './types';
  * Transforms linear affine representation z_i = W_i x_i + b_i into bounded non-linear activation h_i = tanh(z_i).
  * 
  * Invariants:
- * - h_i = tanh(z_i)
- * - Safe for any real number (monotonic, finite, bounded in (-1, 1))
- * - Zero random noise
+ * - Mathematical definition: h_i = tanh(z_i)
+ * - Domain: z_i in [-Infinity, +Infinity]
+ * - Range Invariant: -1.0 <= h_i <= 1.0
+ * - For finite real inputs: -1.0 < tanh(z_i) < 1.0 (approaching +/- 1.0 asymptotically)
+ * - Numerical Safety Behavior:
+ *   Due to IEEE-754 floating point saturation and safety handling:
+ *   +Infinity -> 1.0
+ *   -Infinity -> -1.0
+ *   NaN -> 0.0 (neutral baseline for corrupted/undefined input)
+ * - Monotonicity: z_a < z_b ==> tanh(z_a) <= tanh(z_b)
+ * - Origin and Symmetry: tanh(0) = 0, tanh(-z) = -tanh(z)
+ * - Zero random noise or external non-determinism.
  */
 
 /**

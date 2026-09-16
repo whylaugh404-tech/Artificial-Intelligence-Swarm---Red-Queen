@@ -83,6 +83,20 @@ export const NonlinearDynamicsSchema = z.object({
 
 export type NonlinearDynamics = z.infer<typeof NonlinearDynamicsSchema>;
 
+export const FeatureStatusSchema = z.enum(['KNOWN', 'UNKNOWN']);
+export type FeatureStatus = z.infer<typeof FeatureStatusSchema>;
+
+export const FeatureAvailabilitySchema = z.object({
+  computation: FeatureStatusSchema,
+  reliability: FeatureStatusSchema,
+  cognition: FeatureStatusSchema,
+  knowledge: FeatureStatusSchema,
+  specialization: FeatureStatusSchema,
+  experience: FeatureStatusSchema,
+  resourceEfficiency: FeatureStatusSchema
+});
+export type FeatureAvailability = z.infer<typeof FeatureAvailabilitySchema>;
+
 export const CollectiveCognitiveStateSchema = z.object({
   collectiveId: z.string().min(1),
   sourceCellIds: z.array(z.string()).min(1),
@@ -93,6 +107,8 @@ export const CollectiveCognitiveStateSchema = z.object({
   modulatedVectors: z.record(z.string(), z.record(z.string(), z.number())).optional(),
   nonlinearDynamics: NonlinearDynamicsSchema.optional(),
   compositionType: z.enum(['linear', 'nonlinear_tanh_chaos']).optional(),
+  nonlinearCollectiveVector: z.record(z.string(), z.number()).optional(),
+  featureStatuses: z.record(z.string(), FeatureAvailabilitySchema).optional(),
   resultVector: CognitiveFeatureVectorSchema,
   provenance: z.array(z.string()),
   deterministicIdentity: z.string().min(1),
@@ -215,56 +231,54 @@ export function applyLinearTransformation(
 
 /**
  * Generates a deterministic transformation matrix W_i and bias vector b_i for a Cell.
- * Incorporates cognitive cross-couplings and deterministic cell-specific modulations
- * purely based on the semantic state, NOT pseudo-random hashes or cell IDs.
+ * Invariant (Section 3 of Mathematical Specification):
+ * W and b MUST be strictly independent of the dynamic input feature vector x_i!
+ * W = W(params) and b = b(params), where params are transformation parameters (capabilities, specialization).
+ * For identical transformation parameters:
+ *   W(x1) === W(x2)
+ *   b(x1) === b(x2)
+ * Different inputs x1 != x2 produce different outputs W*x1 + b != W*x2 + b purely because x differs.
+ * Furthermore, W and b are strictly independent of physical identities (nodeId, socket, timestamp).
  */
 export function generateDeterministicMatrixAndBias(
-  x: CognitiveFeatureVector,
-  capabilities: string[] = []
+  _x?: unknown,
+  capabilities: string[] = [],
+  specialization?: string | null
 ): { matrix: number[][]; bias: number[] } {
-  const caps = Array.isArray(capabilities) ? capabilities : [];
+  const caps = Array.isArray(capabilities) ? [...capabilities].sort() : [];
+  const spec = (specialization ?? '').trim().toUpperCase();
 
-  // Base matrix capturing functional couplings:
+  // Base matrix capturing functional couplings across the 7 cognitive dimensions:
   const baseMatrix: number[][] = [
     [0.75, 0.00, 0.05, 0.00, 0.05, 0.05, 0.10], // computation
-    [0.05, 0.80, 0.00, 0.00, 0.00, 0.15, 0.00], // reliability (experience calibrates)
-    [0.15, 0.05, 0.65, 0.15, 0.00, 0.00, 0.00], // cognition (compute + knowledge inform)
-    [0.00, 0.00, 0.00, 0.75, 0.20, 0.05, 0.00], // knowledge (specialization focuses)
+    [0.05, 0.80, 0.00, 0.00, 0.00, 0.15, 0.00], // reliability
+    [0.15, 0.05, 0.65, 0.15, 0.00, 0.00, 0.00], // cognition
+    [0.00, 0.00, 0.00, 0.75, 0.20, 0.05, 0.00], // knowledge
     [0.00, 0.00, 0.00, 0.05, 0.85, 0.10, 0.00], // specialization
     [0.05, 0.05, 0.00, 0.05, 0.05, 0.80, 0.00], // experience
     [0.10, 0.10, 0.00, 0.00, 0.00, 0.00, 0.80]  // resourceEfficiency
   ];
 
-  // Derive matrix semantically
-  const matrix: number[][] = [];
-  const capabilityBonus = caps.length * 0.01;
+  // Modulate matrix deterministically by semantic transformation parameters ONLY:
+  const capabilityAdjustment = caps.length > 0 ? (caps.length * 0.005) : 0.0;
+  const specAdjustment = spec.length > 0 ? (spec.charCodeAt(0) % 7) * 0.002 : 0.0;
 
+  const matrix: number[][] = [];
   for (let i = 0; i < 7; i++) {
     const row: number[] = [];
-    const semanticFeatureI = vectorToArray(x)[i] ?? 0;
-
     for (let j = 0; j < 7; j++) {
-      const semanticFeatureJ = vectorToArray(x)[j] ?? 0;
-      
-      // The transformation matrix W_i components are modulated deterministically 
-      // by the state properties themselves and the capabilities.
-      // E.g., if capability bonus is higher, elements shift slightly.
-      const delta = (semanticFeatureI * 0.02) - (semanticFeatureJ * 0.02) + capabilityBonus;
-      
-      let val = baseMatrix[i][j] + delta;
-      
-      // Ensure positive semi-definite characteristics
+      let val = baseMatrix[i][j] + capabilityAdjustment + specAdjustment;
       if (val < 0) val = 0;
-      
       row.push(Number(val.toFixed(4)));
     }
     matrix.push(row);
   }
 
-  // Deterministic bias b_i derived from specialization and experience
+  // Deterministic bias b_i independent of x and independent of nodeId
+  const baseBias: number[] = [0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02];
   const bias: number[] = [];
   for (let i = 0; i < 7; i++) {
-    const bVal = 0.01 + (x.experience * 0.02) + (x.specialization * 0.01);
+    const bVal = baseBias[i] + (caps.length > 0 ? 0.01 : 0.0);
     bias.push(Number(bVal.toFixed(4)));
   }
 

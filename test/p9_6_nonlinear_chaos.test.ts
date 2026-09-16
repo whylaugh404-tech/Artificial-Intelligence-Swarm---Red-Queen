@@ -405,8 +405,8 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
     });
   });
 
-  describe('5. Feature Status Provenance (Explicit UNKNOWN handling)', () => {
-    it('menangani data yang hilang dengan status UNKNOWN tanpa mengarang angka palsu', () => {
+  describe('5. Feature Status Provenance & Absence of Heuristic Priors', () => {
+    it('menangani data yang hilang dengan status UNKNOWN dan nilai 0.0 tanpa mengarang prior palsu (no fake 0.5)', () => {
       const cellEmpty: Cell = {
         nodeId: 'cell_empty',
         lineageId: 'lin_empty',
@@ -426,6 +426,7 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
 
       const { vector, statuses, provenance } = engine.extractFeatureVectorWithStatus(cellEmpty);
 
+      // Section 2A: No heuristic 0.5 prior! Unknown is explicitly 0.0 and UNKNOWN.
       expect(statuses.computation).toBe('UNKNOWN');
       expect(statuses.reliability).toBe('UNKNOWN');
       expect(statuses.cognition).toBe('UNKNOWN');
@@ -434,21 +435,160 @@ describe('P9.6 — Nonlinear Cognitive Dynamics: Tanh + Cell-Specific Determinis
       expect(statuses.experience).toBe('UNKNOWN');
       expect(statuses.resourceEfficiency).toBe('UNKNOWN');
 
-      // Uses neutral uninformative prior (0.5 for neutral dimensions, 0.0 for specialization)
-      expect(vector.computation).toBe(0.5);
+      expect(vector.computation).toBe(0.0);
+      expect(vector.reliability).toBe(0.0);
+      expect(vector.cognition).toBe(0.0);
+      expect(vector.knowledge).toBe(0.0);
       expect(vector.specialization).toBe(0.0);
+      expect(vector.experience).toBe(0.0);
+      expect(vector.resourceEfficiency).toBe(0.0);
 
-      expect(provenance.some(p => p.includes('computation:UNKNOWN'))).toBe(true);
-      expect(provenance.some(p => p.includes('specialization:UNKNOWN'))).toBe(true);
+      expect(provenance.some(p => p.includes('computation:UNKNOWN(no_actual_state)'))).toBe(true);
+      expect(provenance.some(p => p.includes('cognition:UNKNOWN(no_actual_state)'))).toBe(true);
+      expect(provenance.some(p => p.includes('specialization:UNKNOWN(no_specialization_declared)'))).toBe(true);
     });
 
-    it('mengidentifikasi status KNOWN ketika data capability dan genome tersedia', () => {
-      const { statuses, provenance } = engine.extractFeatureVectorWithStatus(cellAlpha, 'quantum');
+    it('mengidentifikasi status KNOWN secara eksklusif dari cognitive/operational state aktual', () => {
+      const cellWithRealState: Cell = {
+        nodeId: 'cell_real_state',
+        lineageId: 'lin_real',
+        genome: {
+          genomeId: 'gen_real',
+          lineageId: 'lin_real',
+          specialization: 'QUANTUM_COMPUTING'
+        } as unknown as CellGenome,
+        memoryStore: {} as any,
+        p2pTransport: {} as any,
+        evolutionEngine: {} as any,
+        start: vi.fn(),
+        stop: vi.fn(),
+        getState: vi.fn().mockReturnValue({
+          computation: 0.85,
+          reliability: 0.95,
+          cognition: 0.90,
+          knowledge: 0.70,
+          experience: 0.60,
+          resourceEfficiency: 0.80
+        }),
+        submitTask: vi.fn()
+      } as any;
+
+      const { vector, statuses, provenance } = engine.extractFeatureVectorWithStatus(cellWithRealState, 'quantum');
 
       expect(statuses.computation).toBe('KNOWN');
+      expect(statuses.reliability).toBe('KNOWN');
       expect(statuses.cognition).toBe('KNOWN');
+      expect(statuses.knowledge).toBe('KNOWN');
       expect(statuses.specialization).toBe('KNOWN');
-      expect(provenance.some(p => p.includes('specialization:KNOWN'))).toBe(true);
+      expect(statuses.experience).toBe('KNOWN');
+      expect(statuses.resourceEfficiency).toBe('KNOWN');
+
+      expect(vector.computation).toBe(0.85);
+      expect(vector.reliability).toBe(0.95);
+      expect(vector.cognition).toBe(0.90);
+      expect(vector.knowledge).toBe(0.70);
+      expect(vector.specialization).toBe(1.0);
+      expect(vector.experience).toBe(0.60);
+      expect(vector.resourceEfficiency).toBe(0.80);
+
+      expect(provenance.some(p => p.includes('computation:KNOWN(cell_state:0.85)'))).toBe(true);
+      expect(provenance.some(p => p.includes('specialization:KNOWN(domain_match:QUANTUM_COMPUTING_matches_quantum)'))).toBe(true);
+    });
+
+    it('perubahan metadata tidak mengubah cognitive feature secara palsu jika actual state tidak berubah', () => {
+      const baseCellState = { computation: 0.75, reliability: 0.88 };
+
+      const cellMeta1: Cell = {
+        nodeId: 'cell_meta_1',
+        lineageId: 'lin_1',
+        genome: {
+          genomeId: 'gen_1',
+          lineageId: 'lin_1',
+          generation: 1,
+          capabilities: ['KNOWLEDGE_QUERY']
+        } as any,
+        getState: vi.fn().mockReturnValue(baseCellState)
+      } as any;
+
+      const cellMeta2: Cell = {
+        nodeId: 'cell_meta_2',
+        lineageId: 'lin_1',
+        genome: {
+          genomeId: 'gen_2',
+          lineageId: 'lin_1',
+          generation: 99, // 99 generations higher
+          capabilities: ['COGNITIVE_REASONING', 'CODE_ANALYSIS', 'MASSIVE_COMPUTE']
+        } as any,
+        getState: vi.fn().mockReturnValue(baseCellState)
+      } as any;
+
+      const feat1 = engine.extractFeatureVectorWithStatus(cellMeta1);
+      const feat2 = engine.extractFeatureVectorWithStatus(cellMeta2);
+
+      // Computation and reliability come strictly from baseCellState
+      expect(feat1.vector.computation).toBe(feat2.vector.computation);
+      expect(feat1.vector.reliability).toBe(feat2.vector.reliability);
+      // Cognition is NOT fabricated from capabilities
+      expect(feat1.vector.cognition).toBe(0.0);
+      expect(feat2.vector.cognition).toBe(0.0);
+      expect(feat1.statuses.cognition).toBe('UNKNOWN');
+      expect(feat2.statuses.cognition).toBe('UNKNOWN');
+    });
+  });
+
+  describe('6. Mathematical Invariants: Affine Independence & Nonlinear Range', () => {
+    it('memastikan W dan b strictly invariant terhadap input vector x dan nodeId', () => {
+      const vecX1: CognitiveFeatureVector = {
+        computation: 0.9,
+        reliability: 0.8,
+        cognition: 0.7,
+        knowledge: 0.6,
+        specialization: 0.5,
+        experience: 0.4,
+        resourceEfficiency: 0.3
+      };
+      const vecX2: CognitiveFeatureVector = {
+        computation: 0.1,
+        reliability: 0.2,
+        cognition: 0.3,
+        knowledge: 0.4,
+        specialization: 0.5,
+        experience: 0.6,
+        resourceEfficiency: 0.7
+      };
+
+      const params = { capabilities: ['COGNITIVE_REASONING'], specialization: 'MATH_SPECIALIST' };
+
+      const { matrix: W1, bias: b1 } = generateDeterministicMatrixAndBias(vecX1, params.capabilities, params.specialization);
+      const { matrix: W2, bias: b2 } = generateDeterministicMatrixAndBias(vecX2, params.capabilities, params.specialization);
+
+      // Mathematical Requirement: W(x1) === W(x2) and b(x1) === b(x2)
+      expect(W1).toEqual(W2);
+      expect(b1).toEqual(b2);
+
+      // Output z differs purely because x differs: W*x1 + b != W*x2 + b
+      const trans1 = applyLinearTransformation(vecX1, W1, b1);
+      const trans2 = applyLinearTransformation(vecX2, W2, b2);
+      expect(trans1.transformedVector).not.toEqual(trans2.transformedVector);
+    });
+
+    it('mempertahankan un-clamped nonlinear spectrum (nonlinearCollectiveVector) tanpa truncation tersembunyi', () => {
+      const population = [cellAlpha, cellBeta];
+      const result = engine.executeNonlinearComposition(population, undefined, 'quantum');
+
+      expect(result.nonlinearCollectiveVector).toBeDefined();
+      expect(result.compositionType).toBe('nonlinear_tanh_chaos');
+
+      // The un-clamped vector exists alongside the bounded unit-interval resultVector
+      for (const [key, val] of Object.entries(result.nonlinearCollectiveVector!)) {
+        expect(typeof val).toBe('number');
+        expect(Number.isFinite(val)).toBe(true);
+      }
+      expect(result.provenance).toContain('nonlinear_spectrum_preserved:full_range');
+    });
+
+    it('menolak iterasi chaos yang melebihi batas kedalaman siklus maksimum (MAX_COGNITIVE_CYCLE_DEPTH)', () => {
+      expect(() => iterateLogisticMap(0.5, 101)).toThrow(/satisfying 0 <= steps <= 100/);
     });
   });
 });

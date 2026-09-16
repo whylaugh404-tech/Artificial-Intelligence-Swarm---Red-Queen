@@ -99,7 +99,7 @@ describe('P9.5 — Linear Mathematical Cognitive Model & Collective Cognition', 
   });
 
   describe('2. Transformasi Linear (z_i = W_i * x_i + b_i)', () => {
-    it('menghasilkan matriks transformasi W_i (7x7) dan bias b_i (7x1) yang deterministik', () => {
+    it('menghasilkan matriks transformasi W_i (7x7) dan bias b_i (7x1) yang deterministik dan independen dari x', () => {
       const x1 = { computation: 0.8, reliability: 0.9, cognition: 0.7, knowledge: 0.85, specialization: 0.95, experience: 0.5, resourceEfficiency: 0.6 };
       const { matrix: W1, bias: b1 } = generateDeterministicMatrixAndBias(x1, ['COGNITIVE_REASONING']);
       const { matrix: W2, bias: b2 } = generateDeterministicMatrixAndBias(x1, ['COGNITIVE_REASONING']);
@@ -111,9 +111,16 @@ describe('P9.5 — Linear Mathematical Cognitive Model & Collective Cognition', 
       expect(W1).toEqual(W2);
       expect(b1).toEqual(b2);
 
+      // Section 3 Requirement: For identical transformation parameters, W and b are constant
       const x3 = { computation: 0.1, reliability: 0.2, cognition: 0.3, knowledge: 0.4, specialization: 0.5, experience: 0.6, resourceEfficiency: 0.7 };
-      const { matrix: W3 } = generateDeterministicMatrixAndBias(x3, ['COGNITIVE_REASONING']);
-      expect(W1).not.toEqual(W3);
+      const { matrix: W3, bias: b3 } = generateDeterministicMatrixAndBias(x3, ['COGNITIVE_REASONING']);
+      expect(W1).toEqual(W3);
+      expect(b1).toEqual(b3);
+
+      // Different inputs produce different outputs W*x + b strictly because x differs
+      const trans1 = applyLinearTransformation(x1, W1, b1);
+      const trans3 = applyLinearTransformation(x3, W3, b3);
+      expect(trans1.transformedVector).not.toEqual(trans3.transformedVector);
     });
 
     it('menerapkan z_i = W_i * x_i + b_i tanpa clamping non-linear', () => {

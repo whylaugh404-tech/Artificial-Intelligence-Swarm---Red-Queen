@@ -25,6 +25,7 @@ export const MIN_CHAOS_R = 3.57;
 export const MAX_CHAOS_R = 4.0;
 export const MIN_CHAOS_LAMBDA = 0.0;
 export const MAX_CHAOS_LAMBDA = 0.2;
+export const MAX_COGNITIVE_CYCLE_DEPTH = 100;
 
 /**
  * Validates chaotic dynamics parameters r and lambda.
@@ -78,8 +79,10 @@ export function iterateLogisticMap(
   validateChaosParameters(r, DEFAULT_CHAOS_LAMBDA);
   validateChaosState(c0);
 
-  if (steps < 0 || !Number.isInteger(steps)) {
-    throw new Error(`Iteration steps must be a non-negative integer, got: ${steps}`);
+  if (steps < 0 || !Number.isInteger(steps) || steps > MAX_COGNITIVE_CYCLE_DEPTH) {
+    throw new Error(
+      `Iteration steps must be an integer satisfying 0 <= steps <= ${MAX_COGNITIVE_CYCLE_DEPTH}, got: ${steps}`
+    );
   }
 
   const sequence: number[] = [c0];
