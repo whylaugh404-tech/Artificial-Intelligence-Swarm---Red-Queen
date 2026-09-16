@@ -1,7 +1,7 @@
 import { Cell } from '../../core/cell';
 import { CognitiveRelationPredicate, RepresentationVerificationStatus } from '../representation/types';
 import { ConflictType, ConflictResolutionDecision } from '../verification/types';
-import { Context, EpistemicTransitionTrigger } from '../epistemic/types';
+import { Context, EpistemicTransitionTrigger, EpistemicStatus } from '../epistemic/types';
 import { CognitiveUnderstanding } from '../understanding/types';
 import { deepFreeze } from '../../genome/genome';
 import { logger } from '../../core/logger';
@@ -973,7 +973,7 @@ export class CollectiveCognitionEngine {
             contextId: context.contextId,
             domain: context.domain
           },
-          status: status === RepresentationVerificationStatus.SUPPORTED ? 'CONFIRMED' : 'PENDING',
+          status: status === RepresentationVerificationStatus.SUPPORTED ? EpistemicStatus.BELIEVED : EpistemicStatus.HYPOTHESIS,
           linearConfidence: collectiveState.resultVector.cognition
         };
 

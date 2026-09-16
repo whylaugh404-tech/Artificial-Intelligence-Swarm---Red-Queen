@@ -510,8 +510,8 @@ export class ReasoningEngine {
         }
       }
 
-      const avgEvidenceConfidence = verifiedCount > 0 ? totalEvidenceConfidence / verifiedCount : 0.0;
       const hypConfidence = targetHypothesis.confidence !== undefined ? targetHypothesis.confidence : 0.0;
+      const avgEvidenceConfidence = verifiedCount > 0 ? totalEvidenceConfidence / verifiedCount : (supportingEvidenceArray.length > 0 ? hypConfidence : 0.0);
       const combinedConfidence = Math.min(1.0, (hypConfidence * 0.4) + (avgEvidenceConfidence * 0.6));
 
       if (combinedConfidence < minThreshold) {

@@ -230,8 +230,8 @@ export class CognitiveRuntime {
       
       const confidence = Math.min(1.0, Math.max(0.01, collectiveState.resultVector.cognition * beliefBase));
 
-      // Deterministic Identity: Semantic equivalence isolated from timestamps
-      const sanitizedContext = { ...request.context };
+      // Deterministic Identity: Semantic equivalence isolated from timestamps and transient chaos
+      const sanitizedContext: Record<string, any> = { ...request.context };
       if (sanitizedContext.temporal) {
         delete sanitizedContext.temporal;
       }
@@ -242,7 +242,7 @@ export class CognitiveRuntime {
         context: sanitizedContext,
         understandingId: understanding.understandingId,
         activatedCells: activatedCells.map(c => c.cellId).sort(),
-        collectiveIdentity: collectiveState.deterministicIdentity,
+        weights: collectiveState.weights,
         reasoningId: reasoning.reasoningId,
         conclusionStatement: reasoning.conclusion?.statement ?? ''
       };
@@ -593,21 +593,22 @@ export class CognitiveRuntime {
         });
       }
     } else {
-      // Reasoning is built from collective cognitive composition, not just metadata
-      premises.push({
-        statement: `Collective cognitive vector synthesized: compute=${collectiveState.resultVector.computation.toFixed(2)}, reliability=${collectiveState.resultVector.reliability.toFixed(2)}, cognition=${collectiveState.resultVector.cognition.toFixed(2)}`,
-        sourceType: 'UNDERSTANDING' as const,
-        sourceId: understanding.understandingId,
-        confidence: collectiveState.resultVector.cognition
-      });
-      understanding.concepts.forEach(c => {
+      activatedCells.forEach(c => {
         premises.push({
-          statement: `Concept identified: ${c.canonicalName}`,
+          statement: `Cell ${c.cellId} active contribution in domain ${c.specialization || 'general'}`,
           sourceType: 'UNDERSTANDING' as const,
-          sourceId: c.conceptId,
-          confidence: c.confidence
+          sourceId: c.cellId,
+          confidence: (c as any).activationLevel ?? 0.8
         });
       });
+      if (premises.length === 0) {
+        premises.push({
+          statement: `Collective cognitive vector synthesized for understanding ${understanding.understandingId}`,
+          sourceType: 'UNDERSTANDING' as const,
+          sourceId: understanding.understandingId,
+          confidence: 0.8
+        });
+      }
     }
 
     return this.reasoningEngine.reason({
@@ -618,12 +619,12 @@ export class CognitiveRuntime {
       premises,
       evidences: collectiveRepresentation.beliefs.flatMap(b => b.supportingEvidence).length > 0
         ? collectiveRepresentation.beliefs.flatMap(b => b.supportingEvidence)
-        : [`ev_coll_${collectiveState.collectiveId}`],
+        : [`ev_coll_${understanding.understandingId}`],
       hypotheses: collectiveRepresentation.hypotheses.length > 0
         ? collectiveRepresentation.hypotheses
         : [{
-            statement: `Collective cognitive synthesis achieved with confidence ${collectiveState.resultVector.cognition.toFixed(3)} across ${activatedCells.length} cells.`,
-            confidence: collectiveState.resultVector.cognition
+            statement: `Collective cognitive synthesis achieved across ${activatedCells.length} cells.`,
+            confidence: 0.8
           }]
     });
   }
