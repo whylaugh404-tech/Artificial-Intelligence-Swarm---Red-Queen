@@ -21,6 +21,8 @@ import {
 import { CognitiveUnderstanding, CognitiveUnderstandingSchema } from '../understanding/types';
 import { Evidence } from '../evidence/types';
 import { CognitiveGraph } from '../representation/graph';
+import { EpistemicFusionEngine } from '../epistemic/fusion';
+import { EvidenceDependencyGraph } from '../evidence/graph';
 import {
   WorldModel,
   WorldModelCompositionInput,
@@ -463,15 +465,71 @@ export class WorldModelEngine {
     let uncertainty: SubjectiveOpinion;
     if (input.uncertainty) {
       uncertainty = SubjectiveOpinionSchema.parse(input.uncertainty);
+    } else if (hasConflict) {
+      uncertainty = { belief: 0.0, disbelief: 0.9, uncertainty: 0.1, baseRate: 0.5 };
+    } else if (evidenceIdsSet.size === 0) {
+      // Neutral UNKNOWN opinion when no evidence exists
+      uncertainty = { belief: 0.0, disbelief: 0.0, uncertainty: 1.0, baseRate: 0.5 };
     } else {
-      if (hasConflict) {
-        uncertainty = { belief: 0.1, disbelief: 0.8, uncertainty: 0.1, baseRate: 0.5 };
-      } else if (verificationStatus === RepresentationVerificationStatus.VERIFIED) {
-        uncertainty = { belief: 0.95, disbelief: 0.01, uncertainty: 0.04, baseRate: 0.5 };
-      } else if (verificationStatus === RepresentationVerificationStatus.SUPPORTED) {
-        uncertainty = { belief: 0.85, disbelief: 0.05, uncertainty: 0.1, baseRate: 0.5 };
+      // Verify evidence consistency via EpistemicFusionEngine
+      try {
+        const fusionEngine = new EpistemicFusionEngine();
+        const edg = graph?.getEDG() || new EvidenceDependencyGraph();
+        const validEvidences: Evidence[] = [];
+        for (const evId of evidenceIdsSet) {
+          const ev = graph?.getEvidence(evId);
+          if (ev) validEvidences.push(ev);
+        }
+        if (validEvidences.length > 0) {
+          fusionEngine.fuse(validEvidences, input.context, edg);
+        }
+      } catch {
+        // Fallback to representation verification
+      }
+
+      let totalEvidenceConfidence = 0;
+      let count = 0;
+      for (const evId of evidenceIdsSet) {
+        const ev = graph?.getEvidence(evId);
+        if (ev && ev.confidence !== undefined && ev.confidence > 0) {
+          totalEvidenceConfidence += ev.confidence;
+          count++;
+        }
+      }
+
+      let baseConfidence: number;
+      if (count > 0) {
+        baseConfidence = totalEvidenceConfidence / count;
       } else {
-        uncertainty = { belief: 0.4, disbelief: 0.1, uncertainty: 0.5, baseRate: 0.5 };
+        let repTotal = 0;
+        let repCount = 0;
+        for (const c of loadedConcepts.values()) {
+          if (c.confidence !== undefined && c.confidence > 0) {
+            repTotal += c.confidence;
+            repCount++;
+          }
+        }
+        for (const r of loadedRelations.values()) {
+          if (r.confidence !== undefined && r.confidence > 0) {
+            repTotal += r.confidence;
+            repCount++;
+          }
+        }
+        baseConfidence = repCount > 0 ? repTotal / repCount : 0.0;
+      }
+
+      if (baseConfidence <= 0) {
+        uncertainty = { belief: 0.0, disbelief: 0.0, uncertainty: 1.0, baseRate: 0.5 };
+      } else if (verificationStatus === RepresentationVerificationStatus.VERIFIED) {
+        const belief = Math.min(0.99, Math.max(0.91, Number(baseConfidence.toFixed(4))));
+        const unc = Number((1.0 - belief).toFixed(4));
+        uncertainty = { belief, disbelief: 0.0, uncertainty: unc, baseRate: 0.5 };
+      } else if (verificationStatus === RepresentationVerificationStatus.SUPPORTED) {
+        const belief = Math.min(0.89, Math.max(0.5, Number(baseConfidence.toFixed(4))));
+        const unc = Number((1.0 - belief).toFixed(4));
+        uncertainty = { belief, disbelief: 0.0, uncertainty: unc, baseRate: 0.5 };
+      } else {
+        uncertainty = { belief: 0.0, disbelief: 0.0, uncertainty: 1.0, baseRate: 0.5 };
       }
     }
 

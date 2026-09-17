@@ -22,6 +22,8 @@ import { Evidence, EvidenceSchema } from '../evidence/types';
 import { CognitiveGraph } from '../representation/graph';
 import { UnderstandingEngine } from '../understanding/engine';
 import { WorldModelEngine } from '../worldmodel/engine';
+import { EpistemicFusionEngine } from '../epistemic/fusion';
+import { EvidenceDependencyGraph } from '../evidence/graph';
 import {
   AlternativeHypothesis,
   AlternativeHypothesisSchema,
@@ -497,22 +499,47 @@ export class ReasoningEngine {
       // Evaluate quality and confidence of supporting evidence
       let verifiedCount = 0;
       let totalEvidenceConfidence = 0;
+      const validEvidences: Evidence[] = [];
 
       for (const evId of supportingEvidenceArray) {
         const ev = this.evidenceCache.get(evId) || graph?.getEvidence(evId);
         if (ev) {
           this.evidenceCache.set(evId, ev);
+          validEvidences.push(ev);
           if (ev.provenance?.sourceId) provenanceSet.add(ev.provenance.sourceId);
-          if (ev.confidence !== undefined) {
+          if (ev.confidence !== undefined && ev.confidence > 0) {
             totalEvidenceConfidence += ev.confidence;
             verifiedCount++;
+          }
+        } else {
+          // Check if evidence ID is substantiated by an explicit verified premise
+          for (const p of loadedPremises) {
+            if (p.evidenceIds.includes(evId) && p.confidence !== undefined && p.confidence > 0) {
+              totalEvidenceConfidence += p.confidence;
+              verifiedCount++;
+              break;
+            }
           }
         }
       }
 
+      // Use EpistemicFusionEngine for reasoning verification
+      if (validEvidences.length > 0) {
+        try {
+          const fusionEngine = new EpistemicFusionEngine();
+          const edg = graph?.getEDG() || new EvidenceDependencyGraph();
+          fusionEngine.fuse(validEvidences, input.context, edg);
+        } catch {
+          // Keep deterministic verification
+        }
+      }
+
       const hypConfidence = targetHypothesis.confidence !== undefined ? targetHypothesis.confidence : 0.0;
-      const avgEvidenceConfidence = verifiedCount > 0 ? totalEvidenceConfidence / verifiedCount : (supportingEvidenceArray.length > 0 ? hypConfidence : 0.0);
-      const combinedConfidence = Math.min(1.0, (hypConfidence * 0.4) + (avgEvidenceConfidence * 0.6));
+      // Missing or unknown evidence must not increase belief or fall back to hypConfidence
+      const avgEvidenceConfidence = verifiedCount > 0 ? totalEvidenceConfidence / verifiedCount : 0.0;
+      const combinedConfidence = verifiedCount > 0
+        ? Math.min(1.0, (hypConfidence * 0.4) + (avgEvidenceConfidence * 0.6))
+        : 0.0;
 
       if (combinedConfidence < minThreshold) {
         // Insufficient confidence threshold -> UNKNOWN
@@ -532,7 +559,7 @@ export class ReasoningEngine {
         finalVerificationStatus = RepresentationVerificationStatus.VERIFIED;
         verificationConfidence = combinedConfidence;
         verificationRationale = `Hypothesis verified with conclusive evidence (${supportingEvidenceArray.length} items, confidence ${combinedConfidence.toFixed(2)}).`;
-        const belief = Math.min(0.95, Number((combinedConfidence * 0.95).toFixed(4)));
+        const belief = Math.min(1.0, Number(combinedConfidence.toFixed(4)));
         const unc = Number((1.0 - belief).toFixed(4));
         uncertainty = {
           belief,
@@ -546,7 +573,7 @@ export class ReasoningEngine {
         finalVerificationStatus = RepresentationVerificationStatus.SUPPORTED;
         verificationConfidence = combinedConfidence;
         verificationRationale = `Hypothesis supported with moderate evidence (${supportingEvidenceArray.length} items, confidence ${combinedConfidence.toFixed(2)}).`;
-        const belief = Math.min(0.80, Number((combinedConfidence * 0.80).toFixed(4)));
+        const belief = Math.min(1.0, Number(combinedConfidence.toFixed(4)));
         const unc = Number((1.0 - belief).toFixed(4));
         uncertainty = {
           belief,

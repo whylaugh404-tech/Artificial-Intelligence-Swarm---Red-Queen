@@ -138,7 +138,7 @@ export class CognitiveDevelopmentEngine {
     }
     const avgEvidenceConfidence = count > 0 ? totalConfidence / count : 0.0;
     const delta = (1.0 - concept.confidence) * (0.3 * avgEvidenceConfidence);
-    const newConfidence = Math.min(1.0, concept.confidence + Math.max(0.04, delta));
+    const newConfidence = Math.min(1.0, concept.confidence + delta);
 
     let newStatus = concept.verificationStatus;
     if (newConfidence >= 0.85 && newStatus !== RepresentationVerificationStatus.VERIFIED) {
@@ -257,7 +257,7 @@ export class CognitiveDevelopmentEngine {
     }
     const avgEvidenceConfidence = count > 0 ? totalConfidence / count : 0.0;
     const delta = (1.0 - rel.confidence) * (0.3 * avgEvidenceConfidence);
-    const newConfidence = Math.min(1.0, rel.confidence + Math.max(0.04, delta));
+    const newConfidence = Math.min(1.0, rel.confidence + delta);
 
     let newStatus = rel.verificationStatus;
     if (newConfidence >= 0.85 && newStatus !== RepresentationVerificationStatus.VERIFIED) {

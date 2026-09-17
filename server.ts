@@ -8,6 +8,11 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Ensure REDQUEEN_STORAGE_SECRET exists for server Cell initialization
+if (!process.env.REDQUEEN_STORAGE_SECRET) {
+  process.env.REDQUEEN_STORAGE_SECRET = 'redqueen_local_development_storage_secret_key_32bytes';
+}
+
 function parseCSV(text: string) {
   const lines: string[][] = [];
   let row: string[] = [];
@@ -61,6 +66,11 @@ async function startServer() {
     logger.info('server', 'api_key_configured', {
       provider: process.env.GEMINI_API_KEY ? 'gemini' : 'openrouter'
     });
+  }
+  
+  const dataDir = path.join(process.cwd(), 'data');
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
   }
 
   const cell = new Cell('./data/memory.json', apiKey);
