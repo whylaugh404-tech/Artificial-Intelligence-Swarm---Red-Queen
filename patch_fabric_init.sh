@@ -1,0 +1,2 @@
+sed -i '/this.collectiveComputation.fabric = new DistributedComputationFabric/d' src/redqueen/core/cell.ts
+sed -i 's/this.transport = new P2PTransport(this.nodeId, rawPrivateKey, this.publicKey);/this.transport = new P2PTransport(this.nodeId, rawPrivateKey, this.publicKey);\n    this.collectiveComputation.fabric = new DistributedComputationFabric(this, this.collectiveComputation);/g' src/redqueen/core/cell.ts

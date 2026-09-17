@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { EpistemicStatusSchema } from '../epistemic/types';
 
 /**
  * P8.1 — Collective Computation Subsystem
@@ -26,6 +27,17 @@ export type {
   ComputePartition,
   CreateComputePartitionInput
 } from '../../core/compute/types';
+
+// 0. Epistemic Computation Context (P7 -> P8 Bridge)
+export const EpistemicComputationContextSchema = z.object({
+  sourceRepresentationId: z.string().optional(),
+  epistemicStatus: EpistemicStatusSchema,
+  uncertainty: z.number().min(0).max(1),
+  confidence: z.number().min(0).max(1),
+  provenance: z.array(z.string()).min(1)
+});
+
+export type EpistemicComputationContext = z.infer<typeof EpistemicComputationContextSchema>;
 
 // 1. Cell Computational Capability Profile (Derived & Estimated Operational Model)
 export const CellComputeCapacitySchema = z.object({
@@ -75,7 +87,8 @@ export const ComputationSubtaskSchema = z.object({
   requiredSpecialization: z.string().nullable().optional(),
   timeoutMs: z.number().positive().default(5000),
   maxRetries: z.number().int().min(0).default(2),
-  priority: z.number().int().default(0)
+  priority: z.number().int().default(0),
+  epistemicContext: EpistemicComputationContextSchema.optional()
 });
 
 export type ComputationSubtask = z.infer<typeof ComputationSubtaskSchema>;
@@ -90,7 +103,8 @@ export const ComputationTaskSchema = z.object({
   originatingCellId: z.string().min(1),
   timeoutMs: z.number().positive().default(10000),
   deterministicIdentity: z.string().min(1), // SHA-256 of canonical task specification
-  createdAt: z.string()
+  createdAt: z.string(),
+  epistemicContext: EpistemicComputationContextSchema.optional()
 });
 
 export type ComputationTask = z.infer<typeof ComputationTaskSchema>;

@@ -165,15 +165,45 @@ export class EpistemicFusionEngine {
     // 1. Normalize and deduplicate inputs by evidenceId (deterministic sorting)
     const normalizedList = this.normalizeInputs(inputs, options?.targetRepresentationId);
     
-    // Sort deterministically by evidenceId
-    normalizedList.sort((a, b) => a.evidence.evidenceId.localeCompare(b.evidence.evidenceId));
-
     // Register any evidence not yet in EDG
     for (const item of normalizedList) {
       if (!edg.hasEvidence(item.evidence.evidenceId)) {
         edg.addEvidence(item.evidence);
       }
     }
+
+    // Sort deterministically: ancestors (lower derivation depth) precede derived items, tie-broken by evidenceId
+    const allItemsMap = new Map<string, Evidence>();
+    for (const item of normalizedList) {
+      allItemsMap.set(item.evidence.evidenceId, item.evidence);
+    }
+
+    const depthMemo = new Map<string, number>();
+    const getDepth = (id: string, visited = new Set<string>()): number => {
+      if (depthMemo.has(id)) return depthMemo.get(id)!;
+      if (visited.has(id)) return 0;
+      visited.add(id);
+      const ev = allItemsMap.get(id);
+      if (!ev || !ev.provenance?.derivedFrom || ev.provenance.derivedFrom.length === 0) {
+        depthMemo.set(id, 0);
+        return 0;
+      }
+      let maxParentDepth = 0;
+      for (const parentId of ev.provenance.derivedFrom) {
+        maxParentDepth = Math.max(maxParentDepth, 1 + getDepth(parentId, new Set(visited)));
+      }
+      depthMemo.set(id, maxParentDepth);
+      return maxParentDepth;
+    };
+
+    normalizedList.sort((a, b) => {
+      const depthA = getDepth(a.evidence.evidenceId);
+      const depthB = getDepth(b.evidence.evidenceId);
+      if (depthA !== depthB) {
+        return depthA - depthB; // Ancestors (lower depth) come first
+      }
+      return a.evidence.evidenceId.localeCompare(b.evidence.evidenceId);
+    });
 
     // 2. Separate into supporting, conflicting, and neutral sets
     const supportingItems: AttributedEvidence[] = [];

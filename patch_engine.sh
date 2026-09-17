@@ -1,0 +1,1 @@
+sed -i 's/export class CollectiveComputationEngine {/import { DistributedComputationFabric } from ".\/fabric";\n\nexport class CollectiveComputationEngine {\n  public fabric?: DistributedComputationFabric;/g' src/redqueen/cognition/computation/engine.ts

@@ -1,5 +1,7 @@
 import { RepresentationVerificationStatus } from '../representation/types';
-import { EpistemicState, EpistemicStatus, SubjectiveOpinion, Context, freezeContext, EpistemicStateSchema, SubjectiveOpinionSchema } from './types';
+import { EpistemicState, EpistemicStatus, SubjectiveOpinion, Context, freezeContext, EpistemicStateSchema, SubjectiveOpinionSchema, ContextSchema } from './types';
+import { Evidence, EvidenceSchema, freezeEvidence } from '../evidence/types';
+import { ComputationResult } from '../computation/types';
 
 export class EpistemicAdapter {
   
@@ -88,6 +90,48 @@ export class EpistemicAdapter {
       context: freezeContext(contextParams),
       opinion
     };
+  }
+
+  /**
+   * Adapts P7 EpistemicState into P8 EpistemicComputationContext.
+   */
+  public static toEpistemicComputationContext(state: EpistemicState, sourceRepresentationId?: string) {
+    const uncertainty = state.opinion?.uncertainty ?? 1.0;
+    const confidence = state.rawConfidence ?? state.opinion?.belief ?? 0.0;
+    
+    return {
+      sourceRepresentationId,
+      epistemicStatus: state.status,
+      uncertainty,
+      confidence,
+      provenance: state.evidenceIds && state.evidenceIds.length > 0 ? state.evidenceIds : ['direct_state_adaptation']
+    };
+  }
+
+  /**
+   * Adapts P8 ComputationResult into P7 Evidence.
+   * Forces the provenance sourceId to 'distributed_computation'.
+   */
+  public static fromComputationResult(result: ComputationResult, contextParams: Context): Readonly<Evidence> {
+    const evidence: Evidence = {
+      evidenceId: `ev_comp_${result.taskId}_${Date.now()}`,
+      sourceId: 'distributed_computation', // Required by P7 constraints
+      observationId: result.taskId,
+      timestamp: result.completedAt || new Date().toISOString(),
+      provenance: {
+        sourceId: 'distributed_computation',
+        observationId: result.taskId,
+        timestamp: result.completedAt || new Date().toISOString(),
+        derivedFrom: result.provenance,
+        supportingRepresentationIds: [],
+        contradictingRepresentationIds: []
+      },
+      context: freezeContext(contextParams),
+      confidence: result.verificationStatus.verified ? result.verificationStatus.consistencyScore : 0.0
+    };
+    
+    const validated = EvidenceSchema.parse(evidence);
+    return freezeEvidence(validated);
   }
 
   public static persist(state: EpistemicState): string {
