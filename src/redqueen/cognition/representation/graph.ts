@@ -87,6 +87,50 @@ export class CognitiveGraph {
   }
 
   /**
+   * Directly sets/adds a concept into the graph cache with fallback normalization.
+   */
+  public addConcept(concept: Partial<CognitiveConcept> & { conceptId: string; canonicalName?: string }): void {
+    const rawCategory = typeof concept.category === 'string' ? concept.category.toUpperCase() : 'GENERAL_TECHNOLOGY';
+    const categoryKey = rawCategory === 'GENERAL' ? 'GENERAL_TECHNOLOGY' : rawCategory;
+    const category: InformationCategory = (InformationCategory as Record<string, InformationCategory>)[categoryKey] ?? InformationCategory.GENERAL_TECHNOLOGY;
+
+    const normalized: CognitiveConcept = {
+      conceptId: concept.conceptId,
+      canonicalName: concept.canonicalName || concept.conceptId,
+      description: concept.description || '',
+      category,
+      sourceKnowledgeIds: Array.isArray(concept.sourceKnowledgeIds) && concept.sourceKnowledgeIds.length > 0
+        ? concept.sourceKnowledgeIds
+        : ['kn_default'],
+      sourceExperienceIds: concept.sourceExperienceIds || [],
+      originatingCellId: concept.originatingCellId || this.cellId,
+      currentHolderCellId: concept.currentHolderCellId,
+      confidence: typeof concept.confidence === 'number' ? concept.confidence : 0.5,
+      verificationStatus: concept.verificationStatus || RepresentationVerificationStatus.PENDING,
+      epistemicStateId: concept.epistemicStateId,
+      createdAt: concept.createdAt || new Date().toISOString(),
+      updatedAt: concept.updatedAt || new Date().toISOString(),
+      version: typeof concept.version === 'number' ? concept.version : 1,
+      provenance: Array.isArray(concept.provenance) && concept.provenance.length > 0
+        ? concept.provenance
+        : ['init'],
+      evidenceIds: concept.evidenceIds,
+      metadata: concept.metadata || {}
+    };
+
+    const validated = CognitiveConceptSchema.parse(normalized);
+    this.concepts.set(validated.conceptId, validated);
+  }
+
+  /**
+   * Directly sets/adds a relation into the graph cache.
+   */
+  public addRelation(relation: CognitiveRelation): void {
+    const validated = CognitiveRelationSchema.parse(relation);
+    this.relations.set(validated.relationId, validated);
+  }
+
+  /**
    * Inserts a concept into the graph and persists to MemoryStore.
    */
   public async updateConcept(concept: CognitiveConcept): Promise<CognitiveConcept> {

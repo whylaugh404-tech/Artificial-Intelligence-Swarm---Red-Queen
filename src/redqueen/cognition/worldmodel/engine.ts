@@ -164,7 +164,29 @@ export class WorldModelEngine {
     // 2. Process explicit general concepts
     if (input.concepts) {
       for (const rawConcept of input.concepts) {
-        const concept = CognitiveConceptSchema.parse(rawConcept);
+        const rawCategory = typeof rawConcept.category === 'string' ? rawConcept.category.toUpperCase() : 'GENERAL_TECHNOLOGY';
+        const category = rawCategory === 'GENERAL' ? 'GENERAL_TECHNOLOGY' : rawCategory;
+        const validCategories = [
+          'CYBERSECURITY', 'PROGRAMMING', 'OPERATING_SYSTEM', 'NETWORKING',
+          'SOFTWARE', 'HARDWARE', 'AI', 'COMPUTER_SCIENCE', 'GENERAL_TECHNOLOGY', 'UNKNOWN'
+        ];
+        const normalizedConcept = {
+          ...rawConcept,
+          category: validCategories.includes(category) ? category : 'GENERAL_TECHNOLOGY',
+          sourceKnowledgeIds: Array.isArray(rawConcept.sourceKnowledgeIds) && rawConcept.sourceKnowledgeIds.length > 0
+            ? rawConcept.sourceKnowledgeIds
+            : ['kn_default'],
+          originatingCellId: rawConcept.originatingCellId || input.originatingCellId || 'cell_default',
+          version: typeof rawConcept.version === 'number' ? rawConcept.version : 1,
+          provenance: Array.isArray(rawConcept.provenance) && rawConcept.provenance.length > 0
+            ? rawConcept.provenance
+            : ['init'],
+          sourceExperienceIds: rawConcept.sourceExperienceIds || [],
+          confidence: typeof rawConcept.confidence === 'number' ? rawConcept.confidence : 0.5,
+          createdAt: rawConcept.createdAt || new Date().toISOString(),
+          updatedAt: rawConcept.updatedAt || new Date().toISOString()
+        };
+        const concept = CognitiveConceptSchema.parse(normalizedConcept);
         const existing = loadedConcepts.get(concept.conceptId);
         if (existing) {
           if (
@@ -660,6 +682,7 @@ export class WorldModelEngine {
 
     const rawModel = {
       worldModelId,
+      modelId: worldModelId,
       name: input.name,
       description: input.description,
       context: freezeContext(input.context),
@@ -928,4 +951,70 @@ export class WorldModelEngine {
   public getConstraintStructure(model: WorldModel): CompositionConstraint[] {
     return [...model.constraints];
   }
+
+  /**
+   * Integrates verified computational evidence from P8/P7 into an existing WorldModel.
+   * Updates evidence references, provenance, and re-evaluates epistemic status & uncertainty.
+   * Returns a newly composed, immutable WorldModel without modifying the original.
+   */
+  public integrateComputationalEvidence(
+    model: WorldModel,
+    computationalEvidence: Evidence,
+    graphOverride?: CognitiveGraph
+  ): WorldModel {
+    const graph = graphOverride || this.defaultGraph;
+
+    // Register evidence in graph if available
+    if (graph && 'addEvidence' in (graph as unknown as Record<string, unknown>) && typeof (graph as unknown as { addEvidence: unknown }).addEvidence === 'function') {
+      (graph as unknown as { addEvidence: (e: Evidence) => void }).addEvidence(computationalEvidence);
+    } else if (graph && 'evidence' in (graph as unknown as Record<string, unknown>)) {
+      (graph as unknown as { evidence: Map<string, Evidence> }).evidence.set(computationalEvidence.evidenceId, computationalEvidence);
+    }
+
+    // Merge evidence and provenance
+    const updatedEvidenceIds = Array.from(new Set([...model.evidenceIds, computationalEvidence.evidenceId])).sort();
+    const updatedProvenance = Array.from(new Set([...model.provenance, computationalEvidence.sourceId, ...(computationalEvidence.provenance.derivedFrom || [])])).sort();
+
+    // Re-resolve loaded concepts
+    const concepts: CognitiveConcept[] = [];
+    for (const entId of model.entities) {
+      const c = graph?.getConcept(entId) || this.conceptCache.get(entId);
+      if (c) concepts.push(c);
+    }
+
+    // Re-resolve relations
+    const relations: CognitiveRelation[] = [];
+    for (const relId of [...model.causalRelations, ...model.dependencies, ...model.structuralRelations]) {
+      const r = graph?.getRelation(relId) || this.relationCache.get(relId);
+      if (r) relations.push(r);
+    }
+
+    // Re-compose world model with updated evidence
+    const recomputed = this.compose({
+      originatingCellId: model.originatingCellId,
+      name: model.name,
+      description: model.description,
+      context: model.context,
+      concepts: concepts.length > 0 ? concepts : undefined,
+      relations: relations.length > 0 ? relations : undefined,
+      metadata: {
+        ...model.metadata,
+        integratedComputationalEvidenceId: computationalEvidence.evidenceId,
+        integratedTaskId: computationalEvidence.observationId
+      }
+    }, graph);
+
+    // Merge updated evidence IDs and provenance to preserve lineage
+    const finalModel: WorldModel = {
+      ...recomputed,
+      evidenceIds: Array.from(new Set([...recomputed.evidenceIds, ...updatedEvidenceIds])).sort(),
+      provenance: Array.from(new Set([...recomputed.provenance, ...updatedProvenance])).sort()
+    };
+
+    return deepFreeze({
+      ...finalModel,
+      trace: (elementId: string) => this.trace(finalModel, elementId, graph)
+    });
+  }
 }
+

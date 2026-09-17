@@ -61,6 +61,7 @@ export type WorldModelProcessRef = z.infer<typeof WorldModelProcessRefSchema>;
 
 export const WorldModelSchema = z.object({
   worldModelId: z.string().min(1).max(256),
+  modelId: z.string().optional(),
   name: z.string().optional(),
   description: z.string().optional(),
   context: ContextSchema,

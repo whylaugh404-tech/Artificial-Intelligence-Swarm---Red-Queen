@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { EpistemicStatusSchema } from '../epistemic/types';
+import { EpistemicStatusSchema, EpistemicStateSchema } from '../epistemic/types';
+import { EvidenceSchema } from '../evidence/types';
 
 /**
  * P8.1 — Collective Computation Subsystem
@@ -314,3 +315,38 @@ export const ComputationResultSchema = z.object({
 });
 
 export type ComputationResult = z.infer<typeof ComputationResultSchema>;
+
+// 12. P8 -> P7 -> P9 Cognitive Computation Feedback Types
+export const CognitiveComputationRequestSchema = z.object({
+  requestId: z.string().min(1),
+  sourceCellId: z.string().min(1),
+  goal: z.string().min(1),
+  computationType: z.string().min(1),
+  payload: z.record(z.string(), z.unknown()),
+  requiredCapabilities: z.array(z.string()).default([]),
+  timeoutMs: z.number().positive().default(5000),
+  epistemicContext: EpistemicComputationContextSchema.optional(),
+  targetRepresentationId: z.string().optional(),
+  feedbackCycleDepth: z.number().int().min(0).default(0),
+  maxCycleDepth: z.number().int().min(1).default(3),
+  deterministicIdentity: z.string().min(1),
+  createdAt: z.string().optional()
+});
+
+export type CognitiveComputationRequest = z.infer<typeof CognitiveComputationRequestSchema>;
+
+export const CognitiveComputationFeedbackResultSchema = z.object({
+  feedbackId: z.string().min(1),
+  computationResult: ComputationResultSchema.optional(),
+  evidence: EvidenceSchema,
+  fusedEpistemicState: EpistemicStateSchema.optional(),
+  updatedWorldModelId: z.string().optional(),
+  cycleDepth: z.number().int().nonnegative(),
+  isBounded: z.boolean(),
+  deterministicIdentity: z.string().min(1),
+  status: ComputationStatusSchema,
+  provenance: z.array(z.string()).min(1)
+});
+
+export type CognitiveComputationFeedbackResult = z.infer<typeof CognitiveComputationFeedbackResultSchema>;
+

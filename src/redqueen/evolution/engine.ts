@@ -26,7 +26,9 @@ import {
   EvolutionEventStatus,
   EvaluationInput,
   MutationOptions,
-  EvolutionCycleOptions
+  EvolutionCycleOptions,
+  ComputationFeedbackTelemetry,
+  ComputationFeedbackTelemetrySchema
 } from './types';
 import { logger } from '../core/logger';
 
@@ -71,6 +73,7 @@ function clamp(val: number, min = 0.0, max = 1.0): number {
 export class EvolutionEngine {
   private events: Map<string, EvolutionEvent> = new Map();
   private genomeSnapshots: Map<string, CellGenome> = new Map();
+  private computationTelemetries: Map<string, ComputationFeedbackTelemetry[]> = new Map();
 
   constructor(private cell?: Cell) {}
 
@@ -119,6 +122,13 @@ export class EvolutionEngine {
       const availScore = cap.availability;
       const parallelismScore = clamp(cap.parallelism / 5.0);
       computationPerformance = round4(clamp(availScore * 0.6 + parallelismScore * 0.4));
+    }
+
+    // Factor in recorded feedback telemetries for this Cell
+    const cellTelemetries = this.computationTelemetries.get(activeCell.nodeId);
+    if (cellTelemetries && cellTelemetries.length > 0) {
+      const avgFitness = cellTelemetries.reduce((sum, t) => sum + t.computationFitnessScore, 0) / cellTelemetries.length;
+      computationPerformance = round4(clamp(computationPerformance * 0.4 + avgFitness * 0.6));
     }
 
     // 2. reliability [0.0, 1.0]
@@ -224,7 +234,7 @@ export class EvolutionEngine {
       components.resourceEfficiency * weights.resourceEfficiency
     ));
 
-    const evaluatedAt = input?.timestamp ?? genome.createdAt;
+    const evaluatedAt = input?.timestamp ?? genome.createdAt ?? '2026-01-01T00:00:00.000Z';
 
     const deterministicIdentity = computeDeterministicHash({
       cellId: activeCell.nodeId,
@@ -621,4 +631,23 @@ export class EvolutionEngine {
     const all = this.getEvents();
     return all.length > 0 ? all[all.length - 1] : undefined;
   }
+
+  public recordComputationTelemetry(telemetry: ComputationFeedbackTelemetry): void {
+    ComputationFeedbackTelemetrySchema.parse(telemetry);
+    const existing = this.computationTelemetries.get(telemetry.cellId) || [];
+    existing.push(Object.freeze({ ...telemetry }));
+    this.computationTelemetries.set(telemetry.cellId, existing);
+  }
+
+  public getComputationTelemetry(cellId?: string): ComputationFeedbackTelemetry[] {
+    if (cellId) {
+      return [...(this.computationTelemetries.get(cellId) || [])];
+    }
+    const all: ComputationFeedbackTelemetry[] = [];
+    for (const list of this.computationTelemetries.values()) {
+      all.push(...list);
+    }
+    return all;
+  }
 }
+

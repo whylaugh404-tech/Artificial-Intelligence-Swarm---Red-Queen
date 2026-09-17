@@ -20,6 +20,8 @@ import {
 import { EvidenceDependencyGraph } from '../evidence/graph';
 import { RepresentationVerificationStatus } from '../representation/types';
 import { EpistemicAdapter } from './adapter';
+import { ComputationResult, ComputationStatus } from '../computation/types';
+import { computeDeterministicHash } from '../computation/canonical';
 import { logger } from '../../core/logger';
 
 /**
@@ -139,6 +141,68 @@ export function calculateEffectiveEvidenceWeight(evidence: Evidence): number {
 export class EpistemicFusionEngine {
   private readonly component = 'epistemic_fusion_engine';
   private readonly defaultBaseRate = 0.5;
+
+  /**
+   * Adapts a verified P8 ComputationResult into a strongly typed P7 Evidence record.
+   * Deterministic identity derived from canonical task and computation hashes (Zero Date.now()/Math.random()).
+   */
+  public adaptComputationResultToEvidence(
+    result: ComputationResult,
+    contextParams: Context,
+    options?: {
+      targetRepresentationId?: string;
+      polarity?: EvidencePolarity;
+      deterministicTimestamp?: string;
+    }
+  ): Readonly<Evidence> {
+    const polarity = options?.polarity ?? (result.status === ComputationStatus.FAILED ? EvidencePolarity.CONTRADICTS : EvidencePolarity.SUPPORTS);
+    const targetId = options?.targetRepresentationId;
+
+    const supportingRepresentationIds: string[] = [];
+    const contradictingRepresentationIds: string[] = [];
+
+    if (targetId) {
+      if (polarity === EvidencePolarity.CONTRADICTS || result.status === ComputationStatus.FAILED) {
+        contradictingRepresentationIds.push(targetId);
+      } else {
+        supportingRepresentationIds.push(targetId);
+      }
+    }
+
+    const deterministicHash = computeDeterministicHash({
+      taskId: result.taskId,
+      deterministicHash: result.deterministicHash,
+      targetId: targetId || null,
+      polarity
+    });
+
+    const evidenceId = `ev_comp_${deterministicHash.substring(0, 16)}`;
+    const timestamp = options?.deterministicTimestamp || result.completedAt || '2026-01-01T00:00:00.000Z';
+
+    const confidence = (result.status === ComputationStatus.COMPLETED && result.verificationStatus.verified)
+      ? result.verificationStatus.consistencyScore
+      : 0.0;
+
+    const evidence: Evidence = {
+      evidenceId,
+      sourceId: 'distributed_computation',
+      observationId: result.taskId,
+      timestamp,
+      provenance: {
+        sourceId: 'distributed_computation',
+        observationId: result.taskId,
+        timestamp,
+        derivedFrom: [...result.provenance].sort(),
+        supportingRepresentationIds,
+        contradictingRepresentationIds
+      },
+      context: freezeContext(contextParams),
+      confidence
+    };
+
+    const validated = EvidenceSchema.parse(evidence);
+    return freezeEvidence(validated);
+  }
 
   /**
    * Fuses a list of AttributedEvidence or Evidence records into an EpistemicFusionResult.

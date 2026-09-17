@@ -3,6 +3,8 @@ import { CognitiveRelationPredicate, RepresentationVerificationStatus } from '..
 import { ConflictType, ConflictResolutionDecision } from '../verification/types';
 import { Context, EpistemicTransitionTrigger, EpistemicStatus } from '../epistemic/types';
 import { CognitiveUnderstanding } from '../understanding/types';
+import { WorldModel } from '../worldmodel/types';
+import { CognitiveComputationRequest } from '../computation/types';
 import { deepFreeze } from '../../genome/genome';
 import { logger } from '../../core/logger';
 import { computeDeterministicHash } from '../computation/canonical';
@@ -1441,4 +1443,145 @@ export class CollectiveCognitionEngine {
 
     return deepFreeze(result);
   }
+
+  /**
+   * Updates collective representation from an updated WorldModel.
+   * STRICT ARCHITECTURAL RULE: Does NOT allow P8 results directly to update P9 state.
+   * It strictly requires the updated WorldModel (which was produced via P7 epistemic fusion)!
+   */
+  public updateFromWorldModel(
+    worldModel: WorldModel,
+    activeCells: Cell[],
+    context: Context
+  ): CollectiveRepresentation {
+    if (!worldModel || typeof worldModel !== 'object' || !('worldModelId' in worldModel) || !('entities' in worldModel)) {
+      throw new Error('CollectiveCognitionEngine.updateFromWorldModel requires a valid WorldModel instance. Direct mutation by raw P8 results is strictly prohibited.');
+    }
+
+    // Execute linear composition across active cells
+    const collectiveState = this.executeLinearComposition(activeCells, context, context?.domain);
+
+    const beliefs: BeliefState[] = [];
+    const emergentStructures: EmergentStructure[] = [];
+
+    // Extract beliefs from world model entities & concepts
+    for (const entId of worldModel.entities) {
+      beliefs.push({
+        conceptId: entId,
+        belief: worldModel.uncertainty.belief,
+        supportingEvidence: worldModel.evidenceIds,
+        contradictingEvidence: [],
+        status: worldModel.verificationStatus
+      });
+    }
+
+    // Extract emergent structures from world model processes and causal relations
+    for (const causalRel of worldModel.causalRelations) {
+      const emergentId = `em_${computeDeterministicHash({ modelId: worldModel.worldModelId, relId: causalRel }).substring(0, 16)}`;
+      emergentStructures.push({
+        emergentId,
+        sourceCells: activeCells.map(c => c.nodeId).sort(),
+        sourceStructures: [causalRel],
+        transformation: 'WORLD_MODEL_CAUSAL_EMERGENCE',
+        resultingStructure: {
+          relationId: causalRel,
+          epistemicStatus: worldModel.epistemicStatus,
+          uncertainty: worldModel.uncertainty
+        },
+        confidence: worldModel.uncertainty.belief,
+        provenance: [...worldModel.provenance, `world_model:${worldModel.worldModelId}`].sort(),
+        deterministicIdentity: computeDeterministicHash({ emergentId, worldModelId: worldModel.worldModelId }),
+        verificationStatus: worldModel.verificationStatus
+      });
+    }
+
+    const deterministicIdentity = computeDeterministicHash({
+      worldModelId: worldModel.worldModelId,
+      collectiveStateId: collectiveState.deterministicIdentity,
+      beliefsCount: beliefs.length
+    });
+
+    const collectiveRep: CollectiveRepresentation = {
+      emergentStructures,
+      hypotheses: [],
+      beliefs,
+      contradictions: [],
+      provenance: [
+        `world_model_feedback_update:${worldModel.worldModelId}`,
+        ...worldModel.provenance,
+        ...collectiveState.provenance
+      ],
+      collectiveState,
+      sourceCellIds: collectiveState.sourceCellIds,
+      featureVectors: collectiveState.inputVectors,
+      weights: collectiveState.weights,
+      transformations: collectiveState.transformations,
+      resultVector: collectiveState.resultVector,
+      deterministicIdentity
+    };
+
+    return deepFreeze(collectiveRep);
+  }
+
+  /**
+   * Creates a typed CognitiveComputationRequest from a cognitive hypothesis or emergent structure.
+   */
+  public createComputationRequestFromHypothesis(
+    hypothesis: EmergentStructure | string,
+    goal: string,
+    computationType: string,
+    payload: Record<string, unknown>,
+    context: Context,
+    options?: {
+      requiredCapabilities?: string[];
+      targetRepresentationId?: string;
+      feedbackCycleDepth?: number;
+      maxCycleDepth?: number;
+      timeoutMs?: number;
+    }
+  ): CognitiveComputationRequest {
+    const hypothesisId = typeof hypothesis === 'string' ? hypothesis : hypothesis.emergentId;
+    const sourceCellId = this.localCell ? this.localCell.nodeId : 'collective_source';
+    const targetRepId = options?.targetRepresentationId || hypothesisId;
+
+    const requestParams = {
+      sourceCellId,
+      goal,
+      computationType,
+      payload: {
+        ...payload,
+        hypothesisId,
+        contextDomain: context.domain
+      },
+      requiredCapabilities: options?.requiredCapabilities ?? [],
+      timeoutMs: options?.timeoutMs ?? 5000,
+      targetRepresentationId: targetRepId,
+      feedbackCycleDepth: options?.feedbackCycleDepth ?? 0,
+      maxCycleDepth: options?.maxCycleDepth ?? 3
+    };
+
+    const canonicalSpec = {
+      sourceCellId: requestParams.sourceCellId.trim(),
+      goal: requestParams.goal.trim(),
+      computationType: requestParams.computationType.trim(),
+      payload: requestParams.payload,
+      requiredCapabilities: [...requestParams.requiredCapabilities].sort(),
+      targetRepresentationId: requestParams.targetRepresentationId,
+      feedbackCycleDepth: requestParams.feedbackCycleDepth,
+      maxCycleDepth: requestParams.maxCycleDepth
+    };
+
+    const deterministicIdentity = computeDeterministicHash(canonicalSpec);
+    const requestId = `req_comp_${deterministicIdentity.substring(0, 16)}`;
+
+    const request: CognitiveComputationRequest = {
+      requestId,
+      ...requestParams,
+      deterministicIdentity,
+      createdAt: '2026-01-01T00:00:00.000Z'
+    };
+
+    return deepFreeze(request);
+  }
 }
+

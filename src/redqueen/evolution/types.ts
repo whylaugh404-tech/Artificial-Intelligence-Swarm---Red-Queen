@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { Experience } from '../metabolism/types';
-import { ComputationTask, SubtaskResult } from '../cognition/computation/types';
+import { ComputationTask, SubtaskResult, ComputationStatus, ComputationStatusSchema } from '../cognition/computation/types';
 
 /**
  * P9.1: Evolution Foundation - Evolutionary State Types
@@ -234,3 +234,20 @@ export interface PopulationEvolutionCycleResult {
   deterministicIdentity: string;
   timestamp: string;
 }
+
+// 13. P8 -> P9 Feedback Telemetry for Evolutionary Fitness
+export const ComputationFeedbackTelemetrySchema = z.object({
+  telemetryId: z.string().min(1),
+  cellId: z.string().min(1),
+  taskId: z.string().min(1),
+  status: ComputationStatusSchema,
+  computationFitnessScore: z.number().min(0).max(1),
+  epistemicContributionScore: z.number().min(0).max(1),
+  cycleDepth: z.number().int().nonnegative(),
+  timestamp: z.string(),
+  provenance: z.array(z.string()).min(1),
+  deterministicHash: z.string().min(1)
+});
+
+export type ComputationFeedbackTelemetry = z.infer<typeof ComputationFeedbackTelemetrySchema>;
+
