@@ -159,7 +159,7 @@ describe('Evidence Weight & Reasoning Integration', () => {
       confidence: 0.4
     };
 
-    reasoningEngine.reason({
+    const chain = reasoningEngine.reason({
       goal: 'Test reasoning evidence weighting integration',
       context: baseContext,
       originatingCellId: 'cell-1',
@@ -200,6 +200,12 @@ describe('Evidence Weight & Reasoning Integration', () => {
 
     expect(attrCounter?.weight).not.toBe(1.0);
     expect(attrCounter?.weight).toBeCloseTo(0.4);
+
+    // Also verify conclusion.counterEvidence reflects calculated dynamic weight
+    const conclusionCounter = chain.conclusion.counterEvidence.find(c => c.evidenceId === 'ev_counter');
+    expect(conclusionCounter).toBeDefined();
+    expect(conclusionCounter?.weight).not.toBe(1.0);
+    expect(conclusionCounter?.weight).toBeCloseTo(0.4);
 
     fuseSpy.mockRestore();
   });

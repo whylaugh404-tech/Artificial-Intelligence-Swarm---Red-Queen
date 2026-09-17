@@ -149,6 +149,14 @@ export class ReasoningEngine {
         }
       }
     }
+    if (input.counterEvidences) {
+      for (const item of input.counterEvidences) {
+        if (typeof item !== 'string' && 'evidenceId' in item && 'provenance' in item) {
+          const parsedEv = EvidenceSchema.parse(item);
+          this.evidenceCache.set(parsedEv.evidenceId, parsedEv);
+        }
+      }
+    }
 
     // -------------------------------------------------------------
     // 1. PHASE 1: PREMISE RESOLUTION
@@ -380,18 +388,30 @@ export class ReasoningEngine {
     if (input.counterEvidences) {
       for (const item of input.counterEvidences) {
         if (typeof item === 'string') {
+          const cachedEv = this.evidenceCache.get(item) || graph?.getEvidence(item);
+          const computedWeight = cachedEv ? calculateEffectiveEvidenceWeight(cachedEv) : 1.0;
           loadedCounterEvidences.push({
             evidenceId: item,
             reason: 'Counter-evidence observed',
-            weight: 1.0
+            weight: computedWeight
           });
         } else if ('evidenceId' in item && 'reason' in item) {
-          loadedCounterEvidences.push(CounterEvidenceItemSchema.parse(item));
+          const parsed = CounterEvidenceItemSchema.parse(item);
+          if (item.weight === undefined) {
+            const cachedEv = this.evidenceCache.get(parsed.evidenceId) || graph?.getEvidence(parsed.evidenceId);
+            if (cachedEv) {
+              parsed.weight = calculateEffectiveEvidenceWeight(cachedEv);
+            }
+          }
+          loadedCounterEvidences.push(parsed);
         } else if ('evidenceId' in item) {
+          const evId = (item as any).evidenceId;
+          const cachedEv = this.evidenceCache.get(evId) || graph?.getEvidence(evId);
+          const computedWeight = cachedEv ? calculateEffectiveEvidenceWeight(cachedEv) : 1.0;
           loadedCounterEvidences.push({
-            evidenceId: (item as any).evidenceId,
+            evidenceId: evId,
             reason: 'Counter-evidence record',
-            weight: 1.0,
+            weight: computedWeight,
             sourceId: (item as any).sourceId
           });
         }
