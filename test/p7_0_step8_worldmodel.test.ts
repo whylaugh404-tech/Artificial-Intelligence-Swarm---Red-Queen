@@ -676,4 +676,84 @@ describe('P7.0 Step 8: Internal World Model', () => {
       });
     }).toThrow(/conflicting definition/i);
   });
+
+
+      // EPISTEMIC PRECISION FIX TESTS
+  test('18. Epistemic: WorldModel without evidence yields UNKNOWN uncertainty', () => {
+    const conceptNoEv = {
+      ...cpuEntity,
+      conceptId: 'con_cpu_no_ev',
+      evidenceIds: [],
+      confidence: 0.99
+    };
+    
+    const wm = worldModelEngine.compose({
+      context: mockContext,
+      originatingCellId: 'cell_main',
+      entities: [conceptNoEv]
+    });
+    
+    // With no evidence, should be UNKNOWN logic
+    expect(wm.uncertainty.belief).toBe(0.0);
+    expect(wm.uncertainty.disbelief).toBe(0.0);
+    expect(wm.uncertainty.uncertainty).toBe(1.0);
+  });
+
+  test('19. Epistemic: concept/relation.confidence high without evidence does NOT yield high belief', () => {
+    const conceptNoEv = {
+      ...cpuEntity,
+      conceptId: 'con_cpu_high_conf',
+      evidenceIds: [],
+      confidence: 0.99
+    };
+    const conceptNoEv2 = {
+      ...ramEntity,
+      conceptId: 'con_ram_high_conf',
+      evidenceIds: [],
+      confidence: 0.99
+    };
+    
+    const relationNoEv = {
+      ...causalRelation,
+      relationId: 'rel_high_conf',
+      subjectConceptId: 'con_cpu_high_conf',
+      objectConceptId: 'con_ram_high_conf',
+      evidenceIds: [],
+      confidence: 0.99
+    };
+    
+    const wm = worldModelEngine.compose({
+      context: mockContext,
+      originatingCellId: 'cell_main',
+      entities: [conceptNoEv, conceptNoEv2],
+      relations: [relationNoEv]
+    });
+    
+    // Should still be UNKNOWN
+    expect(wm.uncertainty.belief).toBe(0.0);
+    expect(wm.uncertainty.disbelief).toBe(0.0);
+    expect(wm.uncertainty.uncertainty).toBe(1.0);
+  });
+
+  test('20. Epistemic: Conflict without validated contradictory evidence does NOT automatically produce disbelief', () => {
+    // A concept that has verificationStatus = CONTRADICTED, but no actual evidence linked
+    const conceptConflictNoEv = {
+      ...cpuEntity,
+      conceptId: 'con_cpu_conflict_no_ev',
+      evidenceIds: [],
+      confidence: 0.1,
+      verificationStatus: RepresentationVerificationStatus.CONTRADICTED
+    };
+    
+    const wm = worldModelEngine.compose({
+      context: mockContext,
+      originatingCellId: 'cell_main',
+      entities: [conceptConflictNoEv]
+    });
+    
+    // No evidence means no fusion opinion, fallback to UNKNOWN
+    expect(wm.uncertainty.belief).toBe(0.0);
+    expect(wm.uncertainty.disbelief).toBe(0.0);
+    expect(wm.uncertainty.uncertainty).toBe(1.0);
+  });
 });

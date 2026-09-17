@@ -502,37 +502,8 @@ export class WorldModelEngine {
       if (fusionOpinion) {
         uncertainty = { ...fusionOpinion };
       } else {
-        // Fallback to explicit source confidence if no valid numerical evidence is available
-        let repTotal = 0;
-        let repCount = 0;
-        for (const c of loadedConcepts.values()) {
-          if (c.confidence !== undefined && c.confidence > 0) {
-            repTotal += c.confidence;
-            repCount++;
-          }
-        }
-        for (const r of loadedRelations.values()) {
-          if (r.confidence !== undefined && r.confidence > 0) {
-            repTotal += r.confidence;
-            repCount++;
-          }
-        }
-        const baseConfidence = repCount > 0 ? repTotal / repCount : 0.0;
-        
-        if (baseConfidence <= 0) {
-          uncertainty = { belief: 0.0, disbelief: 0.0, uncertainty: 1.0, baseRate: 0.5 };
-        } else {
-          // If we have explicit confidence from source representations
-          if (hasConflict) {
-            const disbelief = Number(baseConfidence.toFixed(4));
-            const unc = Number((1.0 - disbelief).toFixed(4));
-            uncertainty = { belief: 0.0, disbelief, uncertainty: unc, baseRate: 0.5 };
-          } else {
-            const belief = Number(baseConfidence.toFixed(4));
-            const unc = Number((1.0 - belief).toFixed(4));
-            uncertainty = { belief, disbelief: 0.0, uncertainty: unc, baseRate: 0.5 };
-          }
-        }
+        // Requirement 3: If evidence is unavailable or fusion yields no opinion, return UNKNOWN
+        uncertainty = { belief: 0.0, disbelief: 0.0, uncertainty: 1.0, baseRate: 0.5 };
       }
     }
 
