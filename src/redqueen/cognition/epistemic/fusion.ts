@@ -109,11 +109,15 @@ export function freezeFusionResult(result: EpistemicFusionResult): Readonly<Epis
 }
 
 export function calculateEffectiveEvidenceWeight(evidence: Evidence): number {
-  const strength = evidence.confidence ?? 1.0;
-  const reliability = evidence.observationId ? 1.0 : 0.9;
+  const confidence = evidence.confidence ?? 1.0;
+  const rawReliability = ('reliability' in evidence && typeof (evidence as unknown as { reliability?: unknown }).reliability === 'number')
+    ? (evidence as unknown as { reliability: number }).reliability
+    : 1.0;
+  const reliability = Math.max(0, Math.min(1, rawReliability));
   const dependencyDiscount = (evidence.provenance.derivedFrom && evidence.provenance.derivedFrom.length > 0) ? 0.8 : 1.0;
 
-  return Math.max(0, Math.min(1, strength * reliability * dependencyDiscount));
+  const effectiveWeight = confidence * reliability * dependencyDiscount;
+  return Math.max(0, Math.min(1, effectiveWeight));
 }
 
 /**

@@ -14,80 +14,141 @@ describe('Evidence Weight & Reasoning Integration', () => {
     domain: 'test'
   };
 
-  it('confidence 0.9 menghasilkan weight sekitar 0.9 jika tidak ada dependency discount', () => {
-    const ev: Evidence = {
-      evidenceId: 'ev1',
+  it('evidence dengan observationId dan tanpa observationId tidak otomatis mendapatkan reliability berbeda', () => {
+    const evWithObs: Evidence = {
+      evidenceId: 'ev_obs',
       sourceId: 'src1',
-      observationId: 'obs1', // reliable
+      observationId: 'obs-123',
       timestamp: new Date().toISOString(),
       provenance: {
         sourceId: 'src1',
         timestamp: new Date().toISOString(),
       },
       context: baseContext,
-      confidence: 0.9 // kuat
+      confidence: 0.85
     };
 
-    const weight = calculateEffectiveEvidenceWeight(ev);
-    expect(weight).toBeCloseTo(0.9);
-  });
-
-  it('confidence 0.3 menghasilkan weight sekitar 0.3', () => {
-    const ev: Evidence = {
-      evidenceId: 'ev2',
+    const evWithoutObs: Evidence = {
+      evidenceId: 'ev_no_obs',
       sourceId: 'src1',
-      observationId: 'obs1',
       timestamp: new Date().toISOString(),
       provenance: {
         sourceId: 'src1',
         timestamp: new Date().toISOString(),
       },
       context: baseContext,
-      confidence: 0.3 // lemah
+      confidence: 0.85
     };
 
-    const weight = calculateEffectiveEvidenceWeight(ev);
-    expect(weight).toBeCloseTo(0.3);
+    const weightWithObs = calculateEffectiveEvidenceWeight(evWithObs);
+    const weightWithoutObs = calculateEffectiveEvidenceWeight(evWithoutObs);
+
+    expect(weightWithObs).toBeCloseTo(0.85);
+    expect(weightWithoutObs).toBeCloseTo(0.85);
+    expect(weightWithObs).toEqual(weightWithoutObs);
   });
 
-  it('derived evidence mendapat discount', () => {
-    const ev: Evidence = {
-      evidenceId: 'ev3',
+  it('confidence tetap memengaruhi effective weight secara proporsional', () => {
+    const evHigh: Evidence = {
+      evidenceId: 'ev_high',
       sourceId: 'src1',
-      observationId: 'obs1',
       timestamp: new Date().toISOString(),
       provenance: {
         sourceId: 'src1',
         timestamp: new Date().toISOString(),
-        derivedFrom: ['other_ev_id'] // redundant/dependent
       },
       context: baseContext,
       confidence: 0.9
     };
 
-    const weight = calculateEffectiveEvidenceWeight(ev);
-    expect(weight).toBeCloseTo(0.9 * 0.8);
-    expect(weight).toBeLessThan(0.9); // discount applied
-  });
-
-  it('hasil selalu 0..1', () => {
-    const evHigh: Evidence = {
-      evidenceId: 'ev4',
+    const evLow: Evidence = {
+      evidenceId: 'ev_low_conf',
       sourceId: 'src1',
-      observationId: 'obs1',
       timestamp: new Date().toISOString(),
       provenance: {
         sourceId: 'src1',
         timestamp: new Date().toISOString(),
       },
       context: baseContext,
-      confidence: 2.5 // unusually high
+      confidence: 0.3
+    };
+
+    const weightHigh = calculateEffectiveEvidenceWeight(evHigh);
+    const weightLow = calculateEffectiveEvidenceWeight(evLow);
+
+    expect(weightHigh).toBeCloseTo(0.9);
+    expect(weightLow).toBeCloseTo(0.3);
+    expect(weightHigh).toBeGreaterThan(weightLow);
+  });
+
+  it('derived evidence tetap mendapatkan dependency discount', () => {
+    const evIndependent: Evidence = {
+      evidenceId: 'ev_indep',
+      sourceId: 'src1',
+      timestamp: new Date().toISOString(),
+      provenance: {
+        sourceId: 'src1',
+        timestamp: new Date().toISOString(),
+      },
+      context: baseContext,
+      confidence: 0.9
+    };
+
+    const evDerived: Evidence = {
+      evidenceId: 'ev_derived_disc',
+      sourceId: 'src1',
+      timestamp: new Date().toISOString(),
+      provenance: {
+        sourceId: 'src1',
+        timestamp: new Date().toISOString(),
+        derivedFrom: ['other_ev_id']
+      },
+      context: baseContext,
+      confidence: 0.9
+    };
+
+    const weightIndep = calculateEffectiveEvidenceWeight(evIndependent);
+    const weightDerived = calculateEffectiveEvidenceWeight(evDerived);
+
+    expect(weightIndep).toBeCloseTo(0.9);
+    expect(weightDerived).toBeCloseTo(0.9 * 0.8);
+    expect(weightDerived).toBeLessThan(weightIndep);
+  });
+
+  it('menggunakan reliability eksplisit jika tersedia pada evidence', () => {
+    const evExplicit = {
+      evidenceId: 'ev_explicit',
+      sourceId: 'src1',
+      timestamp: new Date().toISOString(),
+      provenance: {
+        sourceId: 'src1',
+        timestamp: new Date().toISOString(),
+      },
+      context: baseContext,
+      confidence: 0.8,
+      reliability: 0.5
+    } as unknown as Evidence;
+
+    const weight = calculateEffectiveEvidenceWeight(evExplicit);
+    expect(weight).toBeCloseTo(0.8 * 0.5);
+  });
+
+  it('hasil selalu berada pada [0, 1]', () => {
+    const evHigh: Evidence = {
+      evidenceId: 'ev4',
+      sourceId: 'src1',
+      timestamp: new Date().toISOString(),
+      provenance: {
+        sourceId: 'src1',
+        timestamp: new Date().toISOString(),
+      },
+      context: baseContext,
+      confidence: 2.5
     };
 
     const evLow: Evidence = {
       evidenceId: 'ev5',
       sourceId: 'src1',
-      observationId: 'obs1',
       timestamp: new Date().toISOString(),
       provenance: {
         sourceId: 'src1',
@@ -95,11 +156,13 @@ describe('Evidence Weight & Reasoning Integration', () => {
         derivedFrom: ['a', 'b', 'c']
       },
       context: baseContext,
-      confidence: -0.5 // unusually low
+      confidence: -0.5
     };
 
     expect(calculateEffectiveEvidenceWeight(evHigh)).toBeLessThanOrEqual(1.0);
+    expect(calculateEffectiveEvidenceWeight(evHigh)).toBe(1.0);
     expect(calculateEffectiveEvidenceWeight(evLow)).toBeGreaterThanOrEqual(0.0);
+    expect(calculateEffectiveEvidenceWeight(evLow)).toBe(0.0);
   });
 
   it('Reasoning tidak lagi selalu menggunakan weight 1.0', () => {
