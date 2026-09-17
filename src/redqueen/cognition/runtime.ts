@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { Cell } from '../core/cell';
-import { Context, ContextSchema, freezeContext } from './epistemic/types';
+import { Context, ContextSchema, freezeContext, EpistemicStatus } from './epistemic/types';
 import { CognitiveUnderstanding, CognitiveUnderstandingSchema } from './understanding/types';
 import { ReasoningChain, ReasoningChainSchema, ReasoningConclusion, ReasoningConclusionSchema } from './reasoning/types';
 import { Evidence, EvidenceSchema, freezeEvidence } from './evidence/types';
@@ -9,6 +9,7 @@ import {
   ComputationTraceSchema,
   ComputationStatus,
   CognitiveComputationRequest,
+  CognitiveComputationRequestSchema,
   CognitiveComputationFeedbackResult,
   CognitiveComputationFeedbackResultSchema,
   ComputationResult
@@ -341,18 +342,94 @@ export class CognitiveRuntime {
       currentCycleDepth++;
       
       if (currentCycleDepth < maxCycleDepth) {
-        // Derive NEW request from the updated collective state for the next iteration
-        currentRequest = {
-          ...currentRequest,
-          requestId: `${initialRequest.requestId}_iter${currentCycleDepth}`,
-          feedbackCycleDepth: currentCycleDepth,
-          originatingCollectiveStateId: collectiveState.deterministicIdentity,
-          deterministicIdentity: computeDeterministicHash({
-             requestId: `${initialRequest.requestId}_iter${currentCycleDepth}`,
-             feedbackCycleDepth: currentCycleDepth,
-             originatingCollectiveStateId: collectiveState.deterministicIdentity
-          })
+        // Check if the updated epistemic/world-model/collective state actually has a new computational need.
+        // If state is already completely VERIFIED with zero uncertainty and no unverified structures/beliefs, stop the loop normally.
+        const isFullyVerified = 
+          fusionResult.fusedState?.status === EpistemicStatus.VERIFIED &&
+          (fusionResult.fusedState.opinion?.uncertainty ?? 0) === 0 &&
+          collectiveState.emergentStructures.length === 0 &&
+          !collectiveState.beliefs.some(b => b.status !== RepresentationVerificationStatus.VERIFIED);
+
+        if (isFullyVerified) {
+          break;
+        }
+
+        // Determine next target representation and goal based on emergent structures, unverified beliefs, or state refinement
+        const emergentStructure = collectiveState.emergentStructures[0];
+        const unverifiedBelief = collectiveState.beliefs.find(
+          b => b.status !== RepresentationVerificationStatus.VERIFIED
+        );
+
+        const nextTargetId = emergentStructure?.emergentId ??
+          unverifiedBelief?.conceptId ??
+          currentRequest.targetRepresentationId ??
+          updatedWorldModel.worldModelId;
+
+        const nextGoal = emergentStructure
+          ? `verify_emergent_structure:${emergentStructure.emergentId}`
+          : unverifiedBelief
+          ? `verify_belief:${unverifiedBelief.conceptId}`
+          : `${initialRequest.goal}:refinement_depth_${currentCycleDepth}`;
+
+        // Prepare updated epistemic computation context (P7 -> P8 bridge)
+        const epistemicContext = {
+          sourceRepresentationId: nextTargetId,
+          epistemicStatus: fusionResult.fusedState?.status ?? updatedWorldModel.epistemicStatus,
+          uncertainty: fusionResult.fusedState?.opinion?.uncertainty ?? 0.5,
+          confidence: fusionResult.fusedState?.opinion?.belief ?? 0.5,
+          provenance: [
+            `world_model:${updatedWorldModel.worldModelId}`,
+            `collective:${collectiveState.deterministicIdentity}`,
+            adaptedEvidence.evidenceId
+          ]
         };
+
+        // Prepare next payload incorporating prior state identity, world model, vector, and computation outputs
+        const nextPayload: Record<string, unknown> = {
+          ...currentRequest.payload,
+          originatingWorldModelId: updatedWorldModel.worldModelId,
+          collectiveStateId: collectiveState.deterministicIdentity,
+          collectiveResultVector: collectiveState.resultVector,
+          cycleDepth: currentCycleDepth
+        };
+
+        if (computationResult?.finalOutput) {
+          nextPayload.previousComputationOutput = computationResult.finalOutput;
+        }
+
+        const canonicalSpec = {
+          sourceCellId: currentRequest.sourceCellId.trim(),
+          goal: nextGoal.trim(),
+          computationType: currentRequest.computationType.trim(),
+          payload: nextPayload,
+          requiredCapabilities: [...currentRequest.requiredCapabilities].sort(),
+          targetRepresentationId: nextTargetId || null,
+          feedbackCycleDepth: currentCycleDepth,
+          maxCycleDepth: initialRequest.maxCycleDepth,
+          originatingCollectiveStateId: collectiveState.deterministicIdentity
+        };
+
+        const nextDeterministicIdentity = computeDeterministicHash(canonicalSpec);
+        const nextRequestId = `${initialRequest.requestId}_iter${currentCycleDepth}`;
+
+        currentRequest = deepFreeze({
+          requestId: nextRequestId,
+          sourceCellId: currentRequest.sourceCellId,
+          goal: nextGoal,
+          computationType: currentRequest.computationType,
+          payload: nextPayload,
+          requiredCapabilities: currentRequest.requiredCapabilities,
+          timeoutMs: currentRequest.timeoutMs,
+          epistemicContext,
+          targetRepresentationId: nextTargetId,
+          feedbackCycleDepth: currentCycleDepth,
+          maxCycleDepth: initialRequest.maxCycleDepth,
+          originatingCollectiveStateId: collectiveState.deterministicIdentity,
+          deterministicIdentity: nextDeterministicIdentity,
+          createdAt: '2026-01-01T00:00:00.000Z'
+        });
+
+        CognitiveComputationRequestSchema.parse(currentRequest);
       }
     }
 

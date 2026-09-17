@@ -16,8 +16,10 @@ import {
   CognitiveComputationRequest,
   CognitiveComputationRequestSchema,
   CognitiveComputationFeedbackResult,
-  CognitiveComputationFeedbackResultSchema
+  CognitiveComputationFeedbackResultSchema,
+  ComputationResult
 } from '../src/redqueen/cognition/computation/types';
+import { deepFreeze } from '../src/redqueen/genome/genome';
 import { CollectiveCognitionEngine } from '../src/redqueen/cognition/collective/engine';
 import { CognitiveRuntime } from '../src/redqueen/cognition/runtime';
 import { EvolutionEngine } from '../src/redqueen/evolution/engine';
@@ -468,29 +470,88 @@ describe('P8 Distributed Computation -> P7 Epistemic/WorldModel -> P9 Collective
     expect(resultA.evidence.observationId).toBe(resultB.evidence.observationId);
   });
 
-  // 13. Second feedback iteration (state transition verification)
-  it('13. should execute a second feedback iteration passing originatingCollectiveStateId from first iteration', async () => {
+  // 13. Second feedback iteration (causal state transition verification)
+  it('13. should execute a second feedback iteration passing originatingCollectiveStateId and updated cognitive references from iteration 0', async () => {
+    const executedRequests: CognitiveComputationRequest[] = [];
+    const origExecute = computeEngine1.executeCognitiveComputation.bind(computeEngine1);
+
+    computeEngine1.executeCognitiveComputation = async (req, opts) => {
+      executedRequests.push(req);
+      const res = await origExecute(req, opts);
+      if (executedRequests.length === 1) {
+        return {
+          ...res,
+          finalOutput: { stage: 0, outputValues: [10, 20] },
+          deterministicHash: 'hash_result_stage_0'
+        };
+      } else {
+        return {
+          ...res,
+          finalOutput: { stage: 1, outputValues: [100, 200] },
+          deterministicHash: 'hash_result_stage_1'
+        };
+      }
+    };
+
+    const collectiveUpdateSpy = vi.spyOn(runtime['collectiveEngine'], 'updateFromWorldModel');
+
     const request = computeEngine1.createCognitiveComputationRequest({
       sourceCellId: cell1.nodeId,
       goal: 'iterative_synthesis',
       computationType: 'DATA_TRANSFORMATION',
-      payload: { items: [1, 2] },
+      payload: { initialData: [1, 2] },
       feedbackCycleDepth: 0,
       maxCycleDepth: 2
     });
 
     const feedbackResult = await runtime.executeFeedbackLoop(request, computeEngine1, worldModelEngine);
+    computeEngine1.executeCognitiveComputation = origExecute;
 
-    expect(feedbackResult.cycleDepth).toBeGreaterThan(0);
-    expect(feedbackResult.isBounded).toBe(false); // isBounded is true only when initially blocked
+    // Verify 2 iterations executed
+    expect(executedRequests.length).toBe(2);
+    const request0 = executedRequests[0];
+    const request1 = executedRequests[1];
 
-    // The provenance should have evidence of multiple iterations
-    const cycle1 = feedbackResult.provenance.some(p => p.includes('iter1'));
-    expect(cycle1).toBe(true);
+    // Collective state identity produced in iteration 0
+    const collectiveState0 = collectiveUpdateSpy.mock.results[0]?.value;
+    expect(collectiveState0).toBeDefined();
+    const collectiveStateId0 = collectiveState0.deterministicIdentity;
+
+    // 1. Request IDs must not be identical
+    expect(request1.requestId).not.toBe(request0.requestId);
+    expect(request1.feedbackCycleDepth).toBe(1);
+
+    // 2. originatingCollectiveStateId of request1 MUST equal collectiveStateId from iteration 0
+    expect(request1.originatingCollectiveStateId).toBe(collectiveStateId0);
+
+    // 3. Cognitive inputs/references of request1 changed based on iteration 0 state
+    expect(request1.goal).not.toBe(request0.goal);
+    expect(request1.payload).not.toEqual(request0.payload);
+    expect(request1.payload.collectiveStateId).toBe(collectiveStateId0);
+    expect(request1.payload.originatingWorldModelId).toBeDefined();
+    expect(request1.payload.previousComputationOutput).toEqual({ stage: 0, outputValues: [10, 20] });
+
+    // 4. Epistemic context (P7 -> P8 bridge) must reference iteration 0 update
+    expect(request1.epistemicContext).toBeDefined();
+    expect(request1.epistemicContext?.provenance).toContain(`collective:${collectiveStateId0}`);
+
+    expect(feedbackResult.cycleDepth).toBe(1);
   });
 
   // 14. Bounded loop enforcement
   it('14. should enforce strict cycle boundedness exactly at maxCycleDepth', async () => {
+    const executedRequests: CognitiveComputationRequest[] = [];
+    const origExecute = computeEngine1.executeCognitiveComputation.bind(computeEngine1);
+
+    computeEngine1.executeCognitiveComputation = async (req, opts) => {
+      executedRequests.push(req);
+      const res = await origExecute(req, opts);
+      return {
+        ...res,
+        finalOutput: { stage: req.feedbackCycleDepth }
+      };
+    };
+
     const request = computeEngine1.createCognitiveComputationRequest({
       sourceCellId: cell1.nodeId,
       goal: 'recursive_synthesis',
@@ -501,9 +562,12 @@ describe('P8 Distributed Computation -> P7 Epistemic/WorldModel -> P9 Collective
     });
 
     const feedbackResult = await runtime.executeFeedbackLoop(request, computeEngine1, worldModelEngine);
+    computeEngine1.executeCognitiveComputation = origExecute;
 
-    // Should stop at cycleDepth = 2, so the final returned result has cycleDepth 1 but the loop ends before doing depth 2
-    expect(feedbackResult.cycleDepth).toBeLessThan(2);
+    // Number of iterations executed MUST be exactly maxCycleDepth and never exceed it
+    expect(executedRequests.length).toBe(2);
+    expect(executedRequests.length).toBeLessThanOrEqual(2);
+    expect(feedbackResult.cycleDepth).toBe(1); // 0-indexed: index 0 and index 1 were completed
   });
 
   // 15. Computation failure without contradiction
