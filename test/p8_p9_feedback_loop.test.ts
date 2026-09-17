@@ -467,4 +467,127 @@ describe('P8 Distributed Computation -> P7 Epistemic/WorldModel -> P9 Collective
     expect(resultA.status).toBe(resultB.status);
     expect(resultA.evidence.observationId).toBe(resultB.evidence.observationId);
   });
+
+  // 13. Second feedback iteration (state transition verification)
+  it('13. should execute a second feedback iteration passing originatingCollectiveStateId from first iteration', async () => {
+    const request = computeEngine1.createCognitiveComputationRequest({
+      sourceCellId: cell1.nodeId,
+      goal: 'iterative_synthesis',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: { items: [1, 2] },
+      feedbackCycleDepth: 0,
+      maxCycleDepth: 2
+    });
+
+    const feedbackResult = await runtime.executeFeedbackLoop(request, computeEngine1, worldModelEngine);
+
+    expect(feedbackResult.cycleDepth).toBeGreaterThan(0);
+    expect(feedbackResult.isBounded).toBe(false); // isBounded is true only when initially blocked
+
+    // The provenance should have evidence of multiple iterations
+    const cycle1 = feedbackResult.provenance.some(p => p.includes('iter1'));
+    expect(cycle1).toBe(true);
+  });
+
+  // 14. Bounded loop enforcement
+  it('14. should enforce strict cycle boundedness exactly at maxCycleDepth', async () => {
+    const request = computeEngine1.createCognitiveComputationRequest({
+      sourceCellId: cell1.nodeId,
+      goal: 'recursive_synthesis',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: { items: [1, 2] },
+      feedbackCycleDepth: 0,
+      maxCycleDepth: 2
+    });
+
+    const feedbackResult = await runtime.executeFeedbackLoop(request, computeEngine1, worldModelEngine);
+
+    // Should stop at cycleDepth = 2, so the final returned result has cycleDepth 1 but the loop ends before doing depth 2
+    expect(feedbackResult.cycleDepth).toBeLessThan(2);
+  });
+
+  // 15. Computation failure without contradiction
+  it('15. should handle computation failure gracefully without adding contradictingRepresentationIds', async () => {
+    const failingRequest = computeEngine1.createCognitiveComputationRequest({
+      sourceCellId: cell1.nodeId,
+      goal: 'failing_computation_task',
+      computationType: 'UNKNOWN_NONEXISTENT_TYPE',
+      payload: { test: true },
+      timeoutMs: 1000,
+      targetRepresentationId: 'target_concept_123',
+      maxCycleDepth: 1
+    });
+
+    const feedbackResult = await runtime.executeFeedbackLoop(failingRequest, computeEngine1, worldModelEngine);
+
+    expect(feedbackResult.status).toBe(ComputationStatus.FAILED);
+    expect(feedbackResult.evidence.provenance.contradictingRepresentationIds.length).toBe(0);
+    expect(feedbackResult.evidence.confidence).toBe(0.0);
+  });
+
+  // 16. Timeout handling without contradiction
+  it('16. should handle computation timeout/unverified without adding contradictingRepresentationIds', async () => {
+    const timeoutRequest = computeEngine1.createCognitiveComputationRequest({
+      sourceCellId: cell1.nodeId,
+      goal: 'timeout_task',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: { test: true },
+      targetRepresentationId: 'target_concept_456',
+      maxCycleDepth: 1
+    });
+
+    const origExecute = computeEngine1.executeCognitiveComputation.bind(computeEngine1);
+    computeEngine1.executeCognitiveComputation = async (req, opts) => {
+        const res = await origExecute(req, opts);
+        return {
+            ...res,
+            status: ComputationStatus.TIMEOUT,
+            verificationStatus: {
+                ...res.verificationStatus,
+                verified: false
+            }
+        };
+    };
+
+    const feedbackResult = await runtime.executeFeedbackLoop(timeoutRequest, computeEngine1, worldModelEngine);
+    
+    // restore
+    computeEngine1.executeCognitiveComputation = origExecute;
+
+    expect(feedbackResult.status).toBe(ComputationStatus.TIMEOUT);
+    expect(feedbackResult.evidence.provenance.contradictingRepresentationIds.length).toBe(0);
+  });
+
+  // 17. Success != VERIFIED directly
+  it('17. should not equate success with VERIFIED epistemic status directly unless fusion validates it', async () => {
+    const request = computeEngine1.createCognitiveComputationRequest({
+      sourceCellId: cell1.nodeId,
+      goal: 'success_but_unverified',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: { data: 'test' },
+      maxCycleDepth: 1
+    });
+
+    const origExecute = computeEngine1.executeCognitiveComputation.bind(computeEngine1);
+    computeEngine1.executeCognitiveComputation = async (req, opts) => {
+        const res = await origExecute(req, opts);
+        return {
+            ...res,
+            status: ComputationStatus.COMPLETED,
+            verificationStatus: {
+                ...res.verificationStatus,
+                verified: false
+            }
+        };
+    };
+
+    const feedbackResult = await runtime.executeFeedbackLoop(request, computeEngine1, worldModelEngine);
+    
+    computeEngine1.executeCognitiveComputation = origExecute;
+
+    expect(feedbackResult.status).toBe(ComputationStatus.COMPLETED);
+    if (feedbackResult.fusedEpistemicState) {
+        expect(feedbackResult.fusedEpistemicState.status).not.toBe('VERIFIED');
+    }
+  });
 });

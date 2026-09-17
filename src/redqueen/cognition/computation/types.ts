@@ -329,6 +329,7 @@ export const CognitiveComputationRequestSchema = z.object({
   targetRepresentationId: z.string().optional(),
   feedbackCycleDepth: z.number().int().min(0).default(0),
   maxCycleDepth: z.number().int().min(1).default(3),
+  originatingCollectiveStateId: z.string().optional(),
   deterministicIdentity: z.string().min(1),
   createdAt: z.string().optional()
 });

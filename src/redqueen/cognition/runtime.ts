@@ -156,30 +156,31 @@ export class CognitiveRuntime {
    * Evolution and telemetry traces are recorded with zero non-deterministic components.
    */
   public async executeFeedbackLoop(
-    request: CognitiveComputationRequest,
+    initialRequest: CognitiveComputationRequest,
     computationEngine: CollectiveComputationEngine,
     worldModelEngine: WorldModelEngine
   ): Promise<CognitiveComputationFeedbackResult> {
-    const feedbackCycleDepth = request.feedbackCycleDepth;
-    const maxCycleDepth = request.maxCycleDepth;
-    const provenance: string[] = [
-      `p9_state_request:${request.requestId}`
-    ];
-
+    let currentRequest = initialRequest;
+    let currentCycleDepth = currentRequest.feedbackCycleDepth;
+    const maxCycleDepth = currentRequest.maxCycleDepth;
+    
     // Step 1: Boundedness Check
-    if (feedbackCycleDepth >= maxCycleDepth) {
-      provenance.push(`cycle_depth_exceeded:${feedbackCycleDepth}_ge_${maxCycleDepth}`);
+    if (currentCycleDepth >= maxCycleDepth) {
+      const provenance = [
+        `p9_state_request:${currentRequest.requestId}`,
+        `cycle_depth_exceeded:${currentCycleDepth}_ge_${maxCycleDepth}`
+      ];
       
       const fallbackEvidence: Evidence = {
-        evidenceId: `ev_blocked_${request.deterministicIdentity.substring(0, 16)}`,
+        evidenceId: `ev_blocked_${currentRequest.deterministicIdentity.substring(0, 16)}`,
         sourceId: 'distributed_computation',
-        observationId: request.requestId,
+        observationId: currentRequest.requestId,
         timestamp: '2026-01-01T00:00:00.000Z',
         provenance: {
           sourceId: 'distributed_computation',
-          observationId: request.requestId,
+          observationId: currentRequest.requestId,
           timestamp: '2026-01-01T00:00:00.000Z',
-          derivedFrom: [request.sourceCellId],
+          derivedFrom: [currentRequest.sourceCellId],
           supportingRepresentationIds: [],
           contradictingRepresentationIds: []
         },
@@ -191,16 +192,16 @@ export class CognitiveRuntime {
       };
 
       const deterministicIdentity = computeDeterministicHash({
-        requestId: request.requestId,
+        requestId: currentRequest.requestId,
         status: ComputationStatus.BLOCKED,
-        cycleDepth: feedbackCycleDepth,
+        cycleDepth: currentCycleDepth,
         isBounded: true
       });
 
       const blockedResult: CognitiveComputationFeedbackResult = {
         feedbackId: `feedback_${deterministicIdentity.substring(0, 16)}`,
         evidence: fallbackEvidence,
-        cycleDepth: feedbackCycleDepth,
+        cycleDepth: currentCycleDepth,
         isBounded: true,
         deterministicIdentity,
         status: ComputationStatus.BLOCKED,
@@ -210,122 +211,157 @@ export class CognitiveRuntime {
       return deepFreeze(blockedResult);
     }
 
-    // Step 2: P8 Distributed Execution
-    let computationResult: ComputationResult | undefined = undefined;
-    let computationStatus: ComputationStatus = ComputationStatus.COMPLETED;
+    let latestFeedbackResult: CognitiveComputationFeedbackResult | null = null;
+    let provenance: string[] = [];
 
-    try {
-      computationResult = await computationEngine.executeCognitiveComputation(request, {
-        availableCells: this.population
-      });
-      computationStatus = computationResult.status;
-      provenance.push(`p8_computation_executed:${computationResult.taskId}`);
-    } catch {
-      computationStatus = ComputationStatus.FAILED;
-      provenance.push(`p8_computation_failed:${request.requestId}`);
-    }
+    while (currentCycleDepth < maxCycleDepth) {
+      provenance = [
+        `p9_state_request:${currentRequest.requestId}`
+      ];
 
-    // Fallback context for feedback loop
-    const context: Context = {
-      contextId: `ctx_${request.requestId}`,
-      domain: 'general_computation'
-    };
+      // Step 2: P8 Distributed Execution
+      let computationResult: ComputationResult | undefined = undefined;
+      let computationStatus: ComputationStatus = ComputationStatus.COMPLETED;
 
-    // Step 3: P7 Evidence Adaptation
-    const fusionEngine = new EpistemicFusionEngine();
-    let adaptedEvidence: Evidence;
+      try {
+        computationResult = await computationEngine.executeCognitiveComputation(currentRequest, {
+          availableCells: this.population
+        });
+        computationStatus = computationResult.status;
+        provenance.push(`p8_computation_executed:${computationResult.taskId}`);
+      } catch {
+        computationStatus = ComputationStatus.FAILED;
+        provenance.push(`p8_computation_failed:${currentRequest.requestId}`);
+      }
 
-    if (computationResult && computationStatus !== ComputationStatus.FAILED) {
-      adaptedEvidence = fusionEngine.adaptComputationResultToEvidence(
-        computationResult,
-        context,
-        {
-          targetRepresentationId: request.targetRepresentationId,
-          polarity: EvidencePolarity.SUPPORTS,
-          deterministicTimestamp: '2026-01-01T00:00:00.000Z'
-        }
-      );
-    } else {
-      // Failure evidence reflecting failed computation with zero confidence
-      const detHash = computeDeterministicHash({
-        requestId: request.requestId,
-        status: 'FAILED',
-        targetId: request.targetRepresentationId || null
-      });
+      // Fallback context for feedback loop
+      const context: Context = {
+        contextId: `ctx_${currentRequest.requestId}`,
+        domain: 'general_computation'
+      };
 
-      adaptedEvidence = freezeEvidence({
-        evidenceId: `ev_comp_failed_${detHash.substring(0, 16)}`,
-        sourceId: 'distributed_computation',
-        observationId: computationResult?.taskId || request.requestId,
-        timestamp: '2026-01-01T00:00:00.000Z',
-        provenance: {
+      // Step 3: P7 Evidence Adaptation
+      const fusionEngine = new EpistemicFusionEngine();
+      let adaptedEvidence: Evidence;
+
+      if (computationResult && computationStatus !== ComputationStatus.FAILED && computationStatus !== ComputationStatus.TIMEOUT) {
+        adaptedEvidence = fusionEngine.adaptComputationResultToEvidence(
+          computationResult,
+          context,
+          {
+            targetRepresentationId: currentRequest.targetRepresentationId,
+            polarity: EvidencePolarity.SUPPORTS,
+            deterministicTimestamp: '2026-01-01T00:00:00.000Z'
+          }
+        );
+      } else {
+        // Failure evidence reflecting failed computation with zero confidence
+        const detHash = computeDeterministicHash({
+          requestId: currentRequest.requestId,
+          status: computationStatus,
+          targetId: currentRequest.targetRepresentationId || null
+        });
+
+        adaptedEvidence = freezeEvidence({
+          evidenceId: `ev_comp_${computationStatus.toLowerCase()}_${detHash.substring(0, 16)}`,
           sourceId: 'distributed_computation',
-          observationId: computationResult?.taskId || request.requestId,
+          observationId: computationResult?.taskId || currentRequest.requestId,
           timestamp: '2026-01-01T00:00:00.000Z',
-          derivedFrom: [request.sourceCellId],
-          supportingRepresentationIds: [],
-          contradictingRepresentationIds: request.targetRepresentationId ? [request.targetRepresentationId] : []
-        },
-        context: freezeContext(context),
-        confidence: 0.0
+          provenance: {
+            sourceId: 'distributed_computation',
+            observationId: computationResult?.taskId || currentRequest.requestId,
+            timestamp: '2026-01-01T00:00:00.000Z',
+            derivedFrom: [currentRequest.sourceCellId],
+            supportingRepresentationIds: [],
+            contradictingRepresentationIds: [] // Strictly empty on failure to avoid unverified contradiction
+          },
+          context: freezeContext(context),
+          confidence: 0.0
+        });
+      }
+      provenance.push(`p7_evidence_adapted:${adaptedEvidence.evidenceId}`);
+
+      // Step 4: P7 Epistemic Fusion (EDG-aware)
+      const activeCell = this.population.find(c => c.nodeId === currentRequest.sourceCellId) || this.population[0];
+      const edg = activeCell ? activeCell.cognitiveGraph.getEDG() : new EvidenceDependencyGraph();
+      const fusionResult = fusionEngine.fuse([adaptedEvidence], context, edg, {
+        targetRepresentationId: currentRequest.targetRepresentationId
       });
+      provenance.push(`p7_epistemic_fused:${fusionResult.fusionId}`);
+
+      // Step 5: P7 World Model Integration
+      let currentWorldModel = worldModelEngine.compose({
+        originatingCellId: activeCell.nodeId,
+        context,
+        concepts: activeCell ? activeCell.cognitiveGraph.getAllConcepts() : []
+      });
+
+      const updatedWorldModel = worldModelEngine.integrateComputationalEvidence(
+        currentWorldModel,
+        adaptedEvidence,
+        activeCell?.cognitiveGraph
+      );
+      provenance.push(`p7_world_model_updated:${updatedWorldModel.worldModelId}`);
+
+      // Step 6: P9 Collective Cognition Update from Updated WorldModel
+      // STRICT ARCHITECTURAL RULE: Collective cognition engine updates strictly from WorldModel!
+      const collectiveState = this.collectiveEngine.updateFromWorldModel(
+        updatedWorldModel,
+        this.population.length > 0 ? this.population : [activeCell],
+        context
+      );
+      provenance.push(`p9_collective_updated:${updatedWorldModel.worldModelId}`);
+
+      const deterministicIdentity = computeDeterministicHash({
+        requestId: currentRequest.requestId,
+        status: computationStatus,
+        evidenceId: adaptedEvidence.evidenceId,
+        worldModelId: updatedWorldModel.worldModelId,
+        cycleDepth: currentCycleDepth
+      });
+
+      latestFeedbackResult = {
+        feedbackId: `feedback_${deterministicIdentity.substring(0, 16)}`,
+        computationResult,
+        evidence: adaptedEvidence,
+        fusedEpistemicState: fusionResult.fusedState,
+        updatedWorldModelId: updatedWorldModel.worldModelId,
+        cycleDepth: currentCycleDepth,
+        isBounded: false,
+        deterministicIdentity,
+        status: computationStatus,
+        provenance
+      };
+
+      // Stop loop early if there's no reason to compute further (e.g. failure)
+      if (computationStatus === ComputationStatus.FAILED || computationStatus === ComputationStatus.TIMEOUT || computationStatus === ComputationStatus.BLOCKED) {
+        break;
+      }
+      
+      currentCycleDepth++;
+      
+      if (currentCycleDepth < maxCycleDepth) {
+        // Derive NEW request from the updated collective state for the next iteration
+        currentRequest = {
+          ...currentRequest,
+          requestId: `${initialRequest.requestId}_iter${currentCycleDepth}`,
+          feedbackCycleDepth: currentCycleDepth,
+          originatingCollectiveStateId: collectiveState.deterministicIdentity,
+          deterministicIdentity: computeDeterministicHash({
+             requestId: `${initialRequest.requestId}_iter${currentCycleDepth}`,
+             feedbackCycleDepth: currentCycleDepth,
+             originatingCollectiveStateId: collectiveState.deterministicIdentity
+          })
+        };
+      }
     }
-    provenance.push(`p7_evidence_adapted:${adaptedEvidence.evidenceId}`);
 
-    // Step 4: P7 Epistemic Fusion (EDG-aware)
-    const activeCell = this.population.find(c => c.nodeId === request.sourceCellId) || this.population[0];
-    const edg = activeCell ? activeCell.cognitiveGraph.getEDG() : new EvidenceDependencyGraph();
-    const fusionResult = fusionEngine.fuse([adaptedEvidence], context, edg, {
-      targetRepresentationId: request.targetRepresentationId
-    });
-    provenance.push(`p7_epistemic_fused:${fusionResult.fusionId}`);
+    if (!latestFeedbackResult) {
+      throw new Error('Feedback loop exited without producing any result');
+    }
 
-    // Step 5: P7 World Model Integration
-    let currentWorldModel = worldModelEngine.compose({
-      originatingCellId: activeCell.nodeId,
-      context,
-      concepts: activeCell ? activeCell.cognitiveGraph.getAllConcepts() : []
-    });
-
-    const updatedWorldModel = worldModelEngine.integrateComputationalEvidence(
-      currentWorldModel,
-      adaptedEvidence,
-      activeCell?.cognitiveGraph
-    );
-    provenance.push(`p7_world_model_updated:${updatedWorldModel.worldModelId}`);
-
-    // Step 6: P9 Collective Cognition Update from Updated WorldModel
-    // STRICT ARCHITECTURAL RULE: Collective cognition engine updates strictly from WorldModel!
-    this.collectiveEngine.updateFromWorldModel(
-      updatedWorldModel,
-      this.population.length > 0 ? this.population : [activeCell],
-      context
-    );
-    provenance.push(`p9_collective_updated:${updatedWorldModel.worldModelId}`);
-
-    const deterministicIdentity = computeDeterministicHash({
-      requestId: request.requestId,
-      status: computationStatus,
-      evidenceId: adaptedEvidence.evidenceId,
-      worldModelId: updatedWorldModel.worldModelId,
-      cycleDepth: feedbackCycleDepth
-    });
-
-    const feedbackResult: CognitiveComputationFeedbackResult = {
-      feedbackId: `feedback_${deterministicIdentity.substring(0, 16)}`,
-      computationResult,
-      evidence: adaptedEvidence,
-      fusedEpistemicState: fusionResult.fusedState,
-      updatedWorldModelId: updatedWorldModel.worldModelId,
-      cycleDepth: feedbackCycleDepth,
-      isBounded: true,
-      deterministicIdentity,
-      status: computationStatus,
-      provenance
-    };
-
-    CognitiveComputationFeedbackResultSchema.parse(feedbackResult);
-    return deepFreeze(feedbackResult);
+    CognitiveComputationFeedbackResultSchema.parse(latestFeedbackResult);
+    return deepFreeze(latestFeedbackResult);
   }
 
   public async process(request: CognitiveRequest): Promise<CognitiveResult> {
