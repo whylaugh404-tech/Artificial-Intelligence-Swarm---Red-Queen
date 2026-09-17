@@ -57,6 +57,28 @@ function deepFreeze<T>(obj: T): T {
   return obj;
 }
 
+
+function resolveEvidencePolarity(evidence: any, target: any): any {
+  if (evidence?.provenance?.contradictingRepresentationIds?.includes(target.conceptId || target.relationId)) {
+    return 'CONTRADICTS';
+  }
+  return 'SUPPORTS';
+}
+
+function calculateEffectiveEvidenceWeight(evidence: any): number {
+  const strength = evidence.confidence ?? 1.0;
+  const reliability = evidence.sourceReliability ?? 1.0;
+  const dependencyDiscount = evidence.dependencyDiscount ?? 1.0;
+
+  return Math.max(
+    0,
+    Math.min(
+      1,
+      strength * reliability * dependencyDiscount
+    )
+  );
+}
+
 export class WorldModelEngine {
   // Representation caches for traceability and lookups across composed models
   private readonly conceptCache = new Map<string, CognitiveConcept>();
@@ -474,17 +496,27 @@ export class WorldModelEngine {
         const edg = graph?.getEDG() || new EvidenceDependencyGraph();
         const attributedEvidences: any[] = [];
         for (const c of loadedConcepts.values()) {
-          const pol = c.verificationStatus === 'CONTRADICTED' ? EvidencePolarity.CONTRADICTS : EvidencePolarity.SUPPORTS;
           for (const evId of c.evidenceIds || []) {
             const ev = graph?.getEvidence(evId);
-            if (ev) attributedEvidences.push({ evidence: ev, polarity: pol, weight: 1.0 });
+            if (!ev) continue;
+            const polarity = resolveEvidencePolarity(ev, c);
+            attributedEvidences.push({
+              evidence: ev,
+              polarity,
+              weight: calculateEffectiveEvidenceWeight(ev)
+            });
           }
         }
         for (const r of loadedRelations.values()) {
-          const pol = r.verificationStatus === 'CONTRADICTED' ? EvidencePolarity.CONTRADICTS : EvidencePolarity.SUPPORTS;
           for (const evId of r.evidenceIds || []) {
             const ev = graph?.getEvidence(evId);
-            if (ev) attributedEvidences.push({ evidence: ev, polarity: pol, weight: 1.0 });
+            if (!ev) continue;
+            const polarity = resolveEvidencePolarity(ev, r);
+            attributedEvidences.push({
+              evidence: ev,
+              polarity,
+              weight: calculateEffectiveEvidenceWeight(ev)
+            });
           }
         }
         

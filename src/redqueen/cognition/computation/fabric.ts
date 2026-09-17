@@ -218,7 +218,13 @@ export class DistributedComputationFabric {
 
       if (!isConnectedRemotePeer) {
         logger.warn(this.component, 'target_peer_not_authenticated_fallback_local', { targetId: targetCell.nodeId });
-        return localExecutor(subtask, resolvedInputs, targetCell);
+        const result = await localExecutor(subtask, resolvedInputs, targetCell) as any;
+        result.originatingCellId = this.cell.nodeId;
+        result.requestedCellId = targetCell.nodeId;
+        result.allocatedCellId = targetCell.nodeId;
+        result.actualExecutorCellId = this.cell.nodeId;
+        result.fallbackUsed = true;
+        return result;
       }
 
       logger.info(this.component, 'dispatching_remote_task', {

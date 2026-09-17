@@ -51,12 +51,12 @@ export function applyTanhVector(
 
   if (Array.isArray(zVector)) {
     for (let i = 0; i < 7; i++) {
-      const key = FEATURE_VECTOR_KEYS[i];
+      const key = FEATURE_VECTOR_KEYS[i] as keyof CognitiveFeatureVector;
       hVector[key] = safeTanh(zVector[i] ?? 0);
     }
   } else {
     for (let i = 0; i < 7; i++) {
-      const key = FEATURE_VECTOR_KEYS[i];
+      const key = FEATURE_VECTOR_KEYS[i] as keyof CognitiveFeatureVector;
       hVector[key] = safeTanh(zVector[key] ?? 0);
     }
   }

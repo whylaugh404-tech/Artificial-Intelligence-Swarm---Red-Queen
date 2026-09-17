@@ -294,7 +294,7 @@ export function modulateActivatedVector(
   mt: number
 ): Record<string, number> {
   const modulated: Record<string, number> = {};
-  for (const key of FEATURE_VECTOR_KEYS) {
+  for (const key of FEATURE_VECTOR_KEYS as Array<keyof CognitiveFeatureVector>) {
     const hVal = hVector[key] ?? 0;
     modulated[key] = hVal * mt;
   }

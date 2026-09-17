@@ -526,56 +526,34 @@ export class ReasoningEngine {
         };
       }
       targetHypothesis.status = EpistemicStatus.CONTRADICTED;
-    } else if (supportingEvidenceArray.length === 0) {
-      // Requirement 7: "Reasoning harus bisa berhenti dan menghasilkan 'UNKNOWN' jika bukti tidak cukup."
+    } else if (!fusionOpinion || validEvidencesCount === 0 || fusionOpinion.belief < minThreshold) {
       finalEpistemicStatus = EpistemicStatus.UNKNOWN;
       finalVerificationStatus = RepresentationVerificationStatus.PENDING;
-      verificationConfidence = 0.0;
-      verificationRationale = `Insufficient evidence: 0 supporting evidence items found (threshold: ${minThreshold}). Reasoning halted with UNKNOWN status.`;
-      uncertainty = {
-        belief: 0.0,
-        disbelief: 0.0,
-        uncertainty: 1.0,
-        baseRate: 0.5
-      };
+      verificationConfidence = fusionOpinion ? fusionOpinion.belief : 0.0;
+      verificationRationale = `Insufficient or weak evidence: ${validEvidencesCount} items, belief ${fusionOpinion ? fusionOpinion.belief.toFixed(2) : 0.0}. Result is UNKNOWN.`;
+      if (fusionOpinion) {
+        uncertainty = { ...fusionOpinion };
+      } else {
+        uncertainty = {
+          belief: 0.0,
+          disbelief: 0.0,
+          uncertainty: 1.0,
+          baseRate: 0.5
+        };
+      }
       targetHypothesis.status = EpistemicStatus.UNKNOWN;
     } else {
-      // Evaluate quality and confidence of supporting evidence based strictly on fusion
-      const combinedConfidence = fusionOpinion ? fusionOpinion.belief : 0.0;
+      // High belief is NOT verification.
+      finalEpistemicStatus =
+        fusionOpinion.belief >= 0.9
+          ? EpistemicStatus.BELIEVED
+          : EpistemicStatus.HYPOTHESIS;
 
-      if (combinedConfidence < minThreshold) {
-        // Insufficient confidence threshold -> UNKNOWN
-        finalEpistemicStatus = EpistemicStatus.UNKNOWN;
-        finalVerificationStatus = RepresentationVerificationStatus.PENDING;
-        verificationConfidence = combinedConfidence;
-        verificationRationale = `Evidence confidence (${combinedConfidence.toFixed(2)}) below minimum required threshold (${minThreshold}). Result is UNKNOWN.`;
-        
-        if (fusionOpinion) {
-          uncertainty = { ...fusionOpinion };
-        } else {
-          uncertainty = {
-            belief: 0.0,
-            disbelief: 0.0,
-            uncertainty: 1.0,
-            baseRate: 0.5
-          };
-        }
-        targetHypothesis.status = EpistemicStatus.UNKNOWN;
-      } else if (combinedConfidence >= 0.9 && validEvidencesCount >= 1) {
-        finalEpistemicStatus = EpistemicStatus.VERIFIED;
-        finalVerificationStatus = RepresentationVerificationStatus.VERIFIED;
-        verificationConfidence = combinedConfidence;
-        verificationRationale = `Hypothesis verified with conclusive evidence (${validEvidencesCount} valid items, fused belief ${combinedConfidence.toFixed(2)}).`;
-        uncertainty = { ...fusionOpinion! };
-        targetHypothesis.status = EpistemicStatus.VERIFIED;
-      } else {
-        finalEpistemicStatus = EpistemicStatus.BELIEVED;
-        finalVerificationStatus = RepresentationVerificationStatus.SUPPORTED;
-        verificationConfidence = combinedConfidence;
-        verificationRationale = `Hypothesis supported with moderate evidence (${validEvidencesCount} valid items, fused belief ${combinedConfidence.toFixed(2)}).`;
-        uncertainty = { ...fusionOpinion! };
-        targetHypothesis.status = EpistemicStatus.BELIEVED;
-      }
+      finalVerificationStatus = RepresentationVerificationStatus.SUPPORTED;
+      verificationConfidence = fusionOpinion.belief;
+      verificationRationale = `Hypothesis supported with evidence (${validEvidencesCount} valid items, fused belief ${fusionOpinion.belief.toFixed(2)}).`;
+      uncertainty = { ...fusionOpinion };
+      targetHypothesis.status = finalEpistemicStatus;
     }
 
     const verificationSig = `${targetHypothesis.hypothesisId}:${finalEpistemicStatus}:${verificationConfidence}:${verificationRationale}`;
