@@ -22,7 +22,7 @@ import { Evidence, EvidenceSchema } from '../evidence/types';
 import { CognitiveGraph } from '../representation/graph';
 import { UnderstandingEngine } from '../understanding/engine';
 import { WorldModelEngine } from '../worldmodel/engine';
-import { EpistemicFusionEngine } from '../epistemic/fusion';
+import { EpistemicFusionEngine, EvidencePolarity } from '../epistemic/fusion';
 import { EvidenceDependencyGraph } from '../evidence/graph';
 import {
   AlternativeHypothesis,
@@ -470,17 +470,61 @@ export class ReasoningEngine {
 
     const supportingEvidenceArray = Array.from(gatheredEvidenceIds).sort();
 
+    let fusionOpinion: SubjectiveOpinion | undefined;
+    const attributedEvidences: any[] = [];
+    let validEvidencesCount = 0;
+
+    const counterEvidenceIds = new Set(loadedCounterEvidences.map(c => c.evidenceId));
+    for (const evId of supportingEvidenceArray) {
+      if (counterEvidenceIds.has(evId)) continue; // skip if it's a counter evidence
+      const ev = this.evidenceCache.get(evId) || graph?.getEvidence(evId);
+      if (ev) {
+        this.evidenceCache.set(evId, ev);
+        attributedEvidences.push({ evidence: ev, polarity: EvidencePolarity.SUPPORTS, weight: 1.0 });
+        if (ev.provenance?.sourceId) provenanceSet.add(ev.provenance.sourceId);
+        validEvidencesCount++;
+      }
+    }
+
+    for (const counterEv of loadedCounterEvidences) {
+      const ev = this.evidenceCache.get(counterEv.evidenceId) || graph?.getEvidence(counterEv.evidenceId);
+      if (ev) {
+        this.evidenceCache.set(counterEv.evidenceId, ev);
+        attributedEvidences.push({ evidence: ev, polarity: EvidencePolarity.CONTRADICTS, weight: 1.0 });
+        if (ev.provenance?.sourceId) provenanceSet.add(ev.provenance.sourceId);
+        validEvidencesCount++;
+      }
+    }
+
+    if (attributedEvidences.length > 0) {
+      try {
+        const fusionEngine = new EpistemicFusionEngine();
+        const edg = graph?.getEDG() || new EvidenceDependencyGraph();
+        const fusionResult = fusionEngine.fuse(attributedEvidences, input.context, edg);
+        if (fusionResult.fusedState && fusionResult.fusedState.opinion) {
+          fusionOpinion = fusionResult.fusedState.opinion;
+        }
+      } catch {
+        // Fallback to undefined opinion if fusion fails
+      }
+    }
+
     if (hasContradiction) {
       finalEpistemicStatus = EpistemicStatus.CONTRADICTED;
       finalVerificationStatus = RepresentationVerificationStatus.CONTRADICTED;
-      verificationConfidence = 0.05;
+      verificationConfidence = fusionOpinion ? fusionOpinion.disbelief : 0.0;
       verificationRationale = contradictionReason;
-      uncertainty = {
-        belief: 0.0,
-        disbelief: 0.95,
-        uncertainty: 0.05,
-        baseRate: 0.5
-      };
+      
+      if (fusionOpinion) {
+        uncertainty = { ...fusionOpinion };
+      } else {
+        uncertainty = {
+          belief: 0.0,
+          disbelief: 0.0,
+          uncertainty: 1.0,
+          baseRate: 0.5
+        };
+      }
       targetHypothesis.status = EpistemicStatus.CONTRADICTED;
     } else if (supportingEvidenceArray.length === 0) {
       // Requirement 7: "Reasoning harus bisa berhenti dan menghasilkan 'UNKNOWN' jika bukti tidak cukup."
@@ -496,50 +540,8 @@ export class ReasoningEngine {
       };
       targetHypothesis.status = EpistemicStatus.UNKNOWN;
     } else {
-      // Evaluate quality and confidence of supporting evidence
-      let verifiedCount = 0;
-      let totalEvidenceConfidence = 0;
-      const validEvidences: Evidence[] = [];
-
-      for (const evId of supportingEvidenceArray) {
-        const ev = this.evidenceCache.get(evId) || graph?.getEvidence(evId);
-        if (ev) {
-          this.evidenceCache.set(evId, ev);
-          validEvidences.push(ev);
-          if (ev.provenance?.sourceId) provenanceSet.add(ev.provenance.sourceId);
-          if (ev.confidence !== undefined && ev.confidence > 0) {
-            totalEvidenceConfidence += ev.confidence;
-            verifiedCount++;
-          }
-        } else {
-          // Check if evidence ID is substantiated by an explicit verified premise
-          for (const p of loadedPremises) {
-            if (p.evidenceIds.includes(evId) && p.confidence !== undefined && p.confidence > 0) {
-              totalEvidenceConfidence += p.confidence;
-              verifiedCount++;
-              break;
-            }
-          }
-        }
-      }
-
-      // Use EpistemicFusionEngine for reasoning verification
-      if (validEvidences.length > 0) {
-        try {
-          const fusionEngine = new EpistemicFusionEngine();
-          const edg = graph?.getEDG() || new EvidenceDependencyGraph();
-          fusionEngine.fuse(validEvidences, input.context, edg);
-        } catch {
-          // Keep deterministic verification
-        }
-      }
-
-      const hypConfidence = targetHypothesis.confidence !== undefined ? targetHypothesis.confidence : 0.0;
-      // Missing or unknown evidence must not increase belief or fall back to hypConfidence
-      const avgEvidenceConfidence = verifiedCount > 0 ? totalEvidenceConfidence / verifiedCount : 0.0;
-      const combinedConfidence = verifiedCount > 0
-        ? Math.min(1.0, (hypConfidence * 0.4) + (avgEvidenceConfidence * 0.6))
-        : 0.0;
+      // Evaluate quality and confidence of supporting evidence based strictly on fusion
+      const combinedConfidence = fusionOpinion ? fusionOpinion.belief : 0.0;
 
       if (combinedConfidence < minThreshold) {
         // Insufficient confidence threshold -> UNKNOWN
@@ -547,40 +549,31 @@ export class ReasoningEngine {
         finalVerificationStatus = RepresentationVerificationStatus.PENDING;
         verificationConfidence = combinedConfidence;
         verificationRationale = `Evidence confidence (${combinedConfidence.toFixed(2)}) below minimum required threshold (${minThreshold}). Result is UNKNOWN.`;
-        uncertainty = {
-          belief: 0.0,
-          disbelief: 0.0,
-          uncertainty: 1.0,
-          baseRate: 0.5
-        };
+        
+        if (fusionOpinion) {
+          uncertainty = { ...fusionOpinion };
+        } else {
+          uncertainty = {
+            belief: 0.0,
+            disbelief: 0.0,
+            uncertainty: 1.0,
+            baseRate: 0.5
+          };
+        }
         targetHypothesis.status = EpistemicStatus.UNKNOWN;
-      } else if (combinedConfidence >= 0.9 && supportingEvidenceArray.length >= 1) {
+      } else if (combinedConfidence >= 0.9 && validEvidencesCount >= 1) {
         finalEpistemicStatus = EpistemicStatus.VERIFIED;
         finalVerificationStatus = RepresentationVerificationStatus.VERIFIED;
         verificationConfidence = combinedConfidence;
-        verificationRationale = `Hypothesis verified with conclusive evidence (${supportingEvidenceArray.length} items, confidence ${combinedConfidence.toFixed(2)}).`;
-        const belief = Math.min(1.0, Number(combinedConfidence.toFixed(4)));
-        const unc = Number((1.0 - belief).toFixed(4));
-        uncertainty = {
-          belief,
-          disbelief: 0.0,
-          uncertainty: unc,
-          baseRate: 0.5
-        };
+        verificationRationale = `Hypothesis verified with conclusive evidence (${validEvidencesCount} valid items, fused belief ${combinedConfidence.toFixed(2)}).`;
+        uncertainty = { ...fusionOpinion! };
         targetHypothesis.status = EpistemicStatus.VERIFIED;
       } else {
         finalEpistemicStatus = EpistemicStatus.BELIEVED;
         finalVerificationStatus = RepresentationVerificationStatus.SUPPORTED;
         verificationConfidence = combinedConfidence;
-        verificationRationale = `Hypothesis supported with moderate evidence (${supportingEvidenceArray.length} items, confidence ${combinedConfidence.toFixed(2)}).`;
-        const belief = Math.min(1.0, Number(combinedConfidence.toFixed(4)));
-        const unc = Number((1.0 - belief).toFixed(4));
-        uncertainty = {
-          belief,
-          disbelief: 0.0,
-          uncertainty: unc,
-          baseRate: 0.5
-        };
+        verificationRationale = `Hypothesis supported with moderate evidence (${validEvidencesCount} valid items, fused belief ${combinedConfidence.toFixed(2)}).`;
+        uncertainty = { ...fusionOpinion! };
         targetHypothesis.status = EpistemicStatus.BELIEVED;
       }
     }

@@ -21,7 +21,7 @@ import {
 import { CognitiveUnderstanding, CognitiveUnderstandingSchema } from '../understanding/types';
 import { Evidence } from '../evidence/types';
 import { CognitiveGraph } from '../representation/graph';
-import { EpistemicFusionEngine } from '../epistemic/fusion';
+import { EpistemicFusionEngine, EvidencePolarity } from '../epistemic/fusion';
 import { EvidenceDependencyGraph } from '../evidence/graph';
 import {
   WorldModel,
@@ -463,44 +463,46 @@ export class WorldModelEngine {
 
     // 8. Epistemic Uncertainty (Subjective Opinion)
     let uncertainty: SubjectiveOpinion;
+
     if (input.uncertainty) {
       uncertainty = SubjectiveOpinionSchema.parse(input.uncertainty);
-    } else if (hasConflict) {
-      uncertainty = { belief: 0.0, disbelief: 0.9, uncertainty: 0.1, baseRate: 0.5 };
-    } else if (evidenceIdsSet.size === 0) {
-      // Neutral UNKNOWN opinion when no evidence exists
-      uncertainty = { belief: 0.0, disbelief: 0.0, uncertainty: 1.0, baseRate: 0.5 };
     } else {
-      // Verify evidence consistency via EpistemicFusionEngine
+      let fusionOpinion: SubjectiveOpinion | undefined;
+      
       try {
         const fusionEngine = new EpistemicFusionEngine();
         const edg = graph?.getEDG() || new EvidenceDependencyGraph();
-        const validEvidences: Evidence[] = [];
-        for (const evId of evidenceIdsSet) {
-          const ev = graph?.getEvidence(evId);
-          if (ev) validEvidences.push(ev);
+        const attributedEvidences: any[] = [];
+        for (const c of loadedConcepts.values()) {
+          const pol = c.verificationStatus === 'CONTRADICTED' ? EvidencePolarity.CONTRADICTS : EvidencePolarity.SUPPORTS;
+          for (const evId of c.evidenceIds || []) {
+            const ev = graph?.getEvidence(evId);
+            if (ev) attributedEvidences.push({ evidence: ev, polarity: pol, weight: 1.0 });
+          }
         }
-        if (validEvidences.length > 0) {
-          fusionEngine.fuse(validEvidences, input.context, edg);
+        for (const r of loadedRelations.values()) {
+          const pol = r.verificationStatus === 'CONTRADICTED' ? EvidencePolarity.CONTRADICTS : EvidencePolarity.SUPPORTS;
+          for (const evId of r.evidenceIds || []) {
+            const ev = graph?.getEvidence(evId);
+            if (ev) attributedEvidences.push({ evidence: ev, polarity: pol, weight: 1.0 });
+          }
         }
-      } catch {
-        // Fallback to representation verification
+        
+        if (attributedEvidences.length > 0) {
+          const fusionResult = fusionEngine.fuse(attributedEvidences, input.context, edg);
+          if (fusionResult.fusedState && fusionResult.fusedState.opinion) {
+            fusionOpinion = fusionResult.fusedState.opinion;
+          }
+        }
+      } catch (err) {
+        console.error("FUSION ERROR:", err);
+        // Keep undefined if fusion fails
       }
 
-      let totalEvidenceConfidence = 0;
-      let count = 0;
-      for (const evId of evidenceIdsSet) {
-        const ev = graph?.getEvidence(evId);
-        if (ev && ev.confidence !== undefined && ev.confidence > 0) {
-          totalEvidenceConfidence += ev.confidence;
-          count++;
-        }
-      }
-
-      let baseConfidence: number;
-      if (count > 0) {
-        baseConfidence = totalEvidenceConfidence / count;
+      if (fusionOpinion) {
+        uncertainty = { ...fusionOpinion };
       } else {
+        // Fallback to explicit source confidence if no valid numerical evidence is available
         let repTotal = 0;
         let repCount = 0;
         for (const c of loadedConcepts.values()) {
@@ -515,21 +517,22 @@ export class WorldModelEngine {
             repCount++;
           }
         }
-        baseConfidence = repCount > 0 ? repTotal / repCount : 0.0;
-      }
-
-      if (baseConfidence <= 0) {
-        uncertainty = { belief: 0.0, disbelief: 0.0, uncertainty: 1.0, baseRate: 0.5 };
-      } else if (verificationStatus === RepresentationVerificationStatus.VERIFIED) {
-        const belief = Math.min(0.99, Math.max(0.91, Number(baseConfidence.toFixed(4))));
-        const unc = Number((1.0 - belief).toFixed(4));
-        uncertainty = { belief, disbelief: 0.0, uncertainty: unc, baseRate: 0.5 };
-      } else if (verificationStatus === RepresentationVerificationStatus.SUPPORTED) {
-        const belief = Math.min(0.89, Math.max(0.5, Number(baseConfidence.toFixed(4))));
-        const unc = Number((1.0 - belief).toFixed(4));
-        uncertainty = { belief, disbelief: 0.0, uncertainty: unc, baseRate: 0.5 };
-      } else {
-        uncertainty = { belief: 0.0, disbelief: 0.0, uncertainty: 1.0, baseRate: 0.5 };
+        const baseConfidence = repCount > 0 ? repTotal / repCount : 0.0;
+        
+        if (baseConfidence <= 0) {
+          uncertainty = { belief: 0.0, disbelief: 0.0, uncertainty: 1.0, baseRate: 0.5 };
+        } else {
+          // If we have explicit confidence from source representations
+          if (hasConflict) {
+            const disbelief = Number(baseConfidence.toFixed(4));
+            const unc = Number((1.0 - disbelief).toFixed(4));
+            uncertainty = { belief: 0.0, disbelief, uncertainty: unc, baseRate: 0.5 };
+          } else {
+            const belief = Number(baseConfidence.toFixed(4));
+            const unc = Number((1.0 - belief).toFixed(4));
+            uncertainty = { belief, disbelief: 0.0, uncertainty: unc, baseRate: 0.5 };
+          }
+        }
       }
     }
 
