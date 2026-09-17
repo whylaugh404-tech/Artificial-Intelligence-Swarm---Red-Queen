@@ -83,7 +83,7 @@ export class EvidenceDependencyGraph {
         return {
           type: EvidenceDependencyType.CORRELATED,
           basis: `Both evidences share common derivation ancestor(s): ${sharedAncestors.sort().join(', ')}`,
-          confidence: 0.9
+          confidence: 0.0 // P7: No fabricated weight
         };
       }
     }
@@ -112,7 +112,7 @@ export class EvidenceDependencyGraph {
       return {
         type: EvidenceDependencyType.CORRELATED,
         basis: `Shared targeted cognitive representation(s): ${sharedReps.sort().join(', ')}`,
-        confidence: 0.75
+        confidence: 0.0 // P7: No fabricated weight
       };
     }
 
@@ -121,7 +121,7 @@ export class EvidenceDependencyGraph {
       return {
         type: EvidenceDependencyType.CORRELATED,
         basis: `Common originating source (${evA.sourceId}) with different observations`,
-        confidence: 0.7
+        confidence: 0.0 // P7: No fabricated weight
       };
     }
 
@@ -136,7 +136,7 @@ export class EvidenceDependencyGraph {
       return {
         type: EvidenceDependencyType.INDEPENDENT,
         basis: `Distinct sources (${evA.sourceId}, ${evB.sourceId}) and distinct observations (${evA.observationId}, ${evB.observationId}) with no shared lineage`,
-        confidence: 0.95
+        confidence: 0.0 // P7: Must be derived or considered 0 initially
       };
     }
 

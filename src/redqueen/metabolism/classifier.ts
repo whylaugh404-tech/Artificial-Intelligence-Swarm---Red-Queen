@@ -147,7 +147,7 @@ export class InformationClassifier {
     if (scores.length === 0 || scores[0].score < 0.1) {
       return {
         primaryCategory: InformationCategory.UNKNOWN,
-        confidence: 0.2,
+        confidence: 0.0, // P7: UNKNOWN has no confidence weight
         allScores: scores
       };
     }

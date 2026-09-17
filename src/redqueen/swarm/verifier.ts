@@ -66,8 +66,11 @@ export function verifyMembershipCertificate(
     return { valid: false, reason: `Invalid issuer identity: ${issuerIdCheck.reason}` };
   }
 
-  // 5. Trusted Issuer Public Key check (if configured)
-  if (expectedIssuerPublicKey && c.issuerPublicKey.trim() !== expectedIssuerPublicKey.trim()) {
+  // 5. Trusted Issuer Public Key check (MUST be configured)
+  if (!expectedIssuerPublicKey) {
+    return { valid: false, reason: 'No trusted issuer public key configured for verification (TOFU rejected)' };
+  }
+  if (c.issuerPublicKey.trim() !== expectedIssuerPublicKey.trim()) {
     return { valid: false, reason: 'Certificate was signed by an untrusted issuer key' };
   }
 

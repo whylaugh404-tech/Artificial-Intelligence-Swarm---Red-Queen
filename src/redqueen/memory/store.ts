@@ -162,6 +162,8 @@ export class JsonFileMemoryStore implements MemoryStore {
     }
   }
 
+  private persistenceQueue: Promise<void> = Promise.resolve();
+
   /**
    * Durably persists in-memory entries to disk.
    * Persistence Semantics:
@@ -175,10 +177,29 @@ export class JsonFileMemoryStore implements MemoryStore {
     if (this.storagePath === ':memory:') {
       return;
     }
-    const data = Array.from(this.memoryMap.values());
-    const tempPath = `${this.storagePath}.tmp`;
-    await fs.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf8');
-    await fs.rename(tempPath, this.storagePath);
+    
+    // Capture the current promise before we overwrite it
+    let releaseQueue: () => void = () => {};
+    const nextQueuePromise = new Promise<void>(resolve => {
+      releaseQueue = resolve;
+    });
+
+    const previousQueue = this.persistenceQueue;
+    this.persistenceQueue = previousQueue.then(() => nextQueuePromise).catch(() => nextQueuePromise);
+
+    await previousQueue.catch(() => {}); // Wait for queue to drain without failing our task
+
+    try {
+      const data = Array.from(this.memoryMap.values());
+      const tempPath = `${this.storagePath}.tmp`;
+      await fs.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf8');
+      await fs.rename(tempPath, this.storagePath);
+    } catch (err) {
+      logger.error(this.component, 'persistence_failed', err);
+      throw err;
+    } finally {
+      releaseQueue();
+    }
   }
 
   async put(entry: MemoryEntry): Promise<void> {

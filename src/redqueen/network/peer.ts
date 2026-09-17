@@ -2,8 +2,9 @@ import { WebSocket } from 'ws';
 import { logger } from '../core/logger';
 import { NetworkMessage, MessageType, createMessage, verifyMessageSignature, MessageSchema } from './protocol';
 import { identityCrypto } from '../crypto/identity';
+import { encryptionCrypto } from '../crypto/encryption';
 import { isValidNodeId, validateEndpoint, MAX_MESSAGE_BYTES } from '../validation/validators';
-import { randomUUID } from 'crypto';
+import * as crypto from 'crypto';
 
 export enum PeerState {
   NEW = 'NEW',
@@ -20,6 +21,11 @@ export class Peer {
   public remoteEndpoint?: string;
   private pendingChallenge?: string;
   
+  // P0 Transport Encryption
+  private readonly localEphemeralKeyPair: crypto.KeyPairKeyObjectResult;
+  public remoteEphemeralPublicKey?: crypto.KeyObject;
+  private sessionKey?: Buffer;
+  
   public lastSeen: number = Date.now();
 
   constructor(
@@ -33,6 +39,8 @@ export class Peer {
     private readonly onMessage: (msg: NetworkMessage, peer: Peer) => void,
     private readonly onDisconnected: (peer: Peer) => void
   ) {
+    this.localEphemeralKeyPair = crypto.generateKeyPairSync('x25519');
+    
     this.setupListeners();
     
     if (this.isInitiator) {
@@ -52,7 +60,18 @@ export class Peer {
 
       try {
         const raw = JSON.parse(data.toString());
-        const msg = MessageSchema.parse(raw);
+        
+        let msg: NetworkMessage;
+        if (raw.type === 'ENCRYPTED' && raw.envelope) {
+          if (!this.sessionKey) {
+            logger.warn(this.component, 'received_encrypted_message_without_session_key');
+            this.disconnect();
+            return;
+          }
+          msg = encryptionCrypto.decryptPayload<NetworkMessage>(raw.envelope, this.sessionKey);
+        } else {
+          msg = MessageSchema.parse(raw);
+        }
         
         // 2. Validate senderId format
         if (!isValidNodeId(msg.senderId)) {
@@ -87,22 +106,6 @@ export class Peer {
     });
   }
 
-  public send(msgType: MessageType, payload: any, replyToId?: string): NetworkMessage {
-    if (this.state !== PeerState.AUTHENTICATED && 
-        msgType !== MessageType.HELLO && 
-        msgType !== MessageType.CHALLENGE && 
-        msgType !== MessageType.AUTH) {
-      throw new Error('Cannot send application messages before authentication');
-    }
-    
-    if (this.socket.readyState === WebSocket.OPEN) {
-      const msg = createMessage(msgType, this.localNodeId, payload, this.localPrivateKey, replyToId);
-      this.socket.send(JSON.stringify(msg));
-      return msg;
-    }
-    throw new Error('Socket not open');
-  }
-
   public disconnect() {
     if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
       try {
@@ -115,8 +118,51 @@ export class Peer {
   }
 
   private initiateHandshake() {
-    this.send(MessageType.HELLO, { publicKey: this.localPublicKey, endpoint: this.localEndpoint });
+
+    this.send(MessageType.HELLO, { 
+      publicKey: this.localPublicKey, 
+      endpoint: this.localEndpoint,
+      ephemeralPublicKey: this.localEphemeralKeyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString()
+    });
     this.state = PeerState.CHALLENGING;
+  }
+
+  private deriveSessionKey(remoteEphemeralPublicKeyPem: string) {
+    try {
+      this.remoteEphemeralPublicKey = crypto.createPublicKey(remoteEphemeralPublicKeyPem);
+      const sharedSecret = crypto.diffieHellman({
+        privateKey: this.localEphemeralKeyPair.privateKey,
+        publicKey: this.remoteEphemeralPublicKey
+      });
+      // Use HKDF to derive the final session key from the shared secret
+      this.sessionKey = encryptionCrypto.deriveKey(sharedSecret, 'redqueen_transport_salt', 'redqueen_v1_transport');
+    } catch (err: any) {
+      logger.error(this.component, 'key_derivation_failed', err);
+      this.disconnect();
+    }
+  }
+
+  public send(msgType: MessageType, payload: any, replyToId?: string): NetworkMessage {
+    if (this.state !== PeerState.AUTHENTICATED && 
+        msgType !== MessageType.HELLO && 
+        msgType !== MessageType.CHALLENGE && 
+        msgType !== MessageType.AUTH) {
+      throw new Error('Cannot send application messages before authentication');
+    }
+    
+    if (this.socket.readyState === WebSocket.OPEN) {
+      const msg = createMessage(msgType, this.localNodeId, payload, this.localPrivateKey, replyToId);
+      
+      if (this.sessionKey && this.state === PeerState.AUTHENTICATED) {
+        // Authenticated encryption of the entire protocol message
+        const envelope = encryptionCrypto.encryptPayload(msg, this.sessionKey, this.localNodeId);
+        this.socket.send(JSON.stringify({ type: 'ENCRYPTED', envelope }));
+      } else {
+        this.socket.send(JSON.stringify(msg));
+      }
+      return msg;
+    }
+    throw new Error('Socket not open');
   }
 
   private handleMessage(msg: NetworkMessage) {
@@ -155,16 +201,25 @@ export class Peer {
             }
           }
 
+          if (msg.payload?.ephemeralPublicKey) {
+            this.deriveSessionKey(msg.payload.ephemeralPublicKey);
+          } else {
+            logger.warn(this.component, 'missing_ephemeral_key_in_hello');
+            this.disconnect();
+            return;
+          }
+
           this.remotePublicKey = pubKey;
           this.remoteNodeId = msg.senderId;
           this.lastSeen = Date.now();
-          this.pendingChallenge = randomUUID();
+          this.pendingChallenge = crypto.randomUUID();
           this.state = PeerState.CHALLENGING;
           
           this.send(MessageType.CHALLENGE, { 
             challenge: this.pendingChallenge,
             publicKey: this.localPublicKey,
-            endpoint: this.localEndpoint
+            endpoint: this.localEndpoint,
+            ephemeralPublicKey: this.localEphemeralKeyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString()
           });
         } else {
           logger.warn(this.component, 'unexpected_message_in_new_state', { type: msg.type });
@@ -205,6 +260,14 @@ export class Peer {
             if (epCheck.valid) {
               this.remoteEndpoint = epCheck.normalizedUrl;
             }
+          }
+
+          if (msg.payload?.ephemeralPublicKey) {
+            this.deriveSessionKey(msg.payload.ephemeralPublicKey);
+          } else {
+            logger.warn(this.component, 'missing_ephemeral_key_in_challenge');
+            this.disconnect();
+            return;
           }
 
           this.remotePublicKey = pubKey;

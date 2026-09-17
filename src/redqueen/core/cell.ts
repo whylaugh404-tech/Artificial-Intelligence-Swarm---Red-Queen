@@ -1,5 +1,6 @@
 import * as fs from 'fs/promises';
 import { identityCrypto } from '../crypto/identity';
+import { encryptionCrypto, EncryptedEnvelope } from '../crypto/encryption';
 import { CellState, Lifecycle } from './lifecycle';
 import { JsonFileMemoryStore, MemoryStore, MemoryCategory } from '../memory/store';
 import { OpenRouterAIProvider, AIProvider } from '../cognition/ai-provider';
@@ -65,6 +66,7 @@ export interface CellOptions {
   metabolismBudget?: Partial<MetabolismBudget>;
   exchangeConfig?: Partial<ExchangeConfig>;
   representationBudget?: Partial<CognitiveRepresentationBudget>;
+  storageSecret?: string;
 }
 
 export class Cell {
@@ -108,6 +110,7 @@ export class Cell {
     return this._lineage;
   }
 
+  public readonly storageSecret: string;
   private syncIntervalTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -118,6 +121,12 @@ export class Cell {
     swarmOptions?: SwarmMembershipOptions,
     cellOptions?: CellOptions
   ) {
+    const secret = cellOptions?.storageSecret || process.env.REDQUEEN_STORAGE_SECRET;
+    if (!secret) {
+      throw new Error('REDQUEEN_STORAGE_SECRET is required to securely encrypt/decrypt cell private keys');
+    }
+    this.storageSecret = secret;
+
     let rawPrivateKey: string;
     if (existingPrivateKey && existingPublicKey) {
       rawPrivateKey = existingPrivateKey.trim();
@@ -324,6 +333,9 @@ export class Cell {
     const key = `cell_identity_${this.nodeId}`;
     const existing = await this.memory.get(key);
     if (!existing) {
+      const keyBuffer = encryptionCrypto.deriveKey(this.storageSecret, 'redqueen_storage_salt', 'redqueen_v1_storage');
+      const encryptedPrivateKey = encryptionCrypto.encrypt(this.privateKey, keyBuffer, this.nodeId);
+
       await this.memory.put({
         id: key,
         cellId: this.nodeId,
@@ -331,7 +343,7 @@ export class Cell {
         content: {
           nodeId: this.nodeId,
           publicKey: this.publicKey,
-          privateKey: this.privateKey
+          encryptedPrivateKey
         },
         source: 'cell_initialization',
         createdAt: new Date().toISOString(),
@@ -356,14 +368,30 @@ export class Cell {
       throw new Error(`Malformed cell storage: expected array of memory entries at '${storagePath}'`);
     }
 
+    const secret = cellOptions?.storageSecret || process.env.REDQUEEN_STORAGE_SECRET;
+    if (!secret) {
+      throw new Error('REDQUEEN_STORAGE_SECRET is required to securely encrypt/decrypt cell private keys');
+    }
+    const keyBuffer = encryptionCrypto.deriveKey(secret, 'redqueen_storage_salt', 'redqueen_v1_storage');
+
     let privateKey: string | undefined;
     let publicKey: string | undefined;
     let genome: any;
 
     const identityEntry = entries.find((e: any) => e.id && typeof e.id === 'string' && e.id.startsWith('cell_identity_'));
     if (identityEntry && identityEntry.content) {
-      privateKey = identityEntry.content.privateKey;
       publicKey = identityEntry.content.publicKey;
+      if (identityEntry.content.encryptedPrivateKey) {
+        const enc = identityEntry.content.encryptedPrivateKey as EncryptedEnvelope;
+        try {
+          privateKey = encryptionCrypto.decrypt(enc.ciphertext, enc.iv, enc.authTag, keyBuffer, identityEntry.content.nodeId).toString('utf8');
+        } catch (err) {
+          throw new Error('Failed to decrypt private key. Incorrect storageSecret provided.');
+        }
+      } else if (identityEntry.content.privateKey) {
+        // Fallback for unencrypted keys (not allowed in strict P3, but keeping for tests temporarily if needed)
+        throw new Error('Insecure plaintext private key found in storage. Startup rejected per P3 security constraints.');
+      }
     }
 
     const genomeEntry = entries.find((e: any) => e.id && typeof e.id === 'string' && e.id.startsWith('cell_genome_'));

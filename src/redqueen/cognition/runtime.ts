@@ -360,7 +360,7 @@ export class CognitiveRuntime {
         canonicalName: kw,
         description: `Extracted cognitive concept for '${kw}' under domain '${intent.domain}'`,
         context,
-        confidence: 0.95,
+        confidence: 0.0, // P7: Unknowns have no initial weight before evidence
         evidenceIds: [],
         sourceKnowledgeIds: [],
         sourceExperienceIds: [],
@@ -382,8 +382,8 @@ export class CognitiveRuntime {
           subjectConceptId: subjectConcept.conceptId,
           predicate: rel.predicate as CognitiveRelationPredicate,
           objectConceptId: objectConcept.conceptId,
-          confidence: 0.85,
-          weight: 0.85,
+          confidence: 0.0, // P7: Unknowns have no initial weight
+          weight: 0.0, // P7: Weight must be derived from evidence
           bidirectional: false,
           evidenceIds: [],
           provenance: ['relation_extraction_pipeline'],
@@ -487,7 +487,7 @@ export class CognitiveRuntime {
           cellId: cell.cellId,
           contributionType: 'CONCEPT',
           content: extracted.concepts[0],
-          confidence: 0.9
+          confidence: 0.0 // P7: No fabricated confidence
         });
       }
 
@@ -497,7 +497,7 @@ export class CognitiveRuntime {
           cellId: cell.cellId,
           contributionType: 'CONCEPT',
           content: extracted.concepts[1],
-          confidence: 0.9
+          confidence: 0.0
         });
       }
 
@@ -507,7 +507,7 @@ export class CognitiveRuntime {
           cellId: cell.cellId,
           contributionType: 'RELATION',
           content: extracted.relations[0],
-          confidence: 0.8
+          confidence: 0.0
         });
       }
 
@@ -520,7 +520,7 @@ export class CognitiveRuntime {
             evidenceId: `ev_${cell.cellId}`,
             supports: extracted.relations.length > 0 ? extracted.relations[0].relationId : null
           },
-          confidence: 0.85
+          confidence: 0.0
         });
       }
     });
@@ -611,7 +611,7 @@ export class CognitiveRuntime {
           statement: `Collective cognitive vector synthesized for understanding ${understanding.understandingId}`,
           sourceType: 'UNDERSTANDING' as const,
           sourceId: understanding.understandingId,
-          confidence: 0.8
+          confidence: 0.0 // P7: No fabricated confidence without evidence
         });
       }
     }
@@ -629,7 +629,7 @@ export class CognitiveRuntime {
         ? collectiveRepresentation.hypotheses
         : [{
             statement: `Collective cognitive synthesis achieved across ${activatedCells.length} cells.`,
-            confidence: 0.8
+            confidence: 0.0 // P7: No fabricated confidence without evidence
           }]
     });
   }

@@ -157,9 +157,6 @@ export class SwarmMembershipManager {
       throw new Error(`Cannot set invalid local certificate: ${verifyResult.reason}`);
     }
     this.myCertificate = cert;
-    if (this.issuerPublicKey === undefined) {
-      this.issuerPublicKey = cert.issuerPublicKey;
-    }
     await this.persistCertificate(cert);
   }
 
@@ -550,9 +547,6 @@ export class SwarmMembershipManager {
     }
 
     this.myCertificate = res.certificate;
-    if (!this.issuerPublicKey) {
-      this.issuerPublicKey = res.certificate.issuerPublicKey;
-    }
 
     // Record target node and local node as members
     this.setPeerRecord(targetNodeId, {
