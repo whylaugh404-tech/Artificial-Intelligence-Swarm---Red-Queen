@@ -296,6 +296,11 @@ async function startServer() {
     }
   });
 
+  app.get('/api/download', (req, res) => {
+    const file = path.join(process.cwd(), 'red-queen.tar.gz');
+    res.download(file);
+  });
+
   // Guarantee all /api/* routes return JSON, never HTML fallback
   app.all('/api/*', (req, res) => {
     res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.path}` });

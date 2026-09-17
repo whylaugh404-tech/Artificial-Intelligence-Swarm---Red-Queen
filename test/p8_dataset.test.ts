@@ -4,8 +4,19 @@ import { P2PTransport } from '../src/redqueen/network/transport';
 
 describe('Dataset Ingestion', () => {
   test('ingestDataset processes records', async () => {
-    const transport = new P2PTransport({ nodeId: 'test_node' } as any);
-    const cell = new Cell({ nodeId: 'test_node', transport, traits: {} });
+    const transport = new P2PTransport(
+      { nodeId: 'test_node' } as any,
+      undefined as any,
+      undefined as any
+    );
+    const cell = new Cell(
+      ':memory:',
+      'fake_api',
+      undefined,
+      undefined,
+      undefined,
+      { storageSecret: 'secret' }
+    );
     
     // Mock cognition pipeline
     const cognitionMock = {

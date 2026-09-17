@@ -49,6 +49,7 @@ import { WorldModelEngine } from '../cognition/worldmodel';
 import { ReasoningEngine } from '../cognition/reasoning';
 
 import { VerificationEngine } from '../cognition/verification';
+import { Evidence } from '../cognition/evidence/types';
 import { CollectiveCognitionEngine } from '../cognition/collective/engine';
 import { CognitiveDevelopmentEngine } from '../cognition/development/engine';
 import { CollectiveComputationEngine } from '../cognition/computation/engine';
@@ -74,41 +75,97 @@ export class Cell {
    * DATASET -> CELL INGESTION
    * Directly process a dataset and create valid provenance-linked cognitive records.
    */
-  public async ingestDataset(dataset: any): Promise<void> {
+  public async ingestDataset(dataset: Record<string, unknown>[] | Record<string, unknown>): Promise<void> {
     if (!this.cognition) {
       throw new Error("Cognition subsystem not initialized");
     }
 
     const records = Array.isArray(dataset) ? dataset : [dataset];
     
-    for (const record of records) {
+    for (let index = 0; index < records.length; index++) {
+      const record = records[index];
+      const sourceId = typeof record.sourceId === 'string' ? record.sourceId : `dataset_${Date.now()}`;
+      const observationId = `obs_${Date.now()}_${index}_${Math.random().toString(36).substring(2, 9)}`;
+      const timestamp = new Date().toISOString();
+
+      // 1. Observation
       const observation = {
-        observationId: `obs_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        timestamp: new Date().toISOString(),
-        sourceId: this.nodeId,
+        observationId,
+        timestamp,
+        sourceId,
         content: record,
         type: 'dataset_record'
       };
 
-      // Ensure evidence/memory path is explicitly triggered
-      const evidence = {
-        evidenceId: `ev_${observation.observationId}`,
+      // 2. Evidence
+      const evidence: Evidence = {
+        evidenceId: `ev_${observationId}`,
         sourceId: this.nodeId,
-        observationId: observation.observationId,
-        timestamp: observation.timestamp,
+        observationId,
+        timestamp,
         provenance: {
-          sourceId: this.nodeId,
-          observationId: observation.observationId,
-          timestamp: observation.timestamp
+          sourceId, // dataset/source identifier
+          observationId: String(index), // record identifier/index
+          timestamp
         },
         context: {
           contextId: `ctx_${Date.now()}`,
-          type: 'dataset_ingestion',
-          description: 'Dataset ingestion process'
-        }
+          domain: 'dataset_ingestion'
+        },
+        confidence: 1.0
       };
 
-      // Push to pipeline directly to ensure full processing
+      // 3. CognitiveGraph/Memory Persistence
+      await this.memory.put({
+        id: observationId,
+        cellId: this.nodeId,
+        category: MemoryCategory.EPISODIC,
+        type: observation.type,
+        content: observation.content,
+        source: observation.sourceId,
+        createdAt: observation.timestamp,
+        updatedAt: observation.timestamp,
+        confidence: 1.0,
+        hash: '', 
+        provenance: [this.nodeId]
+      });
+
+      const storedEvidence = await this.cognitiveGraph.insertEvidence(evidence);
+
+      // 4. WorldModel update
+      const understanding = this.understanding.compose({
+        evidences: [storedEvidence],
+        context: evidence.context,
+        originatingCellId: this.nodeId
+      });
+
+      const worldModel = this.worldModel.compose({
+        context: evidence.context,
+        originatingCellId: this.nodeId,
+        understandings: [understanding],
+        graph: this.cognitiveGraph
+      });
+
+      // 5. Reasoning
+      const reasoningChain = this.reasoning.reason({
+        goal: 'Assimilate dataset record',
+        context: evidence.context,
+        originatingCellId: this.nodeId,
+        worldModel: worldModel,
+        premises: [
+          {
+            premiseId: `premise_${Date.now()}_${index}`,
+            statement: `Dataset record observed.`,
+            confidence: 1.0,
+            evidenceIds: [storedEvidence.evidenceId]
+          }
+        ]
+      }, this.cognitiveGraph);
+
+      // 6. Collective state update
+      // Handled via cognitive graph persistence implicitly for now
+
+      // Execute legacy cycle for backward compatibility
       await this.cognition.executeCycle(JSON.stringify(observation.content));
     }
   }

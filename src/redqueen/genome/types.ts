@@ -75,7 +75,8 @@ export const CellTraitsSchema = z.object({
   mutationRate: z.number().min(0.0).max(1.0).default(0.05),
   riskTolerance: z.number().min(0.0).max(1.0).default(0.2),
   explorationVsExploitation: z.number().min(0.0).max(1.0).default(0.5),
-  maxCognitiveCycleDepth: z.number().int().min(1).default(5)
+  maxCognitiveCycleDepth: z.number().int().min(1).default(5),
+  executionParallelism: z.number().int().min(1).default(1)
 });
 
 export type CellTraits = z.infer<typeof CellTraitsSchema>;

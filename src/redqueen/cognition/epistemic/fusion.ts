@@ -108,6 +108,14 @@ export function freezeFusionResult(result: EpistemicFusionResult): Readonly<Epis
   return Object.freeze(frozen);
 }
 
+export function calculateEffectiveEvidenceWeight(evidence: Evidence): number {
+  const strength = evidence.confidence ?? 1.0;
+  const reliability = evidence.observationId ? 1.0 : 0.9;
+  const dependencyDiscount = (evidence.provenance.derivedFrom && evidence.provenance.derivedFrom.length > 0) ? 0.8 : 1.0;
+
+  return Math.max(0, Math.min(1, strength * reliability * dependencyDiscount));
+}
+
 /**
  * Epistemic Fusion Subsystem
  * 
@@ -345,7 +353,7 @@ export class EpistemicFusionEngine {
         candidate = {
           evidence: validatedEv,
           polarity,
-          weight: 1.0
+          weight: calculateEffectiveEvidenceWeight(validatedEv)
         };
       }
 

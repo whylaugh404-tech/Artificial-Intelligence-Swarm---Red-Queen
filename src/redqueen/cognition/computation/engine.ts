@@ -243,7 +243,7 @@ export class CollectiveComputationEngine {
     }
 
     // Concurrency/parallelism derived from maxCognitiveCycleDepth and traits
-    const parallelism = Math.max(1, (traits as any)?.executionParallelism ?? 1);
+    const parallelism = Math.max(1, traits?.executionParallelism ?? 1);
     
     // Relative capacity scoring based on capability count
     const baseCapacity = 100.0;

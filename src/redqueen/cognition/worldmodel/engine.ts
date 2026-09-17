@@ -21,7 +21,7 @@ import {
 import { CognitiveUnderstanding, CognitiveUnderstandingSchema } from '../understanding/types';
 import { Evidence } from '../evidence/types';
 import { CognitiveGraph } from '../representation/graph';
-import { EpistemicFusionEngine, EvidencePolarity } from '../epistemic/fusion';
+import { EpistemicFusionEngine, EvidencePolarity, AttributedEvidence, calculateEffectiveEvidenceWeight } from '../epistemic/fusion';
 import { EvidenceDependencyGraph } from '../evidence/graph';
 import {
   WorldModel,
@@ -58,25 +58,21 @@ function deepFreeze<T>(obj: T): T {
 }
 
 
-function resolveEvidencePolarity(evidence: any, target: any): any {
-  if (evidence?.provenance?.contradictingRepresentationIds?.includes(target.conceptId || target.relationId)) {
-    return 'CONTRADICTS';
+export function resolveEvidencePolarity(
+  evidence: Evidence,
+  target: CognitiveConcept | CognitiveRelation
+): EvidencePolarity {
+  const targetId = 'conceptId' in target ? target.conceptId : target.relationId;
+  
+  if (evidence.provenance?.supportingRepresentationIds?.includes(targetId)) {
+    return EvidencePolarity.SUPPORTS;
   }
-  return 'SUPPORTS';
-}
-
-function calculateEffectiveEvidenceWeight(evidence: any): number {
-  const strength = evidence.confidence ?? 1.0;
-  const reliability = evidence.sourceReliability ?? 1.0;
-  const dependencyDiscount = evidence.dependencyDiscount ?? 1.0;
-
-  return Math.max(
-    0,
-    Math.min(
-      1,
-      strength * reliability * dependencyDiscount
-    )
-  );
+  
+  if (evidence.provenance?.contradictingRepresentationIds?.includes(targetId)) {
+    return EvidencePolarity.CONTRADICTS;
+  }
+  
+  return EvidencePolarity.NEUTRAL;
 }
 
 export class WorldModelEngine {
@@ -494,7 +490,7 @@ export class WorldModelEngine {
       try {
         const fusionEngine = new EpistemicFusionEngine();
         const edg = graph?.getEDG() || new EvidenceDependencyGraph();
-        const attributedEvidences: any[] = [];
+        const attributedEvidences: AttributedEvidence[] = [];
         for (const c of loadedConcepts.values()) {
           for (const evId of c.evidenceIds || []) {
             const ev = graph?.getEvidence(evId);

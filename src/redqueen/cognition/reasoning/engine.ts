@@ -22,7 +22,7 @@ import { Evidence, EvidenceSchema } from '../evidence/types';
 import { CognitiveGraph } from '../representation/graph';
 import { UnderstandingEngine } from '../understanding/engine';
 import { WorldModelEngine } from '../worldmodel/engine';
-import { EpistemicFusionEngine, EvidencePolarity } from '../epistemic/fusion';
+import { EpistemicFusionEngine, EvidencePolarity, AttributedEvidence, calculateEffectiveEvidenceWeight } from '../epistemic/fusion';
 import { EvidenceDependencyGraph } from '../evidence/graph';
 import {
   AlternativeHypothesis,
@@ -471,7 +471,7 @@ export class ReasoningEngine {
     const supportingEvidenceArray = Array.from(gatheredEvidenceIds).sort();
 
     let fusionOpinion: SubjectiveOpinion | undefined;
-    const attributedEvidences: any[] = [];
+    const attributedEvidences: AttributedEvidence[] = [];
     let validEvidencesCount = 0;
 
     const counterEvidenceIds = new Set(loadedCounterEvidences.map(c => c.evidenceId));
@@ -480,7 +480,7 @@ export class ReasoningEngine {
       const ev = this.evidenceCache.get(evId) || graph?.getEvidence(evId);
       if (ev) {
         this.evidenceCache.set(evId, ev);
-        attributedEvidences.push({ evidence: ev, polarity: EvidencePolarity.SUPPORTS, weight: 1.0 });
+        attributedEvidences.push({ evidence: ev, polarity: EvidencePolarity.SUPPORTS, weight: calculateEffectiveEvidenceWeight(ev) });
         if (ev.provenance?.sourceId) provenanceSet.add(ev.provenance.sourceId);
         validEvidencesCount++;
       }
@@ -490,7 +490,7 @@ export class ReasoningEngine {
       const ev = this.evidenceCache.get(counterEv.evidenceId) || graph?.getEvidence(counterEv.evidenceId);
       if (ev) {
         this.evidenceCache.set(counterEv.evidenceId, ev);
-        attributedEvidences.push({ evidence: ev, polarity: EvidencePolarity.CONTRADICTS, weight: 1.0 });
+        attributedEvidences.push({ evidence: ev, polarity: EvidencePolarity.CONTRADICTS, weight: calculateEffectiveEvidenceWeight(ev) });
         if (ev.provenance?.sourceId) provenanceSet.add(ev.provenance.sourceId);
         validEvidencesCount++;
       }
