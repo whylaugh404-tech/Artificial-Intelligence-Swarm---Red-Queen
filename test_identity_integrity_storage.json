@@ -1,15 +1,15 @@
 [
   {
-    "id": "cell_genome_08390a2c03aa210819ffa7d03b7e5175451f39659d0fc4fbcf71837815601677",
-    "cellId": "08390a2c03aa210819ffa7d03b7e5175451f39659d0fc4fbcf71837815601677",
+    "id": "cell_genome_ffe63bd39e635b3cc8d8de518c649b3f535fb3c3a20b995eec3e6403de928607",
+    "cellId": "ffe63bd39e635b3cc8d8de518c649b3f535fb3c3a20b995eec3e6403de928607",
     "category": "SEMANTIC",
     "content": {
-      "genomeId": "fbe355a380ac4cf6b2c11257bb120f23",
+      "genomeId": "5268526fa4714ec0bc2953882523c9e1",
       "parentGenomeId": null,
       "parentCellId": null,
       "generation": 0,
-      "lineageId": "ed085e0391a54a16b2000d5ca8b1ac10",
-      "createdAt": "2026-09-17T19:39:44.141Z",
+      "lineageId": "8fec392b3f254bc8b7c2e5fe3d6320ea",
+      "createdAt": "2026-09-18T08:49:41.790Z",
       "logicVersion": "1.0.0",
       "traits": {
         "mutationRate": 0.05,
@@ -31,12 +31,12 @@
       "ancestorCellIds": []
     },
     "source": "cell_initialization",
-    "createdAt": "2026-09-17T19:39:44.154Z",
-    "updatedAt": "2026-09-17T19:39:44.154Z",
+    "createdAt": "2026-09-18T08:49:41.802Z",
+    "updatedAt": "2026-09-18T08:49:41.802Z",
     "confidence": 1,
-    "hash": "20e873f863b27381e120367f4582bcd16278a2561e54488842bc505b8720e8f2",
+    "hash": "a7cca85c9c35c630c8f3c88c46e4bbb2f23315985ca2e4d84b04d9b2b395bf29",
     "provenance": [
-      "08390a2c03aa210819ffa7d03b7e5175451f39659d0fc4fbcf71837815601677"
+      "ffe63bd39e635b3cc8d8de518c649b3f535fb3c3a20b995eec3e6403de928607"
     ],
     "version": 1
   }

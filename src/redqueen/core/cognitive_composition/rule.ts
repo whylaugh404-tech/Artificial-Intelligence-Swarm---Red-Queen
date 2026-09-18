@@ -19,6 +19,20 @@ import {
 } from '../../cognition/types';
 
 /**
+ * Reads and validates a finite normalized number in [0, 1].
+ * Returns undefined if value is not a finite number.
+ */
+export function readFiniteNormalized(
+  value: unknown
+): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return clamp01(value);
+}
+
+/**
  * R4 & P9.5: Cognitive Composition Rule
  * 
  * Implements the linear-compositional mathematical model:
@@ -148,106 +162,130 @@ export class CognitiveCompositionRule implements CompositionTransformationRule {
       // --- Data-Driven Feature Extraction (CognitiveState + Knowledge + Experience + Reasoning + EpistemicState + Specialization) ---
 
       // 1. Cognition feature
-      let cognitionVal = 0.5;
-      let cognitionProvenance = 'cognition:uninformative_prior(no_cognitive_input)';
-      if (Object.keys(cogStruct).length > 0) {
-        if (typeof cogStruct.operationalConfidence === 'number' && Number.isFinite(cogStruct.operationalConfidence)) {
-          cognitionVal = clamp01(cogStruct.operationalConfidence);
-          cognitionProvenance = `cognition:from:cognitiveState.operationalConfidence(${cognitionVal.toFixed(4)})`;
-        } else if (typeof cogStruct.confidence === 'number' && Number.isFinite(cogStruct.confidence)) {
-          cognitionVal = clamp01(cogStruct.confidence);
-          cognitionProvenance = `cognition:from:cognitiveState.confidence(${cognitionVal.toFixed(4)})`;
-        } else if (typeof cogStruct.depth === 'number' && Number.isFinite(cogStruct.depth)) {
-          const depthVal = clamp01(cogStruct.depth / 10);
-          const modeBonus = typeof cogStruct.mode === 'string' && cogStruct.mode === 'analytical' ? 0.2 : 0.1;
-          cognitionVal = clamp01(0.4 + (0.4 * depthVal) + modeBonus);
-          cognitionProvenance = `cognition:from:cognitiveState(depth=${cogStruct.depth},mode=${cogStruct.mode ?? 'unknown'},val=${cognitionVal.toFixed(4)})`;
-        } else if (typeof reasStruct.validity === 'number' && Number.isFinite(reasStruct.validity)) {
-          cognitionVal = clamp01(reasStruct.validity);
-          cognitionProvenance = `cognition:from:reasoningState.validity(${cognitionVal.toFixed(4)})`;
-        } else if (typeof reasStruct.confidence === 'number' && Number.isFinite(reasStruct.confidence)) {
-          cognitionVal = clamp01(reasStruct.confidence);
-          cognitionProvenance = `cognition:from:reasoningState.confidence(${cognitionVal.toFixed(4)})`;
-        } else {
-          const keyCount = Object.keys(cogStruct).length;
-          cognitionVal = clamp01(0.5 + Math.min(0.3, keyCount * 0.05));
-          cognitionProvenance = `cognition:from:cognitiveState.structural_density(keys=${keyCount},val=${cognitionVal.toFixed(4)})`;
-        }
-      } else if (Object.keys(reasStruct).length > 0) {
-        if (typeof reasStruct.validity === 'number' && Number.isFinite(reasStruct.validity)) {
-          cognitionVal = clamp01(reasStruct.validity);
-          cognitionProvenance = `cognition:from:reasoningState.validity(${cognitionVal.toFixed(4)})`;
-        } else if (typeof reasStruct.confidence === 'number' && Number.isFinite(reasStruct.confidence)) {
-          cognitionVal = clamp01(reasStruct.confidence);
-          cognitionProvenance = `cognition:from:reasoningState.confidence(${cognitionVal.toFixed(4)})`;
-        } else {
-          cognitionVal = 0.55;
-          cognitionProvenance = `cognition:from:reasoningState(generic=0.55)`;
-        }
+      let cognitionVal: number;
+      let cognitionProvenance: string;
+
+      const operationalConfidence = readFiniteNormalized(cogStruct.operationalConfidence);
+      const cognitiveConfidence = readFiniteNormalized(cogStruct.confidence);
+      const reasoningValidity = readFiniteNormalized(reasStruct.validity);
+      const reasoningConfidence = readFiniteNormalized(reasStruct.confidence);
+
+      const candidateCognitionMeasurements: { value: number; label: string }[] = [];
+      if (operationalConfidence !== undefined) {
+        candidateCognitionMeasurements.push({
+          value: operationalConfidence,
+          label: `cognitiveState.operationalConfidence(${operationalConfidence.toFixed(4)})`
+        });
+      }
+      if (cognitiveConfidence !== undefined) {
+        candidateCognitionMeasurements.push({
+          value: cognitiveConfidence,
+          label: `cognitiveState.confidence(${cognitiveConfidence.toFixed(4)})`
+        });
+      }
+      if (reasoningValidity !== undefined) {
+        candidateCognitionMeasurements.push({
+          value: reasoningValidity,
+          label: `reasoningState.validity(${reasoningValidity.toFixed(4)})`
+        });
+      }
+      if (reasoningConfidence !== undefined) {
+        candidateCognitionMeasurements.push({
+          value: reasoningConfidence,
+          label: `reasoningState.confidence(${reasoningConfidence.toFixed(4)})`
+        });
+      }
+
+      if (candidateCognitionMeasurements.length > 0) {
+        cognitionVal =
+          candidateCognitionMeasurements.reduce((sum, m) => sum + m.value, 0) /
+          candidateCognitionMeasurements.length;
+        cognitionProvenance = `cognition:from:${candidateCognitionMeasurements.map(m => m.label).join('+')}`;
+      } else {
+        cognitionVal = 0.5;
+        cognitionProvenance = 'cognition:uninformative_prior(no_semantic_cognitive_measurement)';
       }
 
       // 2. Knowledge feature
-      let knowledgeVal = 0.5;
-      let knowledgeProvenance = 'knowledge:uninformative_prior(no_knowledge_input)';
-      if (Object.keys(knowStruct).length > 0) {
-        const theorems = Array.isArray(knowStruct.theorems) ? knowStruct.theorems.length : 0;
-        const facts = Array.isArray(knowStruct.facts) ? knowStruct.facts.length : 0;
-        const concepts = Array.isArray(knowStruct.concepts) ? knowStruct.concepts.length : 0;
-        const references = Array.isArray(knowStruct.knowledgeReferences) ? knowStruct.knowledgeReferences.length : 0;
-        const verified = typeof knowStruct.verifiedCount === 'number' ? knowStruct.verifiedCount : 0;
-        const totalKnowledgeItems = theorems + facts + concepts + references + verified;
+      let knowledgeVal: number;
+      let knowledgeProvenance: string;
 
-        if (totalKnowledgeItems > 0) {
-          const itemRatio = clamp01(totalKnowledgeItems / 10);
-          if (typeof knowStruct.confidence === 'number' && Number.isFinite(knowStruct.confidence)) {
-            knowledgeVal = clamp01(0.5 * itemRatio + 0.5 * clamp01(knowStruct.confidence));
-            knowledgeProvenance = `knowledge:from:knowledgeState(items=${totalKnowledgeItems},confidence=${knowStruct.confidence},val=${knowledgeVal.toFixed(4)})`;
-          } else {
-            knowledgeVal = clamp01(0.4 + (0.5 * itemRatio));
-            knowledgeProvenance = `knowledge:from:knowledgeState(items=${totalKnowledgeItems},val=${knowledgeVal.toFixed(4)})`;
-          }
-        } else if (typeof knowStruct.confidence === 'number' && Number.isFinite(knowStruct.confidence)) {
-          knowledgeVal = clamp01(knowStruct.confidence);
-          knowledgeProvenance = `knowledge:from:knowledgeState.confidence(${knowledgeVal.toFixed(4)})`;
-        } else {
-          const keyCount = Object.keys(knowStruct).length;
-          knowledgeVal = clamp01(0.4 + Math.min(0.4, keyCount * 0.1));
-          knowledgeProvenance = `knowledge:from:knowledgeState.structural_density(keys=${keyCount},val=${knowledgeVal.toFixed(4)})`;
-        }
+      const knowledgeConfidence = readFiniteNormalized(knowStruct.confidence);
+
+      if (knowledgeConfidence !== undefined) {
+        knowledgeVal = knowledgeConfidence;
+        knowledgeProvenance = `knowledge:from:knowledgeState.confidence(${knowledgeConfidence.toFixed(4)})`;
+      } else {
+        knowledgeVal = 0.5;
+        knowledgeProvenance = 'knowledge:uninformative_prior(no_semantic_knowledge_measurement)';
       }
 
       // 3. Experience feature
-      let experienceVal = 0.5;
-      let experienceProvenance = 'experience:uninformative_prior(no_experience_input)';
-      if (Object.keys(expStruct).length > 0) {
-        const navigations = typeof expStruct.successfulNavigations === 'number' ? expStruct.successfulNavigations : 0;
-        const episodes = Array.isArray(expStruct.episodes) ? expStruct.episodes.length : (typeof expStruct.episodes === 'number' ? expStruct.episodes : 0);
-        const tasks = typeof expStruct.tasksCompleted === 'number' ? expStruct.tasksCompleted : 0;
-        const events = typeof expStruct.totalEvents === 'number' ? expStruct.totalEvents : 0;
-        const totalEvents = navigations + episodes + tasks + events;
+      let experienceVal: number;
+      let experienceProvenance: string;
 
-        const errorRate = typeof expStruct.errorRate === 'number' && Number.isFinite(expStruct.errorRate)
-          ? clamp01(expStruct.errorRate)
-          : undefined;
+      const expLevel = readFiniteNormalized(expStruct.level);
+      const expErrorRate = readFiniteNormalized(expStruct.errorRate);
+      const expSuccessRate = readFiniteNormalized(expStruct.successRate);
 
-        if (totalEvents > 0) {
-          const volumeFactor = clamp01(totalEvents / 50);
-          const qualityMultiplier = errorRate !== undefined ? (1.0 - errorRate) : 1.0;
-          experienceVal = clamp01(0.3 + (0.6 * volumeFactor * qualityMultiplier));
-          experienceProvenance = `experience:from:experienceState(events=${totalEvents},quality=${qualityMultiplier.toFixed(4)},val=${experienceVal.toFixed(4)})`;
-        } else if (typeof expStruct.level === 'number' && Number.isFinite(expStruct.level)) {
-          experienceVal = clamp01(expStruct.level);
-          experienceProvenance = `experience:from:experienceState.level(${experienceVal.toFixed(4)})`;
-        } else {
-          const keyCount = Object.keys(expStruct).length;
-          experienceVal = clamp01(0.4 + Math.min(0.4, keyCount * 0.1));
-          experienceProvenance = `experience:from:experienceState.structural_density(keys=${keyCount},val=${experienceVal.toFixed(4)})`;
+      const expCandidates: { value: number; label: string }[] = [];
+
+      if (expLevel !== undefined) {
+        expCandidates.push({
+          value: expLevel,
+          label: `experienceState.level(${expLevel.toFixed(4)})`
+        });
+      }
+
+      if (expErrorRate !== undefined) {
+        const quality = clamp01(1.0 - expErrorRate);
+        expCandidates.push({
+          value: quality,
+          label: `experienceState.errorRate(${expErrorRate.toFixed(4)})`
+        });
+      }
+
+      if (expSuccessRate !== undefined) {
+        expCandidates.push({
+          value: expSuccessRate,
+          label: `experienceState.successRate(${expSuccessRate.toFixed(4)})`
+        });
+      }
+
+      const totalEvents = typeof expStruct.totalEvents === 'number' && Number.isFinite(expStruct.totalEvents) && expStruct.totalEvents > 0
+        ? expStruct.totalEvents
+        : undefined;
+
+      if (totalEvents !== undefined) {
+        if (typeof expStruct.successfulNavigations === 'number' && Number.isFinite(expStruct.successfulNavigations) && expStruct.successfulNavigations >= 0) {
+          const ratio = clamp01(expStruct.successfulNavigations / totalEvents);
+          expCandidates.push({
+            value: ratio,
+            label: `experienceState.successfulNavigationsRatio(${expStruct.successfulNavigations}/${totalEvents}=${ratio.toFixed(4)})`
+          });
         }
+        if (typeof expStruct.tasksCompleted === 'number' && Number.isFinite(expStruct.tasksCompleted) && expStruct.tasksCompleted >= 0) {
+          const ratio = clamp01(expStruct.tasksCompleted / totalEvents);
+          expCandidates.push({
+            value: ratio,
+            label: `experienceState.tasksCompletedRatio(${expStruct.tasksCompleted}/${totalEvents}=${ratio.toFixed(4)})`
+          });
+        }
+      }
+
+      if (expCandidates.length > 0) {
+        experienceVal =
+          expCandidates.reduce((sum, c) => sum + c.value, 0) /
+          expCandidates.length;
+        experienceProvenance = `experience:from:${expCandidates.map(c => c.label).join('+')}`;
+      } else {
+        experienceVal = 0.5;
+        experienceProvenance = 'experience:uninformative_prior(no_semantic_experience_measurement)';
       }
 
       // 4. Specialization feature
       let specializationVal = 0.5;
-      let specializationProvenance = 'specialization:generalist_prior(no_specialization_declared)';
+      let specializationProvenance = 'specialization:uninformative_prior(no_specialization_declared)';
       const declaredSpecs: string[] = [];
       if (typeof specStruct.value === 'string') {
         declaredSpecs.push(specStruct.value);
@@ -280,22 +318,29 @@ export class CognitiveCompositionRule implements CompositionTransformationRule {
       }
 
       // 5. Reliability feature (EpistemicState + Substrate Profile)
-      let epistemicScore: number | undefined = undefined;
+      const epistemicConfidence = readFiniteNormalized(epistemicStruct.confidence);
+      const epistemicCertainty = readFiniteNormalized(epistemicStruct.certainty);
+      const epistemicTruthScore = readFiniteNormalized(epistemicStruct.truthScore);
+      const epistemicRawConfidence = readFiniteNormalized(epistemicStruct.rawConfidence);
+      const cogOperationalConfidence = readFiniteNormalized(cogStruct.operationalConfidence);
+
+      let epistemicScore: number | undefined;
       let epistemicSource = '';
-      if (Object.keys(epistemicStruct).length > 0) {
-        if (typeof epistemicStruct.confidence === 'number' && Number.isFinite(epistemicStruct.confidence)) {
-          epistemicScore = clamp01(epistemicStruct.confidence);
-          epistemicSource = `epistemicState.confidence(${epistemicScore.toFixed(4)})`;
-        } else if (typeof epistemicStruct.certainty === 'number' && Number.isFinite(epistemicStruct.certainty)) {
-          epistemicScore = clamp01(epistemicStruct.certainty);
-          epistemicSource = `epistemicState.certainty(${epistemicScore.toFixed(4)})`;
-        } else if (typeof epistemicStruct.truthScore === 'number' && Number.isFinite(epistemicStruct.truthScore)) {
-          epistemicScore = clamp01(epistemicStruct.truthScore);
-          epistemicSource = `epistemicState.truthScore(${epistemicScore.toFixed(4)})`;
-        }
-      }
-      if (epistemicScore === undefined && typeof cogStruct.operationalConfidence === 'number' && Number.isFinite(cogStruct.operationalConfidence)) {
-        epistemicScore = clamp01(cogStruct.operationalConfidence);
+
+      if (epistemicConfidence !== undefined) {
+        epistemicScore = epistemicConfidence;
+        epistemicSource = `epistemicState.confidence(${epistemicScore.toFixed(4)})`;
+      } else if (epistemicCertainty !== undefined) {
+        epistemicScore = epistemicCertainty;
+        epistemicSource = `epistemicState.certainty(${epistemicScore.toFixed(4)})`;
+      } else if (epistemicTruthScore !== undefined) {
+        epistemicScore = epistemicTruthScore;
+        epistemicSource = `epistemicState.truthScore(${epistemicScore.toFixed(4)})`;
+      } else if (epistemicRawConfidence !== undefined) {
+        epistemicScore = epistemicRawConfidence;
+        epistemicSource = `epistemicState.rawConfidence(${epistemicScore.toFixed(4)})`;
+      } else if (cogOperationalConfidence !== undefined) {
+        epistemicScore = cogOperationalConfidence;
         epistemicSource = `cognitiveState.operationalConfidence(${epistemicScore.toFixed(4)})`;
       }
 
