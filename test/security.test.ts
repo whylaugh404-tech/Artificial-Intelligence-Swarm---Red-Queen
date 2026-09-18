@@ -4,6 +4,7 @@ import { MessageType, createMessage, getCanonicalString, MessageSchema } from '.
 import { identityCrypto } from '../src/redqueen/crypto/identity';
 import { signingCrypto } from '../src/redqueen/crypto/signing';
 import { WebSocket } from 'ws';
+import * as crypto from 'crypto';
 
 describe('P2P Security Negative Tests', () => {
   let cellB: Cell;
@@ -24,19 +25,25 @@ describe('P2P Security Negative Tests', () => {
   async function doHandshakeAndGetSocket(): Promise<WebSocket> {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket('ws://localhost:4005');
-      
+      // Generate a local ephemeral key pair for the ECDH handshake (required by peer.ts)
+      const ephemeralKeyPair = crypto.generateKeyPairSync('x25519');
+      const ephemeralPublicKeyPem = ephemeralKeyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+
       ws.on('open', () => {
-        const helloMsg = createMessage(MessageType.HELLO, attackerNodeId, { publicKey: attackerKeys.publicKey }, attackerKeys.privateKey);
+        const helloMsg = createMessage(MessageType.HELLO, attackerNodeId, {
+          publicKey: attackerKeys.publicKey,
+          ephemeralPublicKey: ephemeralPublicKeyPem
+        }, attackerKeys.privateKey);
         ws.send(JSON.stringify(helloMsg));
       });
-      
+
       ws.on('message', (data) => {
         try {
           const msg = MessageSchema.parse(JSON.parse(data.toString()));
           if (msg.type === MessageType.CHALLENGE) {
             const authMsg = createMessage(MessageType.AUTH, attackerNodeId, { response: msg.payload.challenge }, attackerKeys.privateKey);
             ws.send(JSON.stringify(authMsg));
-            
+
             // Wait a beat for the Cell to process our AUTH message and transition state
             setTimeout(() => resolve(ws), 100);
           }
@@ -44,7 +51,7 @@ describe('P2P Security Negative Tests', () => {
           // ignore parsing errors on our end during setup
         }
       });
-      
+
       ws.on('error', reject);
     });
   }

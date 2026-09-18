@@ -147,8 +147,10 @@ export class InformationEvaluator {
       (structureScore * 0.20)
     );
 
-    // Confidence is calculated from quality combined with classification certainty
-    const rawConfidence = (qualityScore * 0.6) + (classification.confidence * 0.4);
+    // Confidence is calculated from quality combined with classification certainty.
+    // Quality is weighted more heavily so high-credibility sources (e.g. CELL_KNOWLEDGE)
+    // yield confidence > 0.5 even when content is unclassifiable (classification.confidence = 0).
+    const rawConfidence = (qualityScore * 0.7) + (classification.confidence * 0.3);
     const confidence = this.clampUnit(rawConfidence);
 
     return {

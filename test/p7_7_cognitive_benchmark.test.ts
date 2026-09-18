@@ -118,17 +118,30 @@ describe('P7.7 - Cognitive Benchmark', () => {
       category: BenchmarkCategory.REASONING,
       execute: async (ctx) => {
         const cell = await ctx.createCell('bench_cell_reas');
-        
+
         const premise = createConcept('c1', 'Rain', cell.nodeId);
         const target = createConcept('c2', 'Wet', cell.nodeId);
         const rule = createRelation('r1', 'c1', 'c2', CognitiveRelationPredicate.CAUSES, cell.nodeId);
+        const reasoningEvidence = {
+          evidenceId: 'ev_bench_1',
+          sourceId: cell.nodeId,
+          timestamp: new Date().toISOString(),
+          confidence: 0.9,
+          provenance: {
+            sourceId: cell.nodeId,
+            timestamp: new Date().toISOString(),
+            supportingRepresentationIds: ['r1']
+          },
+          context: { contextId: 'ctx_reas_1', domain: 'REASONING' }
+        };
         rule.evidenceIds = ['ev_bench_1'];
-        
+
         // Populate local graph
         await cell.cognitiveGraph.insertConcept(premise);
         await cell.cognitiveGraph.insertConcept(target);
         await cell.cognitiveGraph.insertRelation(rule);
-        
+        await cell.cognitiveGraph.insertEvidence(reasoningEvidence);
+
         const conclusion = cell.reasoning.reason({
           goal: 'Evaluate Relation',
           context: { contextId: 'ctx_reas_1', domain: 'REASONING' },
@@ -140,7 +153,7 @@ describe('P7.7 - Cognitive Benchmark', () => {
               sourceType: 'RELATION'
             }
           ],
-          evidences: ['ev_bench_1']
+          evidences: [reasoningEvidence]
         });
         
         return {
