@@ -86,6 +86,10 @@ describe('Red Queen: End-to-End Cognitive Pipeline (Dataset -> Collective State)
     await cellA.ingestDataset(datasetAlpha);
     await cellB.ingestDataset(datasetBeta);
 
+    // Verify canonical path only: legacy executeCycle was not called
+    expect(cellA.cognition.executeCycle).not.toHaveBeenCalled();
+    expect(cellB.cognition.executeCycle).not.toHaveBeenCalled();
+
     // Assert Stage 1: Observations recorded in episodic memory
     const memoriesA = await cellA.memory.search({ category: MemoryCategory.EPISODIC });
     expect(memoriesA.length).toBeGreaterThanOrEqual(2);
@@ -334,11 +338,13 @@ describe('Red Queen: End-to-End Cognitive Pipeline (Dataset -> Collective State)
 
     // First run with Cell A
     await cellA.ingestDataset([fixedRecord]);
+    expect(cellA.cognition.executeCycle).not.toHaveBeenCalled();
     const evidenceA = cellA.cognitiveGraph.getAllEvidences()[0];
     const chainA = cellA.reasoning.getAllChains()[0];
 
     // Second Cell B ingesting identical content with its own identity
     await cellB.ingestDataset([fixedRecord]);
+    expect(cellB.cognition.executeCycle).not.toHaveBeenCalled();
     const evidenceB = cellB.cognitiveGraph.getAllEvidences()[0];
     const chainB = cellB.reasoning.getAllChains()[0];
 

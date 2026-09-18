@@ -185,9 +185,6 @@ export class Cell {
 
       // 6. Collective state update
       // Handled via cognitive graph persistence implicitly for now
-
-      // Execute legacy cycle for backward compatibility
-      await this.cognition.executeCycle(JSON.stringify(observation.content));
     }
   }
 

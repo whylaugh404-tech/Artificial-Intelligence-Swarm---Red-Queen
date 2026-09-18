@@ -252,12 +252,24 @@ describe('P8.1: RFC 8785 / JCS Canonicalization Scheme & Edge Cases', () => {
       expect(canonicalizeJson(obj)).toBe('{"keep":1,"keep2":"ok"}');
     });
 
+    it('rejects top-level undefined, function, and symbol', () => {
+      expect(() => canonicalizeJson(undefined)).toThrow('Cannot canonicalize non-JSON value');
+      expect(() => canonicalizeJson(() => 'test')).toThrow('Cannot canonicalize non-JSON value');
+      expect(() => canonicalizeJson(Symbol('test'))).toThrow('Cannot canonicalize non-JSON value');
+    });
+
+    it('rejects BigInt values', () => {
+      expect(() => canonicalizeJson(12345678901234567890n)).toThrow('BigInt is not a JSON/JCS value');
+      expect(() => canonicalizeJson({ val: 42n })).toThrow('BigInt is not a JSON/JCS value');
+      expect(() => canonicalizeJson([1n, 2n])).toThrow('BigInt is not a JSON/JCS value');
+    });
+
     it('detects circular references and throws TypeError', () => {
-      const circularObj: any = { a: 1 };
+      const circularObj: Record<string, unknown> = { a: 1 };
       circularObj.self = circularObj;
       expect(() => canonicalizeJson(circularObj)).toThrow(TypeError);
 
-      const circularArr: any = [1, 2];
+      const circularArr: unknown[] = [1, 2];
       circularArr.push(circularArr);
       expect(() => canonicalizeJson(circularArr)).toThrow(TypeError);
     });
@@ -281,5 +293,144 @@ describe('P8.1: RFC 8785 / JCS Canonicalization Scheme & Edge Cases', () => {
       const h2 = computeDeterministicHash({ val: 0 });
       expect(h1).toBe(h2);
     });
+
+    it('produces different hashes for different semantic inputs', () => {
+      const h1 = computeDeterministicHash({ val: 1 });
+      const h2 = computeDeterministicHash({ val: 2 });
+      expect(h1).not.toBe(h2);
+    });
+  });
+
+  // 8. Mandatory Canonicalization Verification Checklist (14 Requirements)
+  describe('Mandatory Audit Verification Vectors (1-14)', () => {
+    // 1. Object dengan key berbeda urutan → hash sama
+    it('Req 1: Object with different key insertion order yields identical hash', () => {
+      const obj1 = { z: 'last', a: 'first', m: { b: 2, a: 1 } };
+      const obj2 = { a: 'first', m: { a: 1, b: 2 }, z: 'last' };
+      expect(computeDeterministicHash(obj1)).toBe(computeDeterministicHash(obj2));
+      expect(canonicalizeJson(obj1)).toBe(canonicalizeJson(obj2));
+    });
+
+    // 2. Nested object → deterministic
+    it('Req 2: Deeply nested objects are strictly deterministic', () => {
+      const nestedA = { l1: { l2: { l3: { val: 'alpha', list: [1, 2, 3] } } } };
+      const nestedB = { l1: { l2: { l3: { list: [1, 2, 3], val: 'alpha' } } } };
+      expect(canonicalizeJson(nestedA)).toBe(canonicalizeJson(nestedB));
+      expect(computeDeterministicHash(nestedA)).toBe(computeDeterministicHash(nestedB));
+    });
+
+    // 3. Array → deterministic
+    it('Req 3: Array elements preserve order deterministically', () => {
+      const arr1 = [10, 20, { b: 'b', a: 'a' }];
+      const arr2 = [10, 20, { a: 'a', b: 'b' }];
+      expect(canonicalizeJson(arr1)).toBe('[10,20,{"a":"a","b":"b"}]');
+      expect(canonicalizeJson(arr1)).toBe(canonicalizeJson(arr2));
+      expect(computeDeterministicHash(arr1)).toBe(computeDeterministicHash(arr2));
+    });
+
+    // 4. Unicode → deterministic
+    it('Req 4: Unicode characters preserve deterministic canonical representations', () => {
+      const unicodeObj = {
+        chinese: '你好世界',
+        arabic: 'مرحبا بالعالم',
+        hiragana: 'こんにちは',
+        emoji: '🧠🔬⚡'
+      };
+      const canonical = canonicalizeJson(unicodeObj);
+      expect(canonical).toContain('"emoji":"🧠🔬⚡"');
+      expect(computeDeterministicHash(unicodeObj)).toBe(computeDeterministicHash(unicodeObj));
+    });
+
+    // 5. Unicode lone surrogate → rejected
+    it('Req 5: Unicode lone surrogates are strictly rejected', () => {
+      expect(() => canonicalizeString('lone \uD800 high')).toThrow(TypeError);
+      expect(() => canonicalizeString('lone \uDC00 low')).toThrow(TypeError);
+      expect(() => canonicalizeJson({ key: 'lone \uD83D' })).toThrow(TypeError);
+      expect(() => canonicalizeJson({ 'bad\uD800key': 1 })).toThrow(TypeError);
+    });
+
+    // 6. -0 dan 0 → canonical representation sama
+    it('Req 6: -0 and 0 yield identical canonical representation "0"', () => {
+      expect(canonicalizeNumber(-0)).toBe('0');
+      expect(canonicalizeNumber(0)).toBe('0');
+      expect(canonicalizeJson(-0)).toBe('0');
+      expect(canonicalizeJson(0)).toBe('0');
+      expect(canonicalizeJson({ zero: -0 })).toBe('{"zero":0}');
+      expect(canonicalizeJson({ zero: 0 })).toBe('{"zero":0}');
+      expect(computeDeterministicHash(-0)).toBe(computeDeterministicHash(0));
+    });
+
+    // 7. NaN → rejected
+    it('Req 7: NaN is strictly rejected', () => {
+      expect(() => canonicalizeNumber(NaN)).toThrow(TypeError);
+      expect(() => canonicalizeJson(NaN)).toThrow(TypeError);
+      expect(() => canonicalizeJson({ val: NaN })).toThrow(TypeError);
+      expect(() => canonicalizeJson([NaN])).toThrow(TypeError);
+    });
+
+    // 8. Infinity → rejected
+    it('Req 8: Infinity is strictly rejected', () => {
+      expect(() => canonicalizeNumber(Infinity)).toThrow(TypeError);
+      expect(() => canonicalizeJson(Infinity)).toThrow(TypeError);
+      expect(() => canonicalizeJson({ val: Infinity })).toThrow(TypeError);
+      expect(() => canonicalizeJson([Infinity])).toThrow(TypeError);
+    });
+
+    // 9. -Infinity → rejected
+    it('Req 9: -Infinity is strictly rejected', () => {
+      expect(() => canonicalizeNumber(-Infinity)).toThrow(TypeError);
+      expect(() => canonicalizeJson(-Infinity)).toThrow(TypeError);
+      expect(() => canonicalizeJson({ val: -Infinity })).toThrow(TypeError);
+      expect(() => canonicalizeJson([-Infinity])).toThrow(TypeError);
+    });
+
+    // 10. BigInt → rejected
+    it('Req 10: BigInt is strictly rejected', () => {
+      expect(() => canonicalizeJson(9007199254740991n)).toThrow('BigInt is not a JSON/JCS value');
+      expect(() => canonicalizeJson({ big: 100n })).toThrow('BigInt is not a JSON/JCS value');
+      expect(() => canonicalizeJson([100n])).toThrow('BigInt is not a JSON/JCS value');
+    });
+
+    // 11. Circular object → rejected
+    it('Req 11: Circular object is strictly rejected', () => {
+      const circ: Record<string, unknown> = { name: 'circular' };
+      circ.loop = circ;
+      expect(() => canonicalizeJson(circ)).toThrow(TypeError);
+
+      const circArr: unknown[] = ['start'];
+      circArr.push(circArr);
+      expect(() => canonicalizeJson(circArr)).toThrow(TypeError);
+    });
+
+    // 12. Same semantic input → same SHA-256
+    it('Req 12: Identical semantic input produces exact same 256-bit SHA-256 hash', () => {
+      const inputA = { model: 'redqueen', hyperparams: { lr: 0.001, layers: [64, 128] }, active: true };
+      const inputB = { active: true, hyperparams: { layers: [64, 128], lr: 0.001 }, model: 'redqueen' };
+      const hashA = computeDeterministicHash(inputA);
+      const hashB = computeDeterministicHash(inputB);
+      expect(hashA).toBe(hashB);
+      expect(hashA).toMatch(/^[a-f0-9]{64}$/);
+    });
+
+    // 13. Different semantic input → different hash
+    it('Req 13: Different semantic inputs produce different hashes', () => {
+      const h1 = computeDeterministicHash({ state: 'idle', count: 1 });
+      const h2 = computeDeterministicHash({ state: 'idle', count: 2 });
+      const h3 = computeDeterministicHash({ state: 'active', count: 1 });
+      expect(h1).not.toBe(h2);
+      expect(h1).not.toBe(h3);
+      expect(h2).not.toBe(h3);
+    });
+
+    // 14. Known RFC 8785 test vectors verification
+    it('Req 14: Verifies known RFC 8785 reference test vectors', () => {
+      // arrays.json vector
+      expect(canonicalizeJson([56, { d: true, '10': null, '1': [] }])).toBe('[56,{"1":[],"10":null,"d":true}]');
+      // french.json vector
+      expect(canonicalizeJson({ peach: '1', 'péché': '2', 'pêche': '3', sin: '4' })).toBe('{"peach":"1","péché":"2","pêche":"3","sin":"4"}');
+      // structures.json vector
+      expect(canonicalizeJson({ '1': { '\n': 56.0 }, '10': {}, '': 'empty' })).toBe('{"":"empty","1":{"\\n":56},"10":{}}');
+    });
   });
 });
+

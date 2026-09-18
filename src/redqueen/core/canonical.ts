@@ -1,21 +1,76 @@
 import { createHash } from 'crypto';
 
 /**
- * RFC 8785 (JSON Canonicalization Scheme - JCS) compliant JSON canonicalizer.
- * Enforces:
- * 1. Consistent Unicode string escaping (control characters, quotes, backslashes).
- * 2. UTF-16 code unit lexicographical sorting of object keys.
- * 3. Exact IEEE 754 number formatting, canonicalizing -0 to 0 and rejecting NaN/Infinity.
- * 4. Cycle detection preventing circular reference infinite loops.
- * 5. Deterministic whitespace stripping (no formatting spaces outside string literals).
+ * Deterministic JSON canonicalization used by Red Queen.
+ * Compatible with RFC 8785/JCS semantics for supported JSON values.
+ */
+
+export type CanonicalJsonPrimitive =
+  | null
+  | boolean
+  | number
+  | string;
+
+/**
+ * Checks whether a string contains unpaired surrogate code points.
+ * According to RFC 8785 Section 3.2.2.2, JSON strings MUST NOT contain unpaired surrogate code points.
+ */
+function hasUnpairedSurrogates(str: string): boolean {
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      // High surrogate: must be followed by a low surrogate (0xdc00..0xdfff)
+      if (i + 1 >= str.length) {
+        return true;
+      }
+      const next = str.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        i++; // valid surrogate pair
+      } else {
+        return true;
+      }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      // Unpaired low surrogate
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Canonical string serialization strictly adhering to RFC 8785 Section 3.2.2.2.
+ */
+export function canonicalizeString(str: string): string {
+  if (hasUnpairedSurrogates(str)) {
+    throw new TypeError('RFC 8785 error: lone surrogate character found in string.');
+  }
+  return JSON.stringify(str);
+}
+
+/**
+ * Canonical number serialization adhering to RFC 8785 Section 3.2.2.3.
+ * - Non-finite numbers (NaN, Infinity, -Infinity) are rejected.
+ * - Negative zero (-0) MUST be serialized as '0'.
+ * - Uses ECMAScript number formatting via JSON.stringify.
+ */
+export function canonicalizeNumber(value: number): string {
+  if (!Number.isFinite(value)) {
+    throw new TypeError('Cannot canonicalize non-finite number');
+  }
+
+  if (Object.is(value, -0) || value === 0) {
+    return '0';
+  }
+
+  return JSON.stringify(value);
+}
+
+/**
+ * Deterministic JSON canonicalization conforming to RFC 8785 / JCS semantics.
  */
 export function canonicalizeJson(value: unknown, seen: Set<unknown> = new Set()): string {
   if (value === null) {
     return 'null';
-  }
-
-  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
-    return 'undefined';
   }
 
   if (typeof value === 'boolean') {
@@ -23,34 +78,32 @@ export function canonicalizeJson(value: unknown, seen: Set<unknown> = new Set())
   }
 
   if (typeof value === 'number') {
-    if (!Number.isFinite(value)) {
-      throw new Error('RFC 8785 error: non-finite numbers (NaN, Infinity) cannot be canonicalized.');
-    }
-    if (Object.is(value, -0)) {
-      return '0';
-    }
-    return String(value);
-  }
-
-  if (typeof value === 'bigint') {
-    return value.toString();
+    return canonicalizeNumber(value);
   }
 
   if (typeof value === 'string') {
     return canonicalizeString(value);
   }
 
+  if (typeof value === 'bigint') {
+    throw new TypeError('BigInt is not a JSON/JCS value');
+  }
+
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
+    throw new TypeError('Cannot canonicalize non-JSON value');
+  }
+
   if (typeof value === 'object') {
     if (seen.has(value)) {
-      throw new Error('RFC 8785 error: circular reference detected during canonical serialization.');
+      throw new TypeError('RFC 8785 error: circular reference detected during canonical serialization.');
     }
     seen.add(value);
 
     try {
       // Check for custom toJSON()
-      const maybeToJson = value as { toJSON?: () => unknown };
+      const maybeToJson = value as { toJSON?: unknown };
       if (typeof maybeToJson.toJSON === 'function') {
-        const jsonVal = maybeToJson.toJSON();
+        const jsonVal = (maybeToJson.toJSON as () => unknown)();
         return canonicalizeJson(jsonVal, seen);
       }
 
@@ -67,17 +120,17 @@ export function canonicalizeJson(value: unknown, seen: Set<unknown> = new Set())
         return `[${serializedElements.join(',')}]`;
       }
 
-      // Ordinary Object
+      // Ordinary Object: sort keys deterministically by UTF-16 code units
       const record = value as Record<string, unknown>;
-      const keys = Object.keys(record).sort((a, b) => {
-        return a < b ? -1 : a > b ? 1 : 0;
-      });
+      const keys = Object.keys(record).sort((a, b) =>
+        a < b ? -1 : a > b ? 1 : 0
+      );
 
       const serializedEntries: string[] = [];
       for (const key of keys) {
         const val = record[key];
         if (val === undefined || typeof val === 'function' || typeof val === 'symbol') {
-          // Omit undefined / functions in JSON object serialization
+          // Omit undefined / functions / symbols in JSON object serialization
           continue;
         }
         serializedEntries.push(`${canonicalizeString(key)}:${canonicalizeJson(val, seen)}`);
@@ -89,55 +142,7 @@ export function canonicalizeJson(value: unknown, seen: Set<unknown> = new Set())
     }
   }
 
-  throw new Error(`RFC 8785 error: unsupported data type: ${typeof value}`);
-}
-
-/**
- * Canonical string serialization complying with JSON string escaping rules.
- */
-function canonicalizeString(str: string): string {
-  let result = '"';
-  for (let i = 0; i < str.length; i++) {
-    const code = str.charCodeAt(i);
-
-    // Escape backslash and double quote
-    if (code === 0x5c) { // \
-      result += '\\\\';
-    } else if (code === 0x22) { // "
-      result += '\\"';
-    } else if (code === 0x08) { // \b
-      result += '\\b';
-    } else if (code === 0x0c) { // \f
-      result += '\\f';
-    } else if (code === 0x0a) { // \n
-      result += '\\n';
-    } else if (code === 0x0d) { // \r
-      result += '\\r';
-    } else if (code === 0x09) { // \t
-      result += '\\t';
-    } else if (code < 0x20) {
-      // Control characters < 0x20 -> \u00xx
-      result += `\\u${code.toString(16).padStart(4, '0')}`;
-    } else if (code >= 0xd800 && code <= 0xdbff) {
-      // High surrogate: verify valid pair
-      if (i + 1 < str.length) {
-        const nextCode = str.charCodeAt(i + 1);
-        if (nextCode >= 0xdc00 && nextCode <= 0xdfff) {
-          result += str[i] + str[i + 1];
-          i++; // Skip low surrogate
-          continue;
-        }
-      }
-      throw new Error('RFC 8785 error: lone surrogate character found in string.');
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      // Unpaired low surrogate
-      throw new Error('RFC 8785 error: lone surrogate character found in string.');
-    } else {
-      result += str[i];
-    }
-  }
-  result += '"';
-  return result;
+  throw new TypeError('Cannot canonicalize non-JSON value');
 }
 
 /**
@@ -150,9 +155,16 @@ export const canonicalSerialize = canonicalizeJson;
  * Guarantee: same semantic input + same schema/version -> same deterministic identity.
  */
 export function computeCanonicalHash(value: unknown): string {
-  const serialized = typeof value === 'string' ? value : canonicalSerialize(value);
-  return createHash('sha256').update(serialized, 'utf8').digest('hex');
+  const canonicalRepresentation = canonicalSerialize(value);
+  return createHash('sha256')
+    .update(canonicalRepresentation, 'utf8')
+    .digest('hex');
 }
+
+/**
+ * Alias for canonical hash computation conforming to RFC 8785.
+ */
+export const computeDeterministicHash = computeCanonicalHash;
 
 /**
  * Consistent hash utility across Red Queen Core.

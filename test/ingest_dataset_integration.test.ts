@@ -63,6 +63,9 @@ describe('Dataset Ingestion Pipeline', () => {
     expect(reasonSpy).toHaveBeenCalled();
     const reasoningArgs = reasonSpy.mock.calls[0][0];
     expect(reasoningArgs.premises[0].evidenceIds).toContain(evidenceId);
+
+    // 6. Memastikan legacy executeCycle TIDAK dipanggil (canonical single path)
+    expect(cell.cognition.executeCycle).not.toHaveBeenCalled();
   });
 
   it('memastikan dataset menghasilkan representation (concept) yang dihubungkan ke evidence', async () => {
@@ -87,5 +90,19 @@ describe('Dataset Ingestion Pipeline', () => {
     const concept = cell.cognitiveGraph.getConcept(representationId);
     expect(concept).toBeDefined();
     expect(concept?.canonicalName).toBeDefined();
+
+    // Memastikan legacy executeCycle TIDAK dipanggil
+    expect(cell.cognition.executeCycle).not.toHaveBeenCalled();
+  });
+
+  it('memastikan ingestDataset hanya mengeksekusi canonical cognitive path tanpa legacy executeCycle', async () => {
+    const records = [
+      { id: 10, sourceId: 'ds_iso_1', val: 'test1' },
+      { id: 11, sourceId: 'ds_iso_2', val: 'test2' }
+    ];
+
+    await cell.ingestDataset(records);
+
+    expect(cell.cognition.executeCycle).not.toHaveBeenCalled();
   });
 });

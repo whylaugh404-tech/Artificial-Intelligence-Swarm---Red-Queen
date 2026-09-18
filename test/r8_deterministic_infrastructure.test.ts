@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   canonicalSerialize,
   computeCanonicalHash,
+  computeHash,
   canonicalizeProvenance,
   deepFreeze
 } from '../src/redqueen/core/canonical';
@@ -52,6 +53,38 @@ describe('R8: Deterministic Infrastructure & Canonical Semantic Identity', () =>
 
       expect(canon1).toEqual(['source_a', 'source_b', 'source_c']);
       expect(canon1).toEqual(canon2);
+    });
+
+    it('enforces RFC 8785 semantics: -0 to 0, rejects NaN, Infinity, BigInt, and non-JSON values', () => {
+      expect(canonicalSerialize(-0)).toBe('0');
+      expect(canonicalSerialize({ zero: -0 })).toBe('{"zero":0}');
+
+      expect(() => canonicalSerialize(NaN)).toThrow();
+      expect(() => canonicalSerialize(Infinity)).toThrow();
+      expect(() => canonicalSerialize(-Infinity)).toThrow();
+      expect(() => canonicalSerialize(123n)).toThrow();
+      expect(() => canonicalSerialize(undefined)).toThrow();
+      expect(() => canonicalSerialize(() => {})).toThrow();
+      expect(() => canonicalSerialize(Symbol('sym'))).toThrow();
+    });
+
+    it('rejects circular structures and lone surrogates', () => {
+      const circ: Record<string, unknown> = { key: 'val' };
+      circ.loop = circ;
+      expect(() => canonicalSerialize(circ)).toThrow(TypeError);
+
+      expect(() => canonicalSerialize('lone \uD800 high')).toThrow(TypeError);
+      expect(() => canonicalSerialize({ 'bad\uDC00key': 1 })).toThrow(TypeError);
+    });
+
+    it('computeHash supports default 256-bit hash and optional truncate64', () => {
+      const payload = { test: 'integrity', code: 200 };
+      const full = computeCanonicalHash(payload);
+      expect(full).toMatch(/^[a-f0-9]{64}$/);
+
+      const truncated = computeHash(payload, { truncate64: true });
+      expect(truncated).toBe(full.substring(0, 16));
+      expect(truncated.length).toBe(16);
     });
   });
 

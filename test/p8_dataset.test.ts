@@ -31,6 +31,12 @@ describe('Dataset Ingestion', () => {
 
     await cell.ingestDataset(dataset);
     
-    expect(cognitionMock.executeCycle).toHaveBeenCalledTimes(2);
+    expect(cognitionMock.executeCycle).not.toHaveBeenCalled();
+
+    // Verify canonical pipeline executed
+    const evidences = cell.cognitiveGraph.getAllEvidences();
+    expect(evidences.length).toBe(2);
+    const chains = cell.reasoning.getAllChains();
+    expect(chains.length).toBe(2);
   });
 });
