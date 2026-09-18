@@ -158,6 +158,9 @@ export class CognitiveDevelopmentEngine {
 
     return await this.localCell.cognitiveGraph.executeAtomicDevelopmentUpdate(conceptId, async () => {
       await this.localCell.cognitiveGraph.updateConcept(updated);
+      if (this.localCell.cognitiveState) {
+        this.localCell.cognitiveState.updateConfidence(newConfidence);
+      }
       await this.localCell.cognitiveGraph.transitionRepresentationState(conceptId, evidence, context, {
         trigger: EpistemicTransitionTrigger.EVIDENCE_OBSERVED,
         reason: `Strengthened: ${reason}`,
@@ -214,6 +217,9 @@ export class CognitiveDevelopmentEngine {
 
     return await this.localCell.cognitiveGraph.executeAtomicDevelopmentUpdate(conceptId, async () => {
       await this.localCell.cognitiveGraph.updateConcept(updated);
+      if (this.localCell.cognitiveState) {
+        this.localCell.cognitiveState.updateConfidence(newConfidence);
+      }
       await this.localCell.cognitiveGraph.transitionRepresentationState(conceptId, evidence, context, {
         trigger:
           newStatus === RepresentationVerificationStatus.CONTRADICTED

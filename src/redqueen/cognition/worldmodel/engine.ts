@@ -104,7 +104,7 @@ export class WorldModelEngine {
       // Inspect dependencies
       for (const dep of und.dependencies) {
         if (dep.sourceType === 'CONCEPT') {
-          let concept = loadedConcepts.get(dep.sourceId) || this.conceptCache.get(dep.sourceId);
+          let concept = loadedConcepts.get(dep.sourceId);
           if (!concept && graph) {
             concept = graph.getConcept(dep.sourceId);
           }
@@ -115,6 +115,9 @@ export class WorldModelEngine {
               concept = foundInInput;
             }
           }
+          if (!concept) {
+            concept = this.conceptCache.get(dep.sourceId);
+          }
           if (concept) {
             loadedConcepts.set(concept.conceptId, concept);
             this.conceptCache.set(concept.conceptId, concept);
@@ -124,7 +127,7 @@ export class WorldModelEngine {
             );
           }
         } else if (dep.sourceType === 'RELATION') {
-          let rel = loadedRelations.get(dep.sourceId) || this.relationCache.get(dep.sourceId);
+          let rel = loadedRelations.get(dep.sourceId);
           if (!rel && graph) {
             rel = graph.getRelation(dep.sourceId);
           }
@@ -135,6 +138,9 @@ export class WorldModelEngine {
             if (foundInInput) {
               rel = foundInInput;
             }
+          }
+          if (!rel) {
+            rel = this.relationCache.get(dep.sourceId);
           }
           if (rel) {
             loadedRelations.set(rel.relationId, rel);
