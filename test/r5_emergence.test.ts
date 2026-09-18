@@ -142,7 +142,7 @@ describe('R5: Emergence Model & Detection', () => {
     const outcome2 = detector.detect(baseParams);
 
     expect(outcome1.emergentState?.emergenceId).toBe(outcome2.emergentState?.emergenceId);
-    expect(outcome1.emergentState?.emergenceId).toMatch(/^emg_[a-f0-9]{16}$/);
+    expect(outcome1.emergentState?.emergenceId).toMatch(/^emg_[a-f0-9]{64}$/);
   });
 
   it('6. timestamp tidak memengaruhi identity', () => {
@@ -280,5 +280,14 @@ describe('R5: Emergence Model & Detection', () => {
     // Must be UNVERIFIED because no verification engine has validated it yet
     expect(outcome.emergentState?.verificationStatus).toBe('UNVERIFIED');
     expect(outcome.emergentState?.verificationStatus).not.toBe('VERIFIED');
+  });
+
+  it('13. detection reason reports candidate UNVERIFIED status without falsely claiming verified truth', () => {
+    const detector = new EmergenceDetector();
+    const outcome = detector.detect(baseParams);
+
+    expect(outcome.isEmergent).toBe(true);
+    expect(outcome.reason).toContain('UNVERIFIED');
+    expect(outcome.reason).not.toMatch(/\bsuccessfully detected and verified\b/i);
   });
 });

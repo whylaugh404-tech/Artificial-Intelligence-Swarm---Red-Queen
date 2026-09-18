@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import {
   CompositionInput,
   CompositionRelation,
@@ -11,17 +10,14 @@ import {
   CompositionType
 } from './types';
 import { logger } from '../logger';
+import {
+  canonicalSerialize,
+  computeCanonicalHash,
+  computeHash,
+  canonicalizeProvenance
+} from '../canonical';
 
-export function canonicalSerialize(obj: unknown): string {
-  if (obj === null || obj === undefined) return 'null';
-  if (typeof obj !== 'object') return JSON.stringify(obj);
-  if (Array.isArray(obj)) {
-    return `[${obj.map(canonicalSerialize).join(',')}]`;
-  }
-  const keys = Object.keys(obj as Record<string, unknown>).sort();
-  const parts = keys.map(k => `${JSON.stringify(k)}:${canonicalSerialize((obj as Record<string, unknown>)[k])}`);
-  return `{${parts.join(',')}}`;
-}
+export { canonicalSerialize, computeHash };
 
 export class CompositionError extends Error {
   constructor(message: string) {
@@ -104,10 +100,14 @@ export class CompositionEngine {
     const timestamp = deterministicTimestamp || new Date().toISOString();
     
     // Deterministic semantic hash generation for identities (does not include execution metadata like timestamp)
+    const canonicalInputs = [...safeInputs].sort((a, b) => a.inputId.localeCompare(b.inputId));
+    const canonicalRelations = [...safeRelations].sort((a, b) => a.relationId.localeCompare(b.relationId));
+    const canonicalConstraints = [...safeConstraints].sort((a, b) => a.constraintId.localeCompare(b.constraintId));
+
     const semanticPayload = {
       transformation: transformationType,
-      inputs: safeInputs.map(i => ({ inputId: i.inputId, type: i.type, structure: i.structure })), // actual content, not just ID
-      relations: safeRelations.map(r => ({
+      inputs: canonicalInputs.map(i => ({ inputId: i.inputId, type: i.type, structure: i.structure })),
+      relations: canonicalRelations.map(r => ({
         relationId: r.relationId,
         sourceInputId: r.sourceInputId,
         targetInputId: r.targetInputId,
@@ -115,7 +115,7 @@ export class CompositionEngine {
         semantics: r.semantics
       })),
       topology: safeTopology ? { arrangement: safeTopology.arrangementType, mapping: safeTopology.graphMapping } : null,
-      constraints: safeConstraints.map(c => ({
+      constraints: canonicalConstraints.map(c => ({
         constraintId: c.constraintId,
         targetInputId: c.targetInputId,
         type: c.type,
@@ -124,7 +124,7 @@ export class CompositionEngine {
       context: { domain: safeContext.domain, parameters: safeContext.parameters }
     };
     
-    const traceId = `trace_${this.computeHash(canonicalSerialize(semanticPayload))}`;
+    const traceId = `trace_${computeCanonicalHash(semanticPayload)}`;
     
     const trace: CompositionTrace = {
       traceId,
@@ -139,24 +139,23 @@ export class CompositionEngine {
     };
 
     // 5. Provenance preservation
-    const combinedProvenance = new Set<string>();
-    safeInputs.forEach(input => {
-      input.provenance.forEach(p => combinedProvenance.add(p));
-    });
-    combinedProvenance.add(traceId); // Adding the current composition to provenance
+    const combinedProvenance = canonicalizeProvenance([
+      ...safeInputs.flatMap(input => input.provenance),
+      traceId
+    ]);
 
     // 6. Result structuring
     const resultType = this.inferResultType(rule.supportedTypes, safeInputs);
     
-    // resultId also uses canonical serialization of derivedStructure
-    const resultId = `comp_${this.computeHash(traceId + canonicalSerialize(derivedStructure))}`;
+    // resultId uses canonical serialization of derivedStructure + traceId
+    const resultId = `comp_${computeCanonicalHash({ traceId, derivedStructure })}`;
     
     const result: CompositionResult = {
       resultId,
       type: resultType,
       derivedStructure,
       trace,
-      provenance: Array.from(combinedProvenance).sort(), // Sorted for determinism
+      provenance: combinedProvenance,
       metadata: {
         compositionTimestamp: timestamp, // metadata only
         ruleApplied: transformationType
@@ -241,6 +240,6 @@ export class CompositionEngine {
   }
 
   private computeHash(content: string): string {
-    return createHash('sha256').update(content, 'utf8').digest('hex').substring(0, 16);
+    return computeCanonicalHash(content);
   }
 }

@@ -312,5 +312,91 @@ describe('R6: Mitosis Reconciliation', () => {
       expect(inheritedB.currentHolderCellId).toBe(result.childB.cellIdentity);
       expect(inheritedA.currentHolderCellId).not.toBe(inheritedB.currentHolderCellId);
     });
+
+    it('23. child identity changes deterministically when differentiation profile changes', () => {
+      const baseResult = reconciler.reconcile(repSpec);
+
+      // Mutate differentiation profile of Child A
+      const alteredSpecA = {
+        ...repSpec,
+        differentiationProfileA: [{ domain: 'differential-geometry', focusAreas: ['curvature', 'manifolds'], level: 0.99 }]
+      };
+      const resultAlteredA = reconciler.reconcile(alteredSpecA);
+
+      expect(resultAlteredA.childA.cellIdentity).not.toBe(baseResult.childA.cellIdentity);
+      expect(resultAlteredA.childA.stateId).not.toBe(baseResult.childA.stateId);
+      // Child B differentiation profile did not change, so Child B identity remains identical
+      expect(resultAlteredA.childB.cellIdentity).toBe(baseResult.childB.cellIdentity);
+
+      // Mutate differentiation profile of Child B
+      const alteredSpecB = {
+        ...repSpec,
+        differentiationProfileB: [{ domain: 'abstract-algebra', focusAreas: ['group-theory'], level: 0.95 }]
+      };
+      const resultAlteredB = reconciler.reconcile(alteredSpecB);
+
+      expect(resultAlteredB.childB.cellIdentity).not.toBe(baseResult.childB.cellIdentity);
+      expect(resultAlteredB.childB.stateId).not.toBe(baseResult.childB.stateId);
+      expect(resultAlteredB.childA.cellIdentity).toBe(baseResult.childA.cellIdentity);
+    });
+
+    it('24. recursively rebinds currentHolderCellId on deeply nested representations while preserving originatingCellId', () => {
+      const nestedConcept = {
+        conceptId: 'concept-sub-manifold',
+        canonicalName: 'Sub-Manifold',
+        category: 'abstract',
+        attributes: {},
+        originatingCellId: 'parent-cell-alpha',
+        currentHolderCellId: 'parent-cell-alpha',
+        provenance: ['genesis', 'topo-trace-1'],
+        createdAt: new Date().toISOString(),
+        confidence: 0.99,
+        verificationStatus: 'VERIFIED',
+        version: 1
+      };
+
+      const deepParent = stateManager.createInitialState({
+        cellIdentity: 'parent-cell-alpha',
+        genomeReference: 'genome-v1',
+        memoryState: {},
+        knowledgeState: {
+          nestedTree: {
+            subDomains: {
+              geometry: {
+                targetConcepts: [nestedConcept]
+              }
+            }
+          }
+        },
+        cognitiveState: {},
+        reasoningState: {},
+        experienceState: {},
+        computationalCapability: aggregateCapabilities([p1, p2]),
+        specializations: [{ domain: 'math', focusAreas: ['core'], level: 1.0 }],
+        lifecycle: LifecycleState.ACTIVE,
+        provenance: ['genesis']
+      });
+
+      const deepSpec = {
+        ...baseSpec,
+        parentState: deepParent,
+        partitionDistribution: { childA: [p1.partitionId], childB: [p2.partitionId] },
+        memoryDistribution: { childA: [], childB: [] },
+        knowledgeDistribution: { childA: ['nestedTree'], childB: [] },
+        cognitiveDistribution: { childA: [], childB: [] },
+        reasoningDistribution: { childA: [], childB: [] },
+        experienceDistribution: { childA: [], childB: [] }
+      };
+
+      const result = reconciler.reconcile(deepSpec);
+      const childTree = result.childA.knowledgeState['nestedTree'] as any;
+      const extractedConcept = childTree.subDomains.geometry.targetConcepts[0];
+
+      // Originating cell is preserved
+      expect(extractedConcept.originatingCellId).toBe('parent-cell-alpha');
+      // Current holder is re-bound to the child identity
+      expect(extractedConcept.currentHolderCellId).toBe(result.childA.cellIdentity);
+      expect(extractedConcept.currentHolderCellId).not.toBe('parent-cell-alpha');
+    });
   });
 });

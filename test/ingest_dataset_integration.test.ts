@@ -64,4 +64,28 @@ describe('Dataset Ingestion Pipeline', () => {
     const reasoningArgs = reasonSpy.mock.calls[0][0];
     expect(reasoningArgs.premises[0].evidenceIds).toContain(evidenceId);
   });
+
+  it('memastikan dataset menghasilkan representation (concept) yang dihubungkan ke evidence', async () => {
+    // 1. Dataset record dengan reliability
+    const datasetRecord = { id: 2, sourceId: 'my_dataset_002', text: "some technical fact", confidence: 0.85 };
+    
+    await cell.ingestDataset([datasetRecord]);
+    
+    // Check evidence
+    const evidences = cell.cognitiveGraph.getAllEvidences();
+    const evidence = evidences.find(e => e.provenance.sourceId === 'my_dataset_002');
+    expect(evidence).toBeDefined();
+    
+    // Confidence is applied
+    expect(evidence?.confidence).toBe(0.85);
+
+    // Concept terhubung
+    expect(evidence?.provenance.supportingRepresentationIds).toBeDefined();
+    expect(evidence!.provenance.supportingRepresentationIds!.length).toBeGreaterThan(0);
+    
+    const representationId = evidence!.provenance.supportingRepresentationIds![0];
+    const concept = cell.cognitiveGraph.getConcept(representationId);
+    expect(concept).toBeDefined();
+    expect(concept?.canonicalName).toBeDefined();
+  });
 });

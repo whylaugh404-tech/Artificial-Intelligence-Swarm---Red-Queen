@@ -55,7 +55,7 @@ describe('R4: Cognitive Composition', () => {
 
     expect(res1.compositionId).toBe(res2.compositionId);
     expect(res1.transformation.traceId).toBe(res2.transformation.traceId);
-    expect(res1.compositionId).toMatch(/^comp_[a-f0-9]{16}$/);
+    expect(res1.compositionId).toMatch(/^comp_[a-f0-9]{64}$/);
 
     // Wall-clock/timestamp should NOT affect semantic compositionId or traceId
     const resDifferentTimestamp1 = composeCognitiveState({
@@ -337,10 +337,146 @@ describe('R4: Cognitive Composition', () => {
       context: baseContext
     });
 
-    expect(result.compositionId).toMatch(/^comp_[a-f0-9]{16}$/);
+    expect(result.compositionId).toMatch(/^comp_[a-f0-9]{64}$/);
     expect(result.cellIdentity).toBe('cell-alpha');
     expect(result.computeResources.partitions).toHaveLength(1);
     expect(result.computeResources.partitions[0].partitionId).toBe(basePartition.partitionId);
     expect(result.resultingCognitiveState.mode).toBe('hybrid-reasoner');
+  });
+
+  it('11. data-driven feature extraction: resultVector is derived from cognitive, knowledge, experience, epistemic, and specialization data with full provenance', () => {
+    const richParams: ComposeCognitiveStateParams = {
+      cellIdentity: 'cell-rich',
+      cognitiveState: { mode: 'analytical', operationalConfidence: 0.88, depth: 5 },
+      knowledgeState: { theorems: ['t1', 't2', 't3', 't4'], confidence: 0.92 },
+      experienceState: { successfulNavigations: 40, errorRate: 0.05 },
+      reasoningState: { validity: 0.85, confidence: 0.9 },
+      epistemicState: { confidence: 0.95, certainty: 0.9 },
+      specialization: ['spatial-navigation'],
+      computePartitions: basePartition,
+      context: baseContext,
+      provenance: ['prov-rich']
+    };
+
+    const res = composeCognitiveState(richParams);
+
+    expect(res.resultVector).toBeDefined();
+    expect(res.featureProvenance).toBeDefined();
+
+    const resultVector = res.resultVector!;
+    const prov = res.featureProvenance!;
+
+    // Cognition is grounded in operationalConfidence (0.88)
+    expect(resultVector.cognition).toBeGreaterThan(0.7);
+    expect(prov.cognition).toContain('operationalConfidence');
+
+    // Knowledge is grounded in theorems and confidence
+    expect(resultVector.knowledge).toBeGreaterThan(0.6);
+    expect(prov.knowledge).toContain('knowledgeState');
+
+    // Experience is grounded in navigations and quality
+    expect(resultVector.experience).toBeGreaterThan(0.6);
+    expect(prov.experience).toContain('experienceState');
+
+    // Specialization is grounded in domain match
+    expect(resultVector.specialization).toBeGreaterThan(0.8);
+    expect(prov.specialization).toContain('domain_match');
+
+    // Reliability blends epistemic confidence and substrate
+    expect(resultVector.reliability).toBeGreaterThan(0.85);
+    expect(prov.reliability).toContain('epistemicState');
+
+    // Input vector computation reflects hardware capacity (1000 / 10000 = 0.1)
+    const inputVec = res.resultingCognitiveState.linearComposition!.inputVectors[basePartition.partitionId];
+    expect(inputVec.computation).toBeCloseTo(0.1, 2);
+    expect(prov.computation).toContain('substrate.capacity');
+  });
+
+  it('12. zero partition-index bias: multiple partitions have features derived from cognitive data, not array position', () => {
+    const partA = createComputePartition({
+      cellIdentity: 'cell-multi',
+      name: 'Partition A',
+      architecture: 'generic',
+      capacity: 2000,
+      parallelism: 2,
+      memory: 4096,
+      specialization: 'graph-analysis',
+      availability: 0.9,
+      communicationProfile: { bandwidth: 1000, latency: 5, topology: 'mesh', reliability: 0.95 }
+    });
+
+    const partB = createComputePartition({
+      cellIdentity: 'cell-multi',
+      name: 'Partition B',
+      architecture: 'generic',
+      capacity: 2000,
+      parallelism: 2,
+      memory: 4096,
+      specialization: 'graph-analysis',
+      availability: 0.9,
+      communicationProfile: { bandwidth: 1000, latency: 5, topology: 'mesh', reliability: 0.95 }
+    });
+
+    // Test with [partA, partB]
+    const resAB = composeCognitiveState({
+      ...baseParams,
+      computePartitions: [partA, partB]
+    });
+
+    const linearComp = resAB.resultingCognitiveState.linearComposition!;
+    const vecA = linearComp.inputVectors[partA.partitionId];
+    const vecB = linearComp.inputVectors[partB.partitionId];
+
+    // Since partA and partB have identical compute specs and share the exact same cognitive data,
+    // their cognition and knowledge features MUST be identical, NOT different by index (e.g. not 0.7 vs 0.75)!
+    expect(vecA.cognition).toBe(vecB.cognition);
+    expect(vecA.knowledge).toBe(vecB.knowledge);
+    expect(vecA.experience).toBe(vecB.experience);
+  });
+
+  it('13. compute capacity is decoupled from intelligence: altering capacity does not inflate cognition or knowledge', () => {
+    const lowCapPartition = createComputePartition({
+      cellIdentity: 'cell-alpha',
+      name: 'Low Compute',
+      architecture: 'generic',
+      capacity: 500,
+      parallelism: 1,
+      memory: 1024,
+      specialization: 'graph-analysis',
+      availability: 0.9,
+      communicationProfile: { bandwidth: 500, latency: 10, topology: 'direct', reliability: 0.95 }
+    });
+
+    const highCapPartition = createComputePartition({
+      cellIdentity: 'cell-alpha',
+      name: 'High Compute',
+      architecture: 'generic',
+      capacity: 50000, // 100x capacity
+      parallelism: 32,
+      memory: 65536,
+      specialization: 'graph-analysis',
+      availability: 0.9,
+      communicationProfile: { bandwidth: 500, latency: 10, topology: 'direct', reliability: 0.95 }
+    });
+
+    const resLow = composeCognitiveState({
+      ...baseParams,
+      computePartitions: lowCapPartition
+    });
+
+    const resHigh = composeCognitiveState({
+      ...baseParams,
+      computePartitions: highCapPartition
+    });
+
+    const vecLow = resLow.resultingCognitiveState.linearComposition!.inputVectors[lowCapPartition.partitionId];
+    const vecHigh = resHigh.resultingCognitiveState.linearComposition!.inputVectors[highCapPartition.partitionId];
+
+    // Computation scales with capacity
+    expect(vecHigh.computation).toBeGreaterThan(vecLow.computation);
+
+    // Cognition and knowledge are determined by cognitiveState and knowledgeState, NOT capacity
+    expect(vecLow.cognition).toBe(vecHigh.cognition);
+    expect(vecLow.knowledge).toBe(vecHigh.knowledge);
   });
 });

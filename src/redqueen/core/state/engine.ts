@@ -1,31 +1,14 @@
-import { createHash } from 'crypto';
 import { CellState, StateTransition } from './types';
 import { logger } from '../logger';
+import {
+  canonicalSerialize,
+  computeCanonicalHash,
+  computeHash,
+  canonicalizeProvenance,
+  deepFreeze
+} from '../canonical';
 
-export function canonicalSerialize(obj: unknown): string {
-  if (obj === null || obj === undefined) return 'null';
-  if (typeof obj !== 'object') return JSON.stringify(obj);
-  if (Array.isArray(obj)) {
-    return `[${obj.map(canonicalSerialize).join(',')}]`;
-  }
-  const keys = Object.keys(obj as Record<string, unknown>).sort();
-  const parts = keys.map(k => `${JSON.stringify(k)}:${canonicalSerialize((obj as Record<string, unknown>)[k])}`);
-  return `{${parts.join(',')}}`;
-}
-
-export function computeHash(content: string): string {
-  return createHash('sha256').update(content, 'utf8').digest('hex').substring(0, 16);
-}
-
-function deepFreeze<T>(obj: T): T {
-  if (obj && typeof obj === 'object') {
-    Object.keys(obj as Record<string, unknown>).forEach(prop => {
-      deepFreeze((obj as Record<string, unknown>)[prop]);
-    });
-    Object.freeze(obj);
-  }
-  return obj;
-}
+export { canonicalSerialize, computeHash };
 
 export class CellStateManager {
   
@@ -41,9 +24,9 @@ export class CellStateManager {
       computationalCapability: stateContent.computationalCapability,
       specializations: stateContent.specializations,
       lifecycle: stateContent.lifecycle,
-      provenance: stateContent.provenance
+      provenance: canonicalizeProvenance(stateContent.provenance)
     };
-    return `state_${computeHash(canonicalSerialize(semanticPayload))}`;
+    return `state_${computeCanonicalHash(semanticPayload)}`;
   }
 
   public createInitialState(initialData: Omit<CellState, 'stateId'>): CellState {
@@ -51,6 +34,64 @@ export class CellStateManager {
     const stateId = this.generateStateId(safeData);
     const state = { ...safeData, stateId };
     return deepFreeze(state);
+  }
+
+  public syncWithGenome(
+    currentState: CellState,
+    newGenomeReference: string,
+    newSpecializations: CellState['specializations'],
+    newComputationalCapability: CellState['computationalCapability'],
+    provenanceSource: string[],
+    deterministicTimestamp?: string
+  ): { newState: CellState; transition: StateTransition } {
+    
+    const safeNewData: Partial<CellState> = structuredClone(currentState);
+    delete safeNewData.stateId;
+    
+    safeNewData.genomeReference = newGenomeReference;
+    safeNewData.specializations = structuredClone(newSpecializations);
+    safeNewData.computationalCapability = structuredClone(newComputationalCapability);
+    
+    safeNewData.provenance = canonicalizeProvenance([...currentState.provenance, ...provenanceSource]);
+
+    const targetStateId = this.generateStateId(safeNewData as Omit<CellState, 'stateId'>);
+    
+    const newState: CellState = deepFreeze({
+      ...(safeNewData as Omit<CellState, 'stateId'>),
+      stateId: targetStateId
+    });
+
+    const changedFields = ['genomeReference', 'specializations', 'computationalCapability'].sort();
+    const sortedProvenanceSource = canonicalizeProvenance(provenanceSource);
+    
+    const transitionSignature = canonicalSerialize({
+      sourceStateId: currentState.stateId,
+      targetStateId: targetStateId,
+      transitionType: 'GENOME_SYNCHRONIZATION',
+      changedFields,
+      provenance: sortedProvenanceSource
+    });
+
+    const transitionId = `trans_${computeCanonicalHash(transitionSignature)}`;
+    
+    const transition: StateTransition = deepFreeze({
+      transitionId,
+      sourceStateId: currentState.stateId,
+      targetStateId,
+      transitionType: 'GENOME_SYNCHRONIZATION',
+      changedFields,
+      provenance: canonicalizeProvenance([...currentState.provenance, ...provenanceSource]),
+      timestamp: deterministicTimestamp || new Date().toISOString()
+    });
+
+    logger.debug('CellStateManager', 'genome_synchronized', { 
+      cellIdentity: currentState.cellIdentity,
+      sourceState: currentState.stateId, 
+      targetState: targetStateId, 
+      genomeReference: newGenomeReference 
+    });
+
+    return { newState, transition };
   }
 
   public applyTransition(
@@ -71,8 +112,7 @@ export class CellStateManager {
     const safeNewData: Partial<CellState> = structuredClone(updatedData);
     delete safeNewData.stateId; // ensure we generate a new one
     
-    const combinedProvenance = new Set([...currentState.provenance, ...provenanceSource]);
-    safeNewData.provenance = Array.from(combinedProvenance).sort();
+    safeNewData.provenance = canonicalizeProvenance([...currentState.provenance, ...provenanceSource]);
 
     const targetStateId = this.generateStateId(safeNewData as Omit<CellState, 'stateId'>);
     
@@ -82,7 +122,7 @@ export class CellStateManager {
     });
 
     const changedFields = Object.keys(updates).sort();
-    const sortedProvenanceSource = Array.from(new Set(provenanceSource)).sort();
+    const sortedProvenanceSource = canonicalizeProvenance(provenanceSource);
     
     const transitionSignature = canonicalSerialize({
       sourceStateId: currentState.stateId,
@@ -92,7 +132,7 @@ export class CellStateManager {
       provenance: sortedProvenanceSource
     });
 
-    const transitionId = `trans_${computeHash(transitionSignature)}`;
+    const transitionId = `trans_${computeCanonicalHash(transitionSignature)}`;
     
     const transition: StateTransition = deepFreeze({
       transitionId,
@@ -100,7 +140,7 @@ export class CellStateManager {
       targetStateId,
       transitionType,
       changedFields,
-      provenance: Array.from(combinedProvenance).sort(),
+      provenance: canonicalizeProvenance([...currentState.provenance, ...provenanceSource]),
       timestamp: deterministicTimestamp || new Date().toISOString()
     });
 

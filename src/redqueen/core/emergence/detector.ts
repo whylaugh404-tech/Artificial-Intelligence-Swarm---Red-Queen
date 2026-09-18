@@ -1,6 +1,10 @@
-import { createHash } from 'crypto';
-import { canonicalSerialize } from '../composition/engine';
 import { CognitiveCompositionResult } from '../cognitive_composition/types';
+import {
+  canonicalSerialize,
+  computeCanonicalHash,
+  canonicalizeProvenance,
+  deepFreeze
+} from '../canonical';
 import {
   DetectEmergenceParams,
   EmergenceDependency,
@@ -10,23 +14,6 @@ import {
   NoveltyRepresentation,
   StructuralDifference
 } from './types';
-
-/**
- * Deep freezes an object recursively.
- */
-function deepFreeze<T>(obj: T): T {
-  if (obj && typeof obj === 'object') {
-    Object.keys(obj as Record<string, unknown>).forEach(prop => {
-      deepFreeze((obj as Record<string, unknown>)[prop]);
-    });
-    Object.freeze(obj);
-  }
-  return obj;
-}
-
-function computeHash(content: string): string {
-  return createHash('sha256').update(content, 'utf8').digest('hex').substring(0, 16);
-}
 
 /**
  * R5: Emergence Model & Detection Engine
@@ -125,13 +112,15 @@ export class EmergenceDetector {
       }
     };
 
-    const emergenceId = `emg_${computeHash(canonicalSerialize(semanticPayload))}`;
+    const emergenceId = `emg_${computeCanonicalHash(semanticPayload)}`;
 
     // 7. ASSEMBLE COMPLETE PROVENANCE CHAIN
-    const combinedProvenance = new Set<string>(params.provenance);
-    combinedProvenance.add(params.transformation.traceId);
-    combinedProvenance.add(params.compositionId);
-    combinedProvenance.add(emergenceId);
+    const combinedProvenance = canonicalizeProvenance([
+      ...params.provenance,
+      params.transformation.traceId,
+      params.compositionId,
+      emergenceId
+    ]);
 
     // 8. ASSEMBLE EMERGENT STATE
     const timestamp = params.deterministicTimestamp || new Date().toISOString();
@@ -160,9 +149,13 @@ export class EmergenceDetector {
 
     const validatedState = EmergentStateSchema.parse(rawEmergentState);
 
+    const statusNote = rawEmergentState.verificationStatus === 'VERIFIED'
+      ? 'status: VERIFIED'
+      : `candidate status: ${rawEmergentState.verificationStatus}; epistemic verification required`;
+
     return {
       isEmergent: true,
-      reason: 'Emergent structural properties successfully detected and verified.',
+      reason: `Emergent structural properties successfully detected (${statusNote}).`,
       emergentState: deepFreeze(validatedState),
       novelty: deepFreeze(novelty)
     };

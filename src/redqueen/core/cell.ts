@@ -36,7 +36,8 @@ import {
   MetabolismEngine,
   MetabolismResult,
   InformationRecordInput,
-  MetabolismBudget
+  MetabolismBudget,
+  MetabolismStatus
 } from '../metabolism';
 import { ExchangeManager, ExchangeConfig } from '../exchange/manager';
 import {
@@ -52,6 +53,7 @@ import { VerificationEngine } from '../cognition/verification';
 import { Evidence } from '../cognition/evidence/types';
 import { CollectiveCognitionEngine } from '../cognition/collective/engine';
 import { CognitiveDevelopmentEngine } from '../cognition/development/engine';
+import { computeCanonicalHash } from './canonical';
 import { CollectiveComputationEngine } from '../cognition/computation/engine';
 import { DistributedComputationFabric } from '../cognition/computation/fabric';
 import { EvolutionEngine } from '../evolution';
@@ -84,11 +86,14 @@ export class Cell {
     
     for (let index = 0; index < records.length; index++) {
       const record = records[index];
-      const sourceId = typeof record.sourceId === 'string' ? record.sourceId : `dataset_${Date.now()}`;
-      const observationId = `obs_${Date.now()}_${index}_${Math.random().toString(36).substring(2, 9)}`;
+      const recordHash = computeCanonicalHash(record);
+      const sourceId = typeof record.sourceId === 'string' ? record.sourceId : `dataset_${recordHash.substring(0, 16)}`;
+      const observationId = `obs_${recordHash.substring(0, 16)}_${index}`;
       const timestamp = new Date().toISOString();
 
-      // 1. Observation
+      const recordConfidence = typeof record.confidence === 'number' ? record.confidence : undefined;
+      
+      // 1. Raw Observation
       const observation = {
         observationId,
         timestamp,
@@ -97,25 +102,6 @@ export class Cell {
         type: 'dataset_record'
       };
 
-      // 2. Evidence
-      const evidence: Evidence = {
-        evidenceId: `ev_${observationId}`,
-        sourceId: this.nodeId,
-        observationId,
-        timestamp,
-        provenance: {
-          sourceId, // dataset/source identifier
-          observationId: String(index), // record identifier/index
-          timestamp
-        },
-        context: {
-          contextId: `ctx_${Date.now()}`,
-          domain: 'dataset_ingestion'
-        },
-        confidence: 1.0
-      };
-
-      // 3. CognitiveGraph/Memory Persistence
       await this.memory.put({
         id: observationId,
         cellId: this.nodeId,
@@ -125,10 +111,45 @@ export class Cell {
         source: observation.sourceId,
         createdAt: observation.timestamp,
         updatedAt: observation.timestamp,
-        confidence: 1.0,
+        confidence: recordConfidence ?? 1.0,
         hash: '', 
         provenance: [this.nodeId]
       });
+
+      // 2. Metabolism -> Knowledge/Experience -> Representation -> Concept
+      const input: InformationRecordInput = {
+        sourceType: 'LOCAL_DATA',
+        sourceIdentifier: sourceId,
+        content: JSON.stringify(record),
+        contentType: 'application/json',
+        originatingCellId: this.nodeId
+      };
+      
+      const metabolismResult = await this.metabolism.metabolize(input);
+      if (metabolismResult.status !== MetabolismStatus.ACCEPTED && metabolismResult.status !== MetabolismStatus.DUPLICATE) {
+        continue; // Skip cognitive pipeline if metabolism rejected it
+      }
+
+      const epistemicConfidence = recordConfidence ?? (metabolismResult.quality?.confidence ?? 0.5);
+
+      // 3. Evidence
+      const evidence: Evidence = {
+        evidenceId: `ev_${observationId}`,
+        sourceId: this.nodeId,
+        observationId,
+        timestamp,
+        provenance: {
+          sourceId, // dataset/source identifier
+          observationId: String(index), // record identifier/index
+          timestamp,
+          supportingRepresentationIds: metabolismResult.representationIds || []
+        },
+        context: {
+          contextId: `ctx_${computeCanonicalHash({ domain: 'dataset_ingestion', sourceId }).substring(0, 16)}`,
+          domain: 'dataset_ingestion'
+        },
+        confidence: epistemicConfidence
+      };
 
       const storedEvidence = await this.cognitiveGraph.insertEvidence(evidence);
 
@@ -154,9 +175,9 @@ export class Cell {
         worldModel: worldModel,
         premises: [
           {
-            premiseId: `premise_${Date.now()}_${index}`,
+            premiseId: `premise_${recordHash.substring(0, 16)}_${index}`,
             statement: `Dataset record observed.`,
-            confidence: 1.0,
+            confidence: epistemicConfidence,
             evidenceIds: [storedEvidence.evidenceId]
           }
         ]
@@ -212,6 +233,7 @@ export class Cell {
 
   public readonly storageSecret: string;
   private syncIntervalTimer: NodeJS.Timeout | null = null;
+  private boundP2pPort: number = 0;
 
   constructor(
     storagePath: string, 
@@ -229,6 +251,9 @@ export class Cell {
 
     let rawPrivateKey: string;
     if (existingPrivateKey && existingPublicKey) {
+      if (!identityCrypto.isValidKeyPair(existingPrivateKey, existingPublicKey)) {
+        throw new Error('Invalid cell identity: provided private and public keys are not a valid cryptographic pair.');
+      }
       rawPrivateKey = existingPrivateKey.trim();
       this.publicKey = existingPublicKey.trim();
     } else {
@@ -347,6 +372,10 @@ export class Cell {
     );
 
     this.setupHooks();
+
+    // Ensure cell in CREATED state does not run background tick timers before start()
+    this.swarm.stop();
+    this.election.stop();
   }
 
   public restoreGenome(candidate: unknown): void {
@@ -357,27 +386,69 @@ export class Cell {
     const validated = check.genome;
     this._genome = deepFreeze(validated);
     this._lineage = constructLineage(validated);
+
+    if (this.cognitiveState) {
+      this.cognitiveState.syncWithGenome(validated.specialization ?? null);
+    }
   }
 
   private setupHooks() {
     this.lifecycle.registerShutdownHook(async () => {
       logger.info(this.component, 'shutting_down_cell', { nodeId: this.nodeId });
+
+      // 1. Clear intervals
       if (this.syncIntervalTimer) {
         clearInterval(this.syncIntervalTimer);
         this.syncIntervalTimer = null;
       }
-      this.cognitiveState.syncLifecycleState(CellState.STOPPED);
-      await this.cognitiveState.persist(this.memory);
-      this.collectiveComputation.fabric?.stop();
-      this.swarm.stop();
-      this.election.stop();
-      this.exchange.stop();
-      this.transport.stop();
+
+      // 2. Persist cognitive state (fail-safe)
+      try {
+        this.cognitiveState.syncLifecycleState(CellState.STOPPED);
+        await this.cognitiveState.persist(this.memory);
+      } catch (err) {
+        logger.error(this.component, 'failed_to_persist_cognitive_state_on_shutdown', err, { nodeId: this.nodeId });
+      }
+
+      // 3. Stop collective computation fabric
+      try {
+        this.collectiveComputation.fabric?.stop();
+      } catch (err) {
+        logger.error(this.component, 'failed_to_stop_computation_fabric', err, { nodeId: this.nodeId });
+      }
+
+      // 4. Stop swarm membership manager
+      try {
+        this.swarm.stop();
+      } catch (err) {
+        logger.error(this.component, 'failed_to_stop_swarm', err, { nodeId: this.nodeId });
+      }
+
+      // 5. Stop election manager
+      try {
+        this.election.stop();
+      } catch (err) {
+        logger.error(this.component, 'failed_to_stop_election', err, { nodeId: this.nodeId });
+      }
+
+      // 6. Stop exchange manager
+      try {
+        this.exchange.stop();
+      } catch (err) {
+        logger.error(this.component, 'failed_to_stop_exchange', err, { nodeId: this.nodeId });
+      }
+
+      // 7. Stop P2P transport
+      try {
+        this.transport.stop();
+      } catch (err) {
+        logger.error(this.component, 'failed_to_stop_transport', err, { nodeId: this.nodeId });
+      }
     });
     
     this.transport.onMessage((msg) => {
       const state = this.lifecycle.getState();
-      if (state === CellState.RETIRED || state === CellState.SUSPENDED) {
+      if (state === CellState.RETIRED || state === CellState.SUSPENDED || state === CellState.STOPPED || state === CellState.SHUTTING_DOWN) {
         logger.debug(this.component, 'message_ignored_inactive_cell', { state, type: msg.type });
         return;
       }
@@ -494,6 +565,10 @@ export class Cell {
       }
     }
 
+    if (entries.length > 0 && (!privateKey || !publicKey)) {
+      throw new Error(`Corrupted cell storage: storage contains state but identity is missing or corrupted at '${storagePath}'. Failing closed to prevent silent identity generation.`);
+    }
+
     const genomeEntry = entries.find((e: any) => e.id && typeof e.id === 'string' && e.id.startsWith('cell_genome_'));
     if (genomeEntry && genomeEntry.content) {
       genome = genomeEntry.content;
@@ -551,12 +626,21 @@ export class Cell {
   }
 
   async start(p2pPort: number = 0) {
+    const portToUse = p2pPort > 0 ? p2pPort : this.boundP2pPort;
+    if (p2pPort > 0) {
+      this.boundP2pPort = p2pPort;
+    }
+
     await this.lifecycle.initialize(async () => {
       logger.info(this.component, 'starting_cell', { nodeId: this.nodeId });
       await this.memory.initialize();
       await this.restoreOrPersistIdentity();
       await this.restoreOrPersistGenome();
       await this.cognitiveState.restore(this.memory);
+      
+      // Ensure CognitiveState syncs its specialization with the restored Genome
+      this.cognitiveState.syncWithGenome(this.genome.specialization ?? null);
+      
       await this.cognitiveGraph.load();
       this.cognitiveState.syncLifecycleState(CellState.ACTIVE);
       if (this.memory.getStats) {
@@ -564,12 +648,18 @@ export class Cell {
       }
       await this.cognitiveState.persist(this.memory);
       await this.swarm.restoreFromStorage();
+      this.swarm.start();
+      this.election.start();
       
-      if (p2pPort > 0) {
-        await this.transport.startServer(p2pPort);
+      if (portToUse > 0) {
+        await this.transport.startServer(portToUse);
       }
 
       // Periodically sync active transport peers into the routing table with proper cleanup
+      if (this.syncIntervalTimer) {
+        clearInterval(this.syncIntervalTimer);
+        this.syncIntervalTimer = null;
+      }
       this.syncIntervalTimer = setInterval(() => {
         for (const peer of this.transport.getPeers()) {
           if (peer.getState() === PeerState.AUTHENTICATED && peer.remoteNodeId && peer.remotePublicKey) {
@@ -782,16 +872,12 @@ export class Cell {
     return this.metabolism.metabolize(input);
   }
 
-  async stop() {
-    if (this.syncIntervalTimer) {
-      clearInterval(this.syncIntervalTimer);
-      this.syncIntervalTimer = null;
-    }
-    this.exchange.stop();
-    this.collectiveComputation.fabric?.stop();
-    this.cognitiveState.syncLifecycleState(CellState.STOPPED);
-    await this.cognitiveState.persist(this.memory);
+  async stop(): Promise<void> {
     await this.lifecycle.shutdown();
+  }
+
+  async shutdown(): Promise<void> {
+    await this.stop();
   }
 
   getStatus() {

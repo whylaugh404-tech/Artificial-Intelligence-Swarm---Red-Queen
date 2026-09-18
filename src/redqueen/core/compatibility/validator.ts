@@ -48,32 +48,42 @@ export class ArchitecturalCompatibilityValidator {
       } else {
         throw new Error('Unknown representation type');
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Fail closed
+      const msg = error instanceof Error ? error.message : String(error);
       anomalies.push({
         component: 'P5_REPRESENTATION',
-        issue: `Schema validation failed: ${error.message}`
+        issue: `Schema validation failed: ${msg}`
       });
     }
 
     // Explicit checking for fail-closed requirements
     if (type === 'CONCEPT' && anomalies.length === 0) {
-      const concept = payload as any;
-      if (!concept.provenance || concept.provenance.length === 0) {
-         anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Concept missing provenance' });
+      const concept = payload as Record<string, unknown>;
+      if (!concept.provenance || !Array.isArray(concept.provenance) || concept.provenance.length === 0) {
+        anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Concept missing provenance' });
       }
-      if (!concept.currentHolderCellId) {
-         anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Concept missing currentHolderCellId' });
+      if (!concept.originatingCellId || typeof concept.originatingCellId !== 'string' || concept.originatingCellId.trim() === '') {
+        anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Concept missing originatingCellId' });
+      }
+      if (!concept.currentHolderCellId || typeof concept.currentHolderCellId !== 'string' || concept.currentHolderCellId.trim() === '') {
+        anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Concept missing currentHolderCellId' });
       }
     }
 
     if (type === 'RELATION' && anomalies.length === 0) {
-      const relation = payload as any;
-      if (!relation.subjectConceptId || !relation.objectConceptId) {
-         anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Relation missing subject or object' });
+      const relation = payload as Record<string, unknown>;
+      if (!relation.subjectConceptId || !relation.objectConceptId || typeof relation.subjectConceptId !== 'string' || typeof relation.objectConceptId !== 'string') {
+        anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Relation missing subject or object' });
       }
-      if (!relation.currentHolderCellId) {
-         anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Relation missing currentHolderCellId' });
+      if (!relation.originatingCellId || typeof relation.originatingCellId !== 'string' || relation.originatingCellId.trim() === '') {
+        anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Relation missing originatingCellId' });
+      }
+      if (!relation.currentHolderCellId || typeof relation.currentHolderCellId !== 'string' || relation.currentHolderCellId.trim() === '') {
+        anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Relation missing currentHolderCellId' });
+      }
+      if (!relation.provenance || !Array.isArray(relation.provenance) || relation.provenance.length === 0) {
+        anomalies.push({ component: 'P5_REPRESENTATION', issue: 'Relation missing provenance' });
       }
     }
 
@@ -87,11 +97,16 @@ export class ArchitecturalCompatibilityValidator {
   private validateComputeOwnership(child: CellState, anomalies: Array<{component: string, issue: string}>) {
     if (child.computationalCapability.partitions) {
       for (const part of child.computationalCapability.partitions) {
-        if (part.cellIdentity !== child.cellIdentity) {
+        if (!part.cellIdentity || typeof part.cellIdentity !== 'string' || part.cellIdentity.trim() === '') {
           anomalies.push({ 
-             component: 'R3_COMPUTE', 
-             issue: `Compute partition ${part.partitionId} owned by ${part.cellIdentity}, but cell is ${child.cellIdentity}` 
-           });
+            component: 'R3_COMPUTE', 
+            issue: `Compute partition ${part.partitionId} has missing or empty cellIdentity` 
+          });
+        } else if (part.cellIdentity !== child.cellIdentity) {
+          anomalies.push({ 
+            component: 'R3_COMPUTE', 
+            issue: `Compute partition ${part.partitionId} owned by ${part.cellIdentity}, but cell is ${child.cellIdentity}` 
+          });
         }
       }
     }
@@ -131,7 +146,7 @@ export class ArchitecturalCompatibilityValidator {
     }
 
     const validateChildLineage = (child: CellState, childName: string) => {
-      if (!child.provenance || child.provenance.length === 0) {
+      if (!child.provenance || !Array.isArray(child.provenance) || child.provenance.length === 0) {
         anomalies.push({
           component: 'R7_LINEAGE',
           issue: `Child ${child.cellIdentity} has empty provenance`
@@ -153,6 +168,53 @@ export class ArchitecturalCompatibilityValidator {
     validateChildLineage(result.childB, 'childB');
   }
 
+  /**
+   * Recursively traverses nested structures (objects and arrays) to find
+   * and visit cognitive representations, ensuring deep nested validation.
+   */
+  private scanRepresentations(
+    root: unknown,
+    basePath: string,
+    onRepresentation: (obj: Record<string, unknown>, path: string) => void
+  ): void {
+    const visited = new Set<unknown>();
+
+    const traverse = (current: unknown, path: string) => {
+      if (current === null || typeof current !== 'object') {
+        return;
+      }
+      if (visited.has(current)) {
+        return;
+      }
+      visited.add(current);
+
+      if (Array.isArray(current)) {
+        for (let i = 0; i < current.length; i++) {
+          traverse(current[i], `${path}[${i}]`);
+        }
+        return;
+      }
+
+      const obj = current as Record<string, unknown>;
+
+      const hasConceptMarker = typeof obj.conceptId === 'string' && obj.conceptId.trim() !== '';
+      const hasRelationMarker = typeof obj.relationId === 'string' && obj.relationId.trim() !== '';
+      const hasOwnershipMarker = ('originatingCellId' in obj) || ('currentHolderCellId' in obj);
+
+      if (hasConceptMarker || hasRelationMarker || hasOwnershipMarker) {
+        onRepresentation(obj, path);
+      }
+
+      for (const [k, v] of Object.entries(obj)) {
+        if (v !== null && typeof v === 'object') {
+          traverse(v, path ? `${path}.${k}` : k);
+        }
+      }
+    };
+
+    traverse(root, basePath);
+  }
+
   private validateCognitiveContinuity(child: CellState, anomalies: Array<{component: string, issue: string}>) {
     if (!child.knowledgeState || !child.cognitiveState || !child.reasoningState || !child.experienceState) {
        anomalies.push({
@@ -164,33 +226,47 @@ export class ArchitecturalCompatibilityValidator {
 
     // P5 Validation integration and graph-level validation
     const concepts = new Set<string>();
-    const relations: any[] = [];
+    const relations: Array<{ relationId: string; subjectConceptId: string; objectConceptId: string; path: string }> = [];
 
-    // Scan all state sections for concepts and relations
-    const sections = [child.knowledgeState, child.cognitiveState, child.reasoningState, child.experienceState];
+    // Scan all state sections recursively for representations
+    const sections: Array<{ name: string; data: Record<string, unknown> }> = [
+      { name: 'knowledgeState', data: child.knowledgeState },
+      { name: 'cognitiveState', data: child.cognitiveState },
+      { name: 'reasoningState', data: child.reasoningState },
+      { name: 'experienceState', data: child.experienceState }
+    ];
+
     for (const section of sections) {
-      for (const [key, value] of Object.entries(section)) {
-        if (!value || typeof value !== 'object') continue;
-        const obj = value as any;
-        
-        if (obj.conceptId) {
+      this.scanRepresentations(section.data, section.name, (obj, path) => {
+        const isConcept = typeof obj.conceptId === 'string' && obj.conceptId.trim() !== '';
+        const isRelation = typeof obj.relationId === 'string' && obj.relationId.trim() !== '';
+
+        if (isConcept) {
           const res = this.validateP5Representation(obj, 'CONCEPT');
           if (res.status === 'INCOMPATIBLE') {
             anomalies.push(...res.anomalies);
           } else {
-            concepts.add(obj.conceptId);
+            concepts.add(obj.conceptId as string);
           }
-          this.validateInheritedRepresentationOwnership(obj, child, anomalies);
-        } else if (obj.relationId) {
+          this.validateInheritedRepresentationOwnership(obj, child, anomalies, path);
+        } else if (isRelation) {
           const res = this.validateP5Representation(obj, 'RELATION');
           if (res.status === 'INCOMPATIBLE') {
             anomalies.push(...res.anomalies);
           } else {
-            relations.push(obj);
+            relations.push({
+              relationId: obj.relationId as string,
+              subjectConceptId: String(obj.subjectConceptId),
+              objectConceptId: String(obj.objectConceptId),
+              path
+            });
           }
-          this.validateInheritedRepresentationOwnership(obj, child, anomalies);
+          this.validateInheritedRepresentationOwnership(obj, child, anomalies, path);
+        } else {
+          // Tracked representation with ownership fields but no conceptId/relationId
+          this.validateInheritedRepresentationOwnership(obj, child, anomalies, path);
         }
-      }
+      });
     }
 
     // Graph-level validation
@@ -211,23 +287,47 @@ export class ArchitecturalCompatibilityValidator {
   }
 
   private validateInheritedRepresentationOwnership(
-    obj: any, 
+    obj: Record<string, unknown>, 
     child: CellState, 
-    anomalies: Array<{component: string, issue: string}>
+    anomalies: Array<{component: string, issue: string}>,
+    path: string
   ) {
-    if (obj.originatingCellId) {
-      if (obj.originatingCellId === child.cellIdentity) {
-        anomalies.push({
-          component: 'P5_REPRESENTATION',
-          issue: `Representation ${obj.conceptId || obj.relationId} originatingCellId incorrectly overwritten with child identity (${child.cellIdentity})`
-        });
-      }
-      if (obj.currentHolderCellId !== child.cellIdentity) {
-        anomalies.push({
-          component: 'P5_REPRESENTATION',
-          issue: `Representation ${obj.conceptId || obj.relationId} currentHolderCellId (${obj.currentHolderCellId}) does not match child identity (${child.cellIdentity})`
-        });
-      }
+    const idLabel = (typeof obj.conceptId === 'string' && obj.conceptId)
+      || (typeof obj.relationId === 'string' && obj.relationId)
+      || path;
+
+    // 1. Mandatory originatingCellId check (fail-closed: cannot be empty or skipped)
+    if (!('originatingCellId' in obj) || typeof obj.originatingCellId !== 'string' || obj.originatingCellId.trim() === '') {
+      anomalies.push({
+        component: 'P5_REPRESENTATION',
+        issue: `Representation ${idLabel} missing or empty originatingCellId at ${path}`
+      });
+    } else if (obj.originatingCellId === child.cellIdentity) {
+      anomalies.push({
+        component: 'P5_REPRESENTATION',
+        issue: `Representation ${idLabel} originatingCellId incorrectly overwritten with child identity (${child.cellIdentity})`
+      });
+    }
+
+    // 2. Mandatory currentHolderCellId check (fail-closed: cannot be empty or skipped)
+    if (!('currentHolderCellId' in obj) || typeof obj.currentHolderCellId !== 'string' || obj.currentHolderCellId.trim() === '') {
+      anomalies.push({
+        component: 'P5_REPRESENTATION',
+        issue: `Representation ${idLabel} missing or empty currentHolderCellId at ${path}`
+      });
+    } else if (obj.currentHolderCellId !== child.cellIdentity) {
+      anomalies.push({
+        component: 'P5_REPRESENTATION',
+        issue: `Representation ${idLabel} currentHolderCellId (${obj.currentHolderCellId}) does not match child identity (${child.cellIdentity})`
+      });
+    }
+
+    // 3. Mandatory provenance check (fail-closed: cannot be empty or skipped)
+    if (!('provenance' in obj) || !Array.isArray(obj.provenance) || obj.provenance.length === 0 || obj.provenance.some(p => typeof p !== 'string' || p.trim() === '')) {
+      anomalies.push({
+        component: 'P5_REPRESENTATION',
+        issue: `Representation ${idLabel} missing, empty, or invalid provenance at ${path}`
+      });
     }
   }
 }

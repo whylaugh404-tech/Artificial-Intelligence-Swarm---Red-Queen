@@ -166,7 +166,20 @@ export class CognitiveStateManager {
     this.state.lastCognitiveUpdate = new Date().toISOString();
   }
 
+  public syncWithGenome(specialization: string | null): void {
+    if (this.state.specialization !== specialization) {
+      logger.info(this.component, 'syncing_cognitive_state_with_genome', {
+        cellId: this.cellId,
+        oldSpecialization: this.state.specialization,
+        newSpecialization: specialization
+      });
+      this.state.specialization = specialization;
+      this.state.lastCognitiveUpdate = new Date().toISOString();
+    }
+  }
+
   public setMetadata(key: string, value: string): void {
+
     this.state.metadata[key] = value;
     this.state.lastCognitiveUpdate = new Date().toISOString();
   }

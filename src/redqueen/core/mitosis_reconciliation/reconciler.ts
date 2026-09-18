@@ -1,6 +1,10 @@
-import { createHash } from 'crypto';
 import { CellState } from '../state/types';
-import { CellStateManager, canonicalSerialize } from '../state/engine';
+import { CellStateManager } from '../state/engine';
+import {
+  canonicalSerialize,
+  computeCanonicalHash,
+  computeHash
+} from '../canonical';
 import { 
   MitosisSpecification, 
   MitosisReconciliationResult,
@@ -8,8 +12,47 @@ import {
 } from './types';
 import { aggregateCapabilities, updateComputePartition } from '../compute/partition';
 
-export function computeHash(content: string): string {
-  return createHash('sha256').update(content, 'utf8').digest('hex').substring(0, 16);
+export { computeHash };
+
+/**
+ * Recursively rebinds representation ownership from parent to child cell.
+ * Preserves the true originatingCellId while rebinding currentHolderCellId to target child.
+ */
+function recursivelyRebindOwnership(
+  value: unknown,
+  targetCellIdentity: string,
+  parentCellIdentity: string
+): unknown {
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => recursivelyRebindOwnership(item, targetCellIdentity, parentCellIdentity));
+  }
+  const obj = value as Record<string, unknown>;
+  const remapped: Record<string, unknown> = {};
+
+  for (const [k, v] of Object.entries(obj)) {
+    remapped[k] = recursivelyRebindOwnership(v, targetCellIdentity, parentCellIdentity);
+  }
+
+  // Check if this object represents a cognitive concept, relation, or tracked representation
+  const isRepresentation =
+    ('originatingCellId' in obj) ||
+    ('currentHolderCellId' in obj) ||
+    ('conceptId' in obj) ||
+    ('relationId' in obj);
+
+  if (isRepresentation) {
+    const existingOrigin = (typeof obj.originatingCellId === 'string' && obj.originatingCellId.trim() !== '')
+      ? obj.originatingCellId
+      : parentCellIdentity;
+    
+    remapped.originatingCellId = existingOrigin;
+    remapped.currentHolderCellId = targetCellIdentity;
+  }
+
+  return remapped;
 }
 
 export class MitosisReconciler {
@@ -20,22 +63,7 @@ export class MitosisReconciler {
 
     const { parentState, mitosisId } = spec;
 
-    // Deterministic identity base for children
-    const specSignature = computeHash(canonicalSerialize({
-       mitosisId,
-       parentId: parentState.stateId,
-       partDist: spec.partitionDistribution,
-       memDist: spec.memoryDistribution,
-       knowDist: spec.knowledgeDistribution,
-       cogDist: spec.cognitiveDistribution,
-       reasonDist: spec.reasoningDistribution,
-       expDist: spec.experienceDistribution
-    }));
-
-    const childAIdentity = `${parentState.cellIdentity}_A_${specSignature}`;
-    const childBIdentity = `${parentState.cellIdentity}_B_${specSignature}`;
-
-    // Rule: Check overlapping distributions
+    // STEP 1 & 2: Validate deterministic partition and state distribution
     const checkOverlap = (distA: string[], distB: string[], context: string) => {
       if (spec.allowSharedInheritance) return;
       const setA = new Set(distA);
@@ -53,7 +81,43 @@ export class MitosisReconciler {
     checkOverlap(spec.reasoningDistribution.childA, spec.reasoningDistribution.childB, 'reasoningDistribution');
     checkOverlap(spec.experienceDistribution.childA, spec.experienceDistribution.childB, 'experienceDistribution');
 
-    // Distribution helper for shallow state sections
+    // STEP 3: Differentiation profiles
+    const diffProfileA = spec.differentiationProfileA || [];
+    const diffProfileB = spec.differentiationProfileB || [];
+
+    // STEP 4: Deterministic child identity computation (must incorporate differentiation profile)
+    const childASignature = computeCanonicalHash({
+      mitosisId,
+      parentStateId: parentState.stateId,
+      parentCellIdentity: parentState.cellIdentity,
+      branch: 'A',
+      differentiationProfile: diffProfileA,
+      partitionDistribution: [...spec.partitionDistribution.childA].sort(),
+      memoryDistribution: [...spec.memoryDistribution.childA].sort(),
+      knowledgeDistribution: [...spec.knowledgeDistribution.childA].sort(),
+      cognitiveDistribution: [...spec.cognitiveDistribution.childA].sort(),
+      reasoningDistribution: [...spec.reasoningDistribution.childA].sort(),
+      experienceDistribution: [...spec.experienceDistribution.childA].sort()
+    });
+
+    const childBSignature = computeCanonicalHash({
+      mitosisId,
+      parentStateId: parentState.stateId,
+      parentCellIdentity: parentState.cellIdentity,
+      branch: 'B',
+      differentiationProfile: diffProfileB,
+      partitionDistribution: [...spec.partitionDistribution.childB].sort(),
+      memoryDistribution: [...spec.memoryDistribution.childB].sort(),
+      knowledgeDistribution: [...spec.knowledgeDistribution.childB].sort(),
+      cognitiveDistribution: [...spec.cognitiveDistribution.childB].sort(),
+      reasoningDistribution: [...spec.reasoningDistribution.childB].sort(),
+      experienceDistribution: [...spec.experienceDistribution.childB].sort()
+    });
+
+    const childAIdentity = `${parentState.cellIdentity}_A_${childASignature}`;
+    const childBIdentity = `${parentState.cellIdentity}_B_${childBSignature}`;
+
+    // STEP 5: Ownership rebinding on distributed state sections and compute partitions
     const distributeState = (
       source: Record<string, unknown>, 
       distributionKeys: string[], 
@@ -66,17 +130,7 @@ export class MitosisReconciler {
           throw new Error(`Mitosis Reconciliation Failed: Key '${key}' not found in parent ${context}`);
         }
         const val = source[key];
-        if (val && typeof val === 'object') {
-          const item = val as Record<string, unknown>;
-          if ('originatingCellId' in item) {
-            result[key] = {
-              ...item,
-              currentHolderCellId: targetCellIdentity
-            };
-            continue;
-          }
-        }
-        result[key] = val;
+        result[key] = recursivelyRebindOwnership(val, targetCellIdentity, parentState.cellIdentity);
       }
       return result;
     };
@@ -116,7 +170,7 @@ export class MitosisReconciler {
     const childAPartitions = distributePartitions(spec.partitionDistribution.childA, childAIdentity, 'childA');
     const childBPartitions = distributePartitions(spec.partitionDistribution.childB, childBIdentity, 'childB');
 
-    // Inherited states
+    // STEP 6: Inherited states with complete provenance chain
     const childAData: Omit<CellState, 'stateId'> = {
       cellIdentity: childAIdentity,
       genomeReference: parentState.genomeReference,

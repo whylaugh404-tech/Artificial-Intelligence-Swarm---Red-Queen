@@ -297,6 +297,8 @@ export interface MetabolismResult {
   readonly status: MetabolismStatus;
   readonly informationId: string;
   readonly knowledgeId?: string;
+  readonly experienceId?: string;
+  readonly representationIds?: string[];
   readonly cellId: string;
   readonly classification?: InformationCategory;
   readonly relevance?: RelevanceEvaluation;

@@ -43,6 +43,8 @@ export function composeCognitiveState(
   const safeKnowledge = structuredClone(params.knowledgeState);
   const safeExperience = structuredClone(params.experienceState);
   const safeReasoning = structuredClone(params.reasoningState);
+  const safeEpistemic = params.epistemicState ? structuredClone(params.epistemicState) : undefined;
+  const safeSpecialization = params.specialization ? structuredClone(params.specialization) : undefined;
 
   const rawPartitions = Array.isArray(params.computePartitions)
     ? params.computePartitions
@@ -90,6 +92,26 @@ export function composeCognitiveState(
       provenance: params.provenance ?? [`cell:${cellId}:reasoning`]
     }
   ];
+
+  if (safeEpistemic) {
+    compositionInputs.push({
+      inputId: `input_epistemic_${cellId}`,
+      type: CompositionType.CELL_STATE,
+      structure: safeEpistemic,
+      provenance: params.provenance ? [...params.provenance, `cell:${cellId}:epistemic`] : [`cell:${cellId}:epistemic`]
+    });
+  }
+
+  if (safeSpecialization) {
+    compositionInputs.push({
+      inputId: `input_specialization_${cellId}`,
+      type: CompositionType.GENERIC_STRUCTURE,
+      structure: typeof safeSpecialization === 'object' && !Array.isArray(safeSpecialization)
+        ? (safeSpecialization as Record<string, unknown>)
+        : { value: safeSpecialization },
+      provenance: params.provenance ? [...params.provenance, `cell:${cellId}:specialization`] : [`cell:${cellId}:specialization`]
+    });
+  }
 
   for (const part of sortedPartitions) {
     compositionInputs.push({
@@ -207,7 +229,9 @@ export function composeCognitiveState(
       cognitiveState: safeCognitive,
       knowledgeState: safeKnowledge,
       experienceState: safeExperience,
-      reasoningState: safeReasoning
+      reasoningState: safeReasoning,
+      ...(safeEpistemic ? { epistemicState: safeEpistemic } : {}),
+      ...(safeSpecialization ? { specialization: safeSpecialization } : {})
     },
     relationships: relations,
     topology: params.topology,
@@ -216,6 +240,8 @@ export function composeCognitiveState(
       aggregateCapability: aggregateCap
     },
     resultingCognitiveState: derived.resultingCognitiveState,
+    resultVector: derived.resultingCognitiveState.linearComposition?.resultVector,
+    featureProvenance: derived.resultingCognitiveState.linearComposition?.featureProvenance,
     provenance: r1Result.provenance,
     metadata: {
       compositionTimestamp: r1Result.trace.timestamp,
@@ -256,6 +282,8 @@ export function composeFromCellState(
     knowledgeState: cellState.knowledgeState,
     experienceState: cellState.experienceState,
     reasoningState: cellState.reasoningState,
+    epistemicState: (cellState.cognitiveState as Record<string, unknown>)?.epistemicState as Record<string, unknown> | undefined,
+    specialization: cellState.specializations,
     computePartitions: partitions,
     relations: options.relations,
     topology: options.topology,

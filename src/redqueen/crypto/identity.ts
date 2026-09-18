@@ -41,6 +41,23 @@ export class IdentityCrypto {
   }
 
   /**
+   * Validates if the provided private and public keys are a valid cryptographic pair.
+   */
+  isValidKeyPair(privateKeyPem: string, publicKeyPem: string): boolean {
+    if (!privateKeyPem || !publicKeyPem) return false;
+    try {
+      const pub = crypto.createPublicKey(publicKeyPem.trim());
+      const priv = crypto.createPrivateKey(privateKeyPem.trim());
+      if (pub.asymmetricKeyType !== 'ed25519' || priv.asymmetricKeyType !== 'ed25519') return false;
+      const testPayload = 'redqueen-keypair-validation';
+      const signature = crypto.sign(null, Buffer.from(testPayload), priv);
+      return crypto.verify(null, Buffer.from(testPayload), pub, signature);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
    * Derives a stable Node ID from a public key.
    * Uses SHA-256 hash of the normalized PEM formatted public key.
    */

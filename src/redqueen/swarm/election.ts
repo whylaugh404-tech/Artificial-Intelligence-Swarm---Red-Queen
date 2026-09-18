@@ -42,6 +42,12 @@ export class ElectionManager {
     }, 500);
   }
 
+  public start() {
+    if (!this.timer) {
+      this.startElectionTimer();
+    }
+  }
+
   public stop() {
     if (this.timer) {
       clearInterval(this.timer);

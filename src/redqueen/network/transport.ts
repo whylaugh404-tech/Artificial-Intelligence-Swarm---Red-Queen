@@ -20,6 +20,7 @@ export class P2PTransport {
   private messageListeners: ((msg: NetworkMessage) => void)[] = [];
   private peerConnectedListeners: ((peer: Peer) => void)[] = [];
   private peerDisconnectedListeners: ((peer: Peer) => void)[] = [];
+  private pendingRequestListeners = new Set<(msg: NetworkMessage) => void>();
 
   constructor(
     private readonly localNodeId: string,
@@ -36,6 +37,9 @@ export class P2PTransport {
   }
 
   async startServer(port: number): Promise<void> {
+    if (this.wss) {
+      return Promise.resolve();
+    }
     return new Promise((resolve, reject) => {
       try {
         this.wss = new WebSocketServer({ port });
@@ -336,18 +340,21 @@ export class P2PTransport {
             clearTimeout(timeout);
             this.activePendingTimers.delete(timeout);
           }
+          this.pendingRequestListeners.delete(listener);
           this.messageListeners = this.messageListeners.filter(l => l !== listener);
           resolve(msg);
         }
       };
 
       timeout = setTimeout(() => {
+        this.pendingRequestListeners.delete(listener);
         this.messageListeners = this.messageListeners.filter(l => l !== listener);
         if (timeout) this.activePendingTimers.delete(timeout);
         reject(new Error(`Request ${msgId} to peer ${targetNodeId} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       this.activePendingTimers.add(timeout);
 
+      this.pendingRequestListeners.add(listener);
       this.messageListeners.push(listener);
     });
   }
@@ -375,9 +382,13 @@ export class P2PTransport {
       }
       this.wss = null;
     }
-    this.messageListeners = [];
-    this.peerConnectedListeners = [];
-    this.peerDisconnectedListeners = [];
+
+    // Clean up temporary request listeners without wiping permanent subsystem listeners
+    for (const listener of this.pendingRequestListeners) {
+      this.messageListeners = this.messageListeners.filter(l => l !== listener);
+    }
+    this.pendingRequestListeners.clear();
+
     logger.info(this.component, 'transport_stopped');
   }
 

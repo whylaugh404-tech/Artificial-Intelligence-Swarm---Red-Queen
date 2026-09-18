@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import {
   CommunicationProfile,
   ComputePartition,
@@ -8,40 +7,100 @@ import {
 } from './types';
 import { CellComputationalCapability } from '../state/types';
 import { logger } from '../logger';
+import {
+  canonicalSerialize,
+  computeCanonicalHash,
+  computeHash,
+  deepFreeze
+} from '../canonical';
+
+export { canonicalSerialize, computeHash, deepFreeze };
 
 /**
- * Deterministic canonical serialization:
- * Recursively sorts object keys so { a: 1, b: 2 } and { b: 2, a: 1 } yield identical strings.
+ * Detailed breakdown of collective capacity metrics.
  */
-export function canonicalSerialize(obj: unknown): string {
-  if (obj === null || obj === undefined) return 'null';
-  if (typeof obj !== 'object') return JSON.stringify(obj);
-  if (Array.isArray(obj)) {
-    return `[${obj.map(canonicalSerialize).join(',')}]`;
-  }
-  const keys = Object.keys(obj as Record<string, unknown>).sort();
-  const parts = keys.map(k => `${JSON.stringify(k)}:${canonicalSerialize((obj as Record<string, unknown>)[k])}`);
-  return `{${parts.join(',')}}`;
+export interface CollectiveCapacityDetails {
+  nominalCapacity: number;
+  effectiveCapacity: number;
+  coordinationEfficiency: number;
+  latencyPenalty: number;
+  heterogeneityPenalty: number;
+  concurrencyScalingFactor: number;
 }
 
 /**
- * 16-character SHA-256 hash digest.
+ * Calculates effective collective capacity for a set of compute partitions.
+ * Refuses the naive assumption that sum(capacity) equals effective collective capacity.
+ * Attenuation model accounts for:
+ * 1. Concurrency coordination overhead across N partitions (Universal Scalability Law / Amdahl).
+ * 2. Communication latency and reliability overhead.
+ * 3. Heterogeneous architecture translation overhead.
+ * 4. Partition availability boundaries.
  */
-export function computeHash(content: string): string {
-  return createHash('sha256').update(content, 'utf8').digest('hex').substring(0, 16);
-}
-
-/**
- * Recursive deep freeze for strict immutability.
- */
-export function deepFreeze<T>(obj: T): T {
-  if (obj && typeof obj === 'object') {
-    Object.keys(obj as Record<string, unknown>).forEach(prop => {
-      deepFreeze((obj as Record<string, unknown>)[prop]);
-    });
-    Object.freeze(obj);
+export function calculateEffectiveCollectiveCapacity(
+  partitions: readonly ComputePartition[]
+): CollectiveCapacityDetails {
+  if (partitions.length === 0) {
+    return {
+      nominalCapacity: 0,
+      effectiveCapacity: 0,
+      coordinationEfficiency: 1,
+      latencyPenalty: 0,
+      heterogeneityPenalty: 0,
+      concurrencyScalingFactor: 1
+    };
   }
-  return obj;
+
+  const nominalCapacity = partitions.reduce((sum, p) => sum + p.capacity, 0);
+
+  if (partitions.length === 1) {
+    const p = partitions[0];
+    const reliability = p.communicationProfile.reliability;
+    const availability = p.availability;
+    const efficiency = availability * reliability;
+    const effective = Math.round(p.capacity * efficiency * 100) / 100;
+    return {
+      nominalCapacity,
+      effectiveCapacity: effective,
+      coordinationEfficiency: Math.round(efficiency * 10000) / 10000,
+      latencyPenalty: 0,
+      heterogeneityPenalty: 0,
+      concurrencyScalingFactor: 1
+    };
+  }
+
+  // 1. Concurrency coordination overhead: E_scale = 1 / (1 + beta * (N - 1))
+  const n = partitions.length;
+  const beta = 0.04; // 4% coordination overhead per additional partition
+  const concurrencyScalingFactor = 1 / (1 + beta * (n - 1));
+
+  // 2. Communication Latency & Reliability factor
+  const avgLatency = partitions.reduce((sum, p) => sum + p.communicationProfile.latency, 0) / n;
+  const avgReliability = partitions.reduce((sum, p) => sum + p.communicationProfile.reliability, 0) / n;
+  const latencyFactor = 1 / (1 + 0.005 * avgLatency);
+  const commFactor = latencyFactor * avgReliability;
+  const latencyPenalty = Math.round((1 - latencyFactor) * 10000) / 10000;
+
+  // 3. Heterogeneity penalty: heterogeneous architectures require translation / dispatch overhead
+  const architectures = new Set(partitions.map(p => p.architecture));
+  const heterogeneityPenalty = architectures.size > 1 ? 0.08 : 0; // 8% penalty if mixed architectures
+  const heterogeneityFactor = 1 - heterogeneityPenalty;
+
+  // 4. Availability factor: effective throughput is governed by collective availability
+  const avgAvailability = partitions.reduce((sum, p) => sum + p.availability, 0) / n;
+
+  // Total coordination efficiency
+  const totalEfficiency = concurrencyScalingFactor * commFactor * heterogeneityFactor * avgAvailability;
+  const effectiveCapacity = Math.round(nominalCapacity * totalEfficiency * 100) / 100;
+
+  return {
+    nominalCapacity,
+    effectiveCapacity,
+    coordinationEfficiency: Math.round(totalEfficiency * 10000) / 10000,
+    latencyPenalty,
+    heterogeneityPenalty,
+    concurrencyScalingFactor: Math.round(concurrencyScalingFactor * 10000) / 10000
+  };
 }
 
 /**
@@ -68,11 +127,11 @@ export function generatePartitionSemanticPayload(input: CreateComputePartitionIn
 }
 
 /**
- * Computes deterministic semantic partition ID.
+ * Computes deterministic semantic partition ID with full 256-bit SHA-256 hash.
  */
 export function computePartitionId(input: CreateComputePartitionInput): string {
   const semanticPayload = generatePartitionSemanticPayload(input);
-  return `part_${computeHash(canonicalSerialize(semanticPayload))}`;
+  return `part_${computeCanonicalHash(semanticPayload)}`;
 }
 
 /**
@@ -115,6 +174,7 @@ export function updateComputePartition(
 
 /**
  * Integrates multiple ComputePartitions into a canonical CellComputationalCapability (R2 compatible).
+ * Calculates realistic effective collective capacity rather than assuming sum(capacity).
  */
 export function aggregateCapabilities(
   partitions: ComputePartition[],
@@ -131,7 +191,11 @@ export function aggregateCapabilities(
         bandwidth: 0,
         latency: 0,
         topology: 'none',
-        reliability: 1
+        reliability: 1,
+        nominalCapacity: 0,
+        effectiveCollectiveCapacity: 0,
+        coordinationEfficiency: 1,
+        isDerivedSummary: true
       },
       partitions: []
     };
@@ -140,7 +204,6 @@ export function aggregateCapabilities(
   // Sort partitions canonically by partitionId
   const sortedPartitions = [...partitions].sort((a, b) => a.partitionId.localeCompare(b.partitionId));
 
-  const totalCapacity = sortedPartitions.reduce((sum, p) => sum + p.capacity, 0);
   const totalParallelism = sortedPartitions.reduce((sum, p) => sum + p.parallelism, 0);
   const totalMemory = sortedPartitions.reduce((sum, p) => sum + p.memory, 0);
   const avgAvailability = sortedPartitions.reduce((sum, p) => sum + p.availability, 0) / sortedPartitions.length;
@@ -155,6 +218,9 @@ export function aggregateCapabilities(
   const avgReliability = sortedPartitions.reduce((sum, p) => sum + p.communicationProfile.reliability, 0) / sortedPartitions.length;
   const topologies = Array.from(new Set(sortedPartitions.map(p => p.communicationProfile.topology))).sort().join('+');
 
+  // Compute realistic collective capacity
+  const capacityDetails = calculateEffectiveCollectiveCapacity(sortedPartitions);
+
   // Aggregate representasi adalah 'derived operational summary', 
   // bukan jaminan 'actual composed performance' layaknya super CPU fisik.
   const communicationProfile: Record<string, unknown> = {
@@ -162,12 +228,18 @@ export function aggregateCapabilities(
     latency: avgLatency,
     topology: topologies,
     reliability: avgReliability,
+    nominalCapacity: capacityDetails.nominalCapacity,
+    effectiveCollectiveCapacity: capacityDetails.effectiveCapacity,
+    coordinationEfficiency: capacityDetails.coordinationEfficiency,
+    latencyPenalty: capacityDetails.latencyPenalty,
+    heterogeneityPenalty: capacityDetails.heterogeneityPenalty,
+    concurrencyScalingFactor: capacityDetails.concurrencyScalingFactor,
     isDerivedSummary: true
   };
 
   return {
     architecture: overrides?.architecture ?? architecture,
-    capacity: overrides?.capacity ?? totalCapacity,
+    capacity: overrides?.capacity ?? capacityDetails.effectiveCapacity,
     parallelism: overrides?.parallelism ?? totalParallelism,
     memoryLimit: overrides?.memoryLimit ?? totalMemory,
     availability: overrides?.availability ?? avgAvailability,

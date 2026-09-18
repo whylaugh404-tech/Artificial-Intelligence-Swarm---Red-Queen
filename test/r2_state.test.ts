@@ -33,7 +33,7 @@ describe('R2: Cell Cognitive-Computational State', () => {
     const state2 = stateManager.createInitialState(baseStateData);
     
     expect(state1.stateId).toBe(state2.stateId);
-    expect(state1.stateId).toMatch(/^state_[a-f0-9]{16}$/);
+    expect(state1.stateId).toMatch(/^state_[a-f0-9]{64}$/);
 
     // Key order should not affect identity (canonical serialization)
     const baseStateDataReordered = {
@@ -108,7 +108,7 @@ describe('R2: Cell Cognitive-Computational State', () => {
     expect(transition.transitionType).toBe('LIFECYCLE_CHANGE');
     expect(transition.changedFields).toEqual(['lifecycle']);
     expect(transition.timestamp).toBe('2026-01-01T00:00:00.000Z');
-    expect(transition.transitionId).toMatch(/^trans_[a-f0-9]{16}$/);
+    expect(transition.transitionId).toMatch(/^trans_[a-f0-9]{64}$/);
     
     // Immutability of transition
     expect(() => {

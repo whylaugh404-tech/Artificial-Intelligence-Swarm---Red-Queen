@@ -464,6 +464,8 @@ export class MetabolismEngine {
           status: MetabolismStatus.ACCEPTED,
           informationId: record.informationId,
           knowledgeId: knowledge.knowledgeId,
+          experienceId: storedExperienceId,
+          representationIds: storedRepresentationIds.length > 0 ? storedRepresentationIds : undefined,
           cellId: this.cellId,
           classification: classification.primaryCategory,
           relevance,

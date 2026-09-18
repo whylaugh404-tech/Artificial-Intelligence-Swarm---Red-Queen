@@ -130,6 +130,13 @@ export class SwarmMembershipManager {
     }, 10000);
   }
 
+  public start() {
+    this.isRunning = true;
+    if (!this.expiryCheckInterval) {
+      this.startPeriodicExpiryCheck();
+    }
+  }
+
   public stop() {
     this.isRunning = false;
     if (this.expiryCheckInterval) {

@@ -40,7 +40,7 @@ describe('R3: Digital Compute Partition', () => {
   it('1. ComputePartition valid: should construct a valid partition with all fields', () => {
     const partition = createComputePartition(validPartitionInput);
 
-    expect(partition.partitionId).toMatch(/^part_[a-f0-9]{16}$/);
+    expect(partition.partitionId).toMatch(/^part_[a-f0-9]{64}$/);
     expect(partition.cellIdentity).toBe('cell-alpha');
     expect(partition.name).toBe('Partition 1');
     expect(partition.architecture).toBe('neural-symbolic');
@@ -167,7 +167,7 @@ describe('R3: Digital Compute Partition', () => {
 
     expect(id1).toBe(id2);
     expect(partition.partitionId).toBe(id1);
-    expect(partition.partitionId).toMatch(/^part_[a-f0-9]{16}$/);
+    expect(partition.partitionId).toMatch(/^part_[a-f0-9]{64}$/);
   });
 
   it('4. semantic change → identity berubah: modifies identity upon any semantic modification', () => {
@@ -367,7 +367,12 @@ describe('R3: Digital Compute Partition', () => {
 
     const capability = aggregateCapabilities([p1, p2]);
 
-    expect(capability.capacity).toBe(3000);
+    // Effective collective capacity reflects attenuation rather than naive sum
+    expect(capability.capacity).toBe(2679.49);
+    expect(capability.capacity).toBeLessThan(3000);
+    const commProfile = capability.communicationProfile as Record<string, unknown>;
+    expect(commProfile.nominalCapacity).toBe(3000);
+    expect(commProfile.effectiveCollectiveCapacity).toBe(2679.49);
     expect(capability.parallelism).toBe(12);
     expect(capability.memoryLimit).toBe(12288);
     expect(capability.partitions).toHaveLength(2);
@@ -409,7 +414,7 @@ describe('R3: Digital Compute Partition', () => {
       provenance: ['genesis']
     });
 
-    expect(state.stateId).toMatch(/^state_[a-f0-9]{16}$/);
+    expect(state.stateId).toMatch(/^state_[a-f0-9]{64}$/);
     expect(state.computationalCapability.partitions).toHaveLength(1);
     expect(state.computationalCapability.partitions?.[0].partitionId).toBe(p1.partitionId);
 

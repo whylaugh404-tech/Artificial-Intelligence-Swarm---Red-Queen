@@ -325,5 +325,155 @@ describe('R7: Compatibility Validation (P5/P6)', () => {
         a => a.component === 'P5_REPRESENTATION' && a.issue.includes('originatingCellId incorrectly overwritten')
       )).toBe(true);
     });
+
+    it('24. deeply nested representation structures are scanned recursively and validated', () => {
+      const result = reconciler.reconcile(baseSpec);
+      // Construct a deeply nested valid representation inside knowledgeState
+      const deeplyNestedChildA = {
+        ...result.childA,
+        knowledgeState: {
+          domains: {
+            algebra: {
+              subTopics: [
+                {
+                  concept: {
+                    ...validConcept,
+                    conceptId: 'concept-nested-group',
+                    originatingCellId: 'parent-cell-alpha',
+                    currentHolderCellId: result.childA.cellIdentity,
+                    provenance: ['genesis', 'nested-trace']
+                  }
+                }
+              ]
+            }
+          }
+        }
+      };
+
+      const validation = validator.validateMitosisResult({
+        ...result,
+        childA: deeplyNestedChildA
+      });
+
+      expect(validation.status).toBe('COMPATIBLE');
+    });
+
+    it('25. deeply nested representation with empty originatingCellId fails validation', () => {
+      const result = reconciler.reconcile(baseSpec);
+      const invalidNestedChildA = {
+        ...result.childA,
+        knowledgeState: {
+          hierarchy: {
+            level1: {
+              items: [
+                {
+                  conceptId: 'concept-invalid-origin',
+                  canonicalName: 'Invalid Origin',
+                  description: 'Desc',
+                  category: 'abstract',
+                  sourceKnowledgeIds: ['k1'],
+                  confidence: 0.9,
+                  verificationStatus: 'VERIFIED',
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                  version: 1,
+                  originatingCellId: '', // Empty field! Must not be bypassed!
+                  currentHolderCellId: result.childA.cellIdentity,
+                  provenance: ['genesis']
+                }
+              ]
+            }
+          }
+        }
+      };
+
+      const validation = validator.validateMitosisResult({
+        ...result,
+        childA: invalidNestedChildA
+      });
+
+      expect(validation.status).toBe('INCOMPATIBLE');
+      expect(validation.anomalies.some(
+        a => a.component === 'P5_REPRESENTATION' && a.issue.includes('missing or empty originatingCellId')
+      )).toBe(true);
+    });
+
+    it('26. deeply nested representation with empty currentHolderCellId fails validation', () => {
+      const result = reconciler.reconcile(baseSpec);
+      const invalidNestedChildA = {
+        ...result.childA,
+        knowledgeState: {
+          hierarchy: {
+            level1: {
+              items: [
+                {
+                  conceptId: 'concept-invalid-holder',
+                  canonicalName: 'Invalid Holder',
+                  description: 'Desc',
+                  category: 'abstract',
+                  sourceKnowledgeIds: ['k1'],
+                  confidence: 0.9,
+                  verificationStatus: 'VERIFIED',
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                  version: 1,
+                  originatingCellId: 'parent-cell-alpha',
+                  currentHolderCellId: '  ', // Whitespace/empty!
+                  provenance: ['genesis']
+                }
+              ]
+            }
+          }
+        }
+      };
+
+      const validation = validator.validateMitosisResult({
+        ...result,
+        childA: invalidNestedChildA
+      });
+
+      expect(validation.status).toBe('INCOMPATIBLE');
+      expect(validation.anomalies.some(
+        a => a.component === 'P5_REPRESENTATION' && a.issue.includes('missing or empty currentHolderCellId')
+      )).toBe(true);
+    });
+
+    it('27. deeply nested representation with empty provenance fails validation', () => {
+      const result = reconciler.reconcile(baseSpec);
+      const invalidNestedChildA = {
+        ...result.childA,
+        knowledgeState: {
+          hierarchy: {
+            items: [
+              {
+                conceptId: 'concept-invalid-prov',
+                canonicalName: 'Invalid Prov',
+                description: 'Desc',
+                category: 'abstract',
+                sourceKnowledgeIds: ['k1'],
+                confidence: 0.9,
+                verificationStatus: 'VERIFIED',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                version: 1,
+                originatingCellId: 'parent-cell-alpha',
+                currentHolderCellId: result.childA.cellIdentity,
+                provenance: [] // Empty provenance array! Must not be bypassed!
+              }
+            ]
+          }
+        }
+      };
+
+      const validation = validator.validateMitosisResult({
+        ...result,
+        childA: invalidNestedChildA
+      });
+
+      expect(validation.status).toBe('INCOMPATIBLE');
+      expect(validation.anomalies.some(
+        a => a.component === 'P5_REPRESENTATION' && a.issue.includes('missing, empty, or invalid provenance')
+      )).toBe(true);
+    });
   });
 });

@@ -2,6 +2,7 @@ import { RepresentationVerificationStatus } from '../representation/types';
 import { EpistemicState, EpistemicStatus, SubjectiveOpinion, Context, freezeContext, EpistemicStateSchema, SubjectiveOpinionSchema, ContextSchema } from './types';
 import { Evidence, EvidenceSchema, freezeEvidence } from '../evidence/types';
 import { ComputationResult } from '../computation/types';
+import { computeCanonicalHash } from '../../core/canonical';
 
 export class EpistemicAdapter {
   
@@ -18,9 +19,15 @@ export class EpistemicAdapter {
     // If we only have confidence, we don't make up belief/disbelief/uncertainty.
     // However, verificationStatus CAN determine the EpistemicStatus.
     const status = this.evaluateStatus(verificationStatus);
+    const hash = computeCanonicalHash({
+      status,
+      verificationStatus,
+      context: contextParams,
+      confidence
+    });
 
     return {
-      stateId: `epistemic_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+      stateId: `epistemic_${hash}`,
       status,
       verificationStatus,
       context: freezeContext(contextParams),
@@ -83,9 +90,16 @@ export class EpistemicAdapter {
     contextParams: Context
   ): EpistemicState {
     SubjectiveOpinionSchema.parse(opinion);
+    const status = this.evaluateStatus(verificationStatus, opinion);
+    const hash = computeCanonicalHash({
+      status,
+      verificationStatus,
+      context: contextParams,
+      opinion
+    });
     return {
-      stateId: `epistemic_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
-      status: this.evaluateStatus(verificationStatus, opinion),
+      stateId: `epistemic_${hash}`,
+      status,
       verificationStatus,
       context: freezeContext(contextParams),
       opinion
@@ -113,8 +127,13 @@ export class EpistemicAdapter {
    * Forces the provenance sourceId to 'distributed_computation'.
    */
   public static fromComputationResult(result: ComputationResult, contextParams: Context): Readonly<Evidence> {
+    const evidenceHash = computeCanonicalHash({
+      taskId: result.taskId,
+      status: result.status,
+      completedAt: result.completedAt
+    });
     const evidence: Evidence = {
-      evidenceId: `ev_comp_${result.taskId}_${Date.now()}`,
+      evidenceId: `ev_comp_${result.taskId}_${evidenceHash.substring(0, 16)}`,
       sourceId: 'distributed_computation', // Required by P7 constraints
       observationId: result.taskId,
       timestamp: result.completedAt || new Date().toISOString(),

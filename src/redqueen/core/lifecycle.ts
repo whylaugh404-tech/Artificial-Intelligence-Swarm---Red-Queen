@@ -16,6 +16,7 @@ export class Lifecycle {
   private state: CellState = CellState.CREATED;
   private readonly component = 'lifecycle';
   private shutdownHooks: Array<() => Promise<void>> = [];
+  private transitionQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly cellId: string) {}
 
@@ -38,16 +39,48 @@ export class Lifecycle {
     this.state = targetState;
   }
 
-  async initialize(initFn: () => Promise<void>) {
-    this.transition(CellState.INITIALIZING, [CellState.CREATED, CellState.STOPPED]);
-    try {
-      await initFn();
-      this.transition(CellState.ACTIVE, [CellState.INITIALIZING]);
-    } catch (error) {
-      logger.error(this.component, 'initialization_failed', error, { cellId: this.cellId });
-      this.transition(CellState.STOPPED, [CellState.INITIALIZING]);
-      throw error;
-    }
+  /**
+   * Serializes async lifecycle transitions to prevent transition races.
+   */
+  private serializeTransition<T>(action: () => Promise<T>): Promise<T> {
+    const next = this.transitionQueue.then(action, action);
+    this.transitionQueue = next.then(() => {}, () => {});
+    return next;
+  }
+
+  isTransitioning(): boolean {
+    return (
+      this.state === CellState.INITIALIZING ||
+      this.state === CellState.SHUTTING_DOWN ||
+      this.state === CellState.RECOVERING
+    );
+  }
+
+  async initialize(initFn: () => Promise<void>): Promise<void> {
+    return this.serializeTransition(async () => {
+      if (this.state === CellState.ACTIVE) {
+        logger.debug(this.component, 'initialize_noop_already_active', { cellId: this.cellId });
+        return;
+      }
+      this.transition(CellState.INITIALIZING, [CellState.CREATED, CellState.STOPPED]);
+      try {
+        await initFn();
+        this.transition(CellState.ACTIVE, [CellState.INITIALIZING]);
+      } catch (error) {
+        logger.error(this.component, 'initialization_failed', error, { cellId: this.cellId });
+        // Transition through SHUTTING_DOWN to clean up partial resources safely
+        this.transition(CellState.SHUTTING_DOWN, [CellState.INITIALIZING]);
+        for (const hook of this.shutdownHooks) {
+          try {
+            await hook();
+          } catch (hookErr) {
+            logger.error(this.component, 'shutdown_hook_failed', hookErr, { cellId: this.cellId });
+          }
+        }
+        this.transition(CellState.STOPPED, [CellState.SHUTTING_DOWN]);
+        throw error;
+      }
+    });
   }
 
   suspend(reason: string) {
@@ -75,51 +108,55 @@ export class Lifecycle {
     logger.warn(this.component, 'system_degraded', { cellId: this.cellId, reason });
   }
 
-  async recover(recoverFn: () => Promise<boolean>) {
-    this.transition(CellState.RECOVERING, [CellState.DEGRADED]);
-    try {
-      const success = await recoverFn();
-      if (success) {
-        this.transition(CellState.ACTIVE, [CellState.RECOVERING]);
-      } else {
+  async recover(recoverFn: () => Promise<boolean>): Promise<void> {
+    return this.serializeTransition(async () => {
+      this.transition(CellState.RECOVERING, [CellState.DEGRADED]);
+      try {
+        const success = await recoverFn();
+        if (success) {
+          this.transition(CellState.ACTIVE, [CellState.RECOVERING]);
+        } else {
+          this.transition(CellState.DEGRADED, [CellState.RECOVERING]);
+        }
+      } catch (error) {
+        logger.error(this.component, 'recovery_failed', error, { cellId: this.cellId });
         this.transition(CellState.DEGRADED, [CellState.RECOVERING]);
       }
-    } catch (error) {
-      logger.error(this.component, 'recovery_failed', error, { cellId: this.cellId });
-      this.transition(CellState.DEGRADED, [CellState.RECOVERING]);
-    }
+    });
   }
 
   registerShutdownHook(hook: () => Promise<void>) {
     this.shutdownHooks.push(hook);
   }
 
-  async shutdown() {
-    if (this.state === CellState.STOPPED || this.state === CellState.SHUTTING_DOWN) {
-      return;
-    }
-    
-    this.transition(CellState.SHUTTING_DOWN, [
-      CellState.CREATED,
-      CellState.INITIALIZING,
-      CellState.ACTIVE,
-      CellState.DEGRADED,
-      CellState.RECOVERING,
-      CellState.SUSPENDED,
-      CellState.RETIRED
-    ]);
-    
-    logger.info(this.component, 'shutdown_started', { cellId: this.cellId, hooks: this.shutdownHooks.length });
-    
-    for (const hook of this.shutdownHooks) {
-      try {
-        await hook();
-      } catch (error) {
-        logger.error(this.component, 'shutdown_hook_failed', error, { cellId: this.cellId });
+  async shutdown(): Promise<void> {
+    return this.serializeTransition(async () => {
+      if (this.state === CellState.STOPPED || this.state === CellState.SHUTTING_DOWN) {
+        return;
       }
-    }
-    
-    this.transition(CellState.STOPPED, [CellState.SHUTTING_DOWN]);
-    logger.info(this.component, 'shutdown_complete', { cellId: this.cellId });
+      
+      this.transition(CellState.SHUTTING_DOWN, [
+        CellState.CREATED,
+        CellState.INITIALIZING,
+        CellState.ACTIVE,
+        CellState.DEGRADED,
+        CellState.RECOVERING,
+        CellState.SUSPENDED,
+        CellState.RETIRED
+      ]);
+      
+      logger.info(this.component, 'shutdown_started', { cellId: this.cellId, hooks: this.shutdownHooks.length });
+      
+      for (const hook of this.shutdownHooks) {
+        try {
+          await hook();
+        } catch (error) {
+          logger.error(this.component, 'shutdown_hook_failed', error, { cellId: this.cellId });
+        }
+      }
+      
+      this.transition(CellState.STOPPED, [CellState.SHUTTING_DOWN]);
+      logger.info(this.component, 'shutdown_complete', { cellId: this.cellId });
+    });
   }
 }
