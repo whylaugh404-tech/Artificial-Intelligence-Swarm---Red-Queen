@@ -167,7 +167,11 @@ describe('P7.0 Step 8: Internal World Model', () => {
     evidenceId: 'ev_bench_1',
     sourceId: 'cell_hardware',
     timestamp: '2026-01-01T00:00:00.000Z',
-    provenance: { sourceId: 'cell_hardware', timestamp: '2026-01-01T00:00:00.000Z' },
+    provenance: {
+      sourceId: 'cell_hardware',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      supportingRepresentationIds: ['con_cpu']
+    },
     context: mockContext
   };
 
