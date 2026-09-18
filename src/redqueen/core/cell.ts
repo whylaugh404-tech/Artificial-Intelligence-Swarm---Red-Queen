@@ -112,8 +112,8 @@ export class Cell {
         createdAt: observation.timestamp,
         updatedAt: observation.timestamp,
         confidence: recordConfidence ?? 1.0,
-        hash: '', 
-        provenance: [this.nodeId]
+        hash: recordHash, 
+        provenance: [this.nodeId, sourceId]
       });
 
       // 2. Metabolism -> Knowledge/Experience -> Representation -> Concept
@@ -133,6 +133,8 @@ export class Cell {
       const epistemicConfidence = recordConfidence ?? (metabolismResult.quality?.confidence ?? 0.5);
 
       // 3. Evidence
+      const representationIds = metabolismResult.representationIds || [];
+
       const evidence: Evidence = {
         evidenceId: `ev_${observationId}`,
         sourceId: this.nodeId,
@@ -140,9 +142,14 @@ export class Cell {
         timestamp,
         provenance: {
           sourceId, // dataset/source identifier
-          observationId: String(index), // record identifier/index
+          observationId, // record identifier
           timestamp,
-          supportingRepresentationIds: metabolismResult.representationIds || []
+          derivedFrom: [
+            observationId,
+            ...(metabolismResult.knowledgeId ? [metabolismResult.knowledgeId] : []),
+            ...(metabolismResult.experienceId ? [metabolismResult.experienceId] : [])
+          ],
+          supportingRepresentationIds: representationIds
         },
         context: {
           contextId: `ctx_${computeCanonicalHash({ domain: 'dataset_ingestion', sourceId }).substring(0, 16)}`,
@@ -159,6 +166,7 @@ export class Cell {
         context: evidence.context,
         originatingCellId: this.nodeId
       });
+      await this.cognitiveGraph.insertUnderstanding(understanding);
 
       const worldModel = this.worldModel.compose({
         context: evidence.context,
@@ -176,9 +184,11 @@ export class Cell {
         premises: [
           {
             premiseId: `premise_${recordHash.substring(0, 16)}_${index}`,
-            statement: `Dataset record observed.`,
+            statement: `Dataset record observed from ${sourceId}.`,
             confidence: epistemicConfidence,
-            evidenceIds: [storedEvidence.evidenceId]
+            evidenceIds: [storedEvidence.evidenceId],
+            provenance: [this.nodeId, sourceId, ...(storedEvidence.provenance.derivedFrom || [])],
+            ...(representationIds[0] ? { concept: representationIds[0] } : {})
           }
         ]
       }, this.cognitiveGraph);

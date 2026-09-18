@@ -555,10 +555,43 @@ export class MitosisEngine {
         }
 
         if (shouldInherit) {
+          const inheritanceTag = `inherited_from_${parent.nodeId}_via_${eventId}`;
+          let updatedContent = entry.content;
+          if (entry.content && typeof entry.content === 'object') {
+            updatedContent = { ...entry.content };
+            if (typeof entry.type === 'string' && entry.type.startsWith('COGNITIVE_')) {
+              if (Array.isArray(updatedContent.provenance)) {
+                updatedContent.provenance = Array.from(new Set([...updatedContent.provenance, inheritanceTag]));
+              }
+              if ('currentHolderCellId' in updatedContent || entry.type === 'COGNITIVE_CONCEPT' || entry.type === 'COGNITIVE_RELATION') {
+                updatedContent.currentHolderCellId = childNodeId;
+              }
+              if (entry.type === 'COGNITIVE_EVIDENCE' && updatedContent.provenance) {
+                updatedContent.provenance = {
+                  ...updatedContent.provenance,
+                  derivedFrom: Array.from(new Set([...(updatedContent.provenance.derivedFrom || []), inheritanceTag]))
+                };
+              }
+            } else if (entry.type === 'KNOWLEDGE_RECORD' && Array.isArray(updatedContent.sourceProvenance)) {
+              updatedContent.sourceProvenance = [
+                ...updatedContent.sourceProvenance,
+                {
+                  informationId: updatedContent.knowledgeId,
+                  sourceIdentifier: childNodeId,
+                  originatingCellId: parent.nodeId,
+                  contentHash: updatedContent.sourceContentHashes?.[0] || '',
+                  acquiredAt: new Date().toISOString(),
+                  metabolizedAt: new Date().toISOString()
+                }
+              ];
+            }
+          }
+
           childMemories.push({
             ...entry,
             cellId: childNodeId, // Assign ownership to child
-            provenance: [...(entry.provenance || []), `inherited_from_${parent.nodeId}_via_${eventId}`]
+            content: updatedContent,
+            provenance: [...(entry.provenance || []), inheritanceTag]
           });
           
           if (entry.category === MemoryCategory.SEMANTIC) semanticCount++;

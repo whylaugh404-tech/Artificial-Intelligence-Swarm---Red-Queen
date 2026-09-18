@@ -37,6 +37,9 @@ export class UnderstandingEngine {
   public compose(input: UnderstandingCompositionInput): CognitiveUnderstanding {
     const dependencies: UnderstandingDependency[] = [];
     const provenanceSet = new Set<string>();
+    if (input.originatingCellId) {
+      provenanceSet.add(input.originatingCellId);
+    }
     const evidenceIdsSet = new Set<string>();
     
     let hasConflict = false;
@@ -98,8 +101,14 @@ export class UnderstandingEngine {
           sourceType: 'EVIDENCE',
           role: 'SUPPORT'
         });
+        if (evidence.sourceId) {
+          provenanceSet.add(evidence.sourceId);
+        }
         if (evidence.provenance && evidence.provenance.sourceId) {
           provenanceSet.add(evidence.provenance.sourceId);
+        }
+        if (evidence.provenance && evidence.provenance.derivedFrom) {
+          evidence.provenance.derivedFrom.forEach(d => provenanceSet.add(d));
         }
         evidenceIdsSet.add(evidence.evidenceId);
       }

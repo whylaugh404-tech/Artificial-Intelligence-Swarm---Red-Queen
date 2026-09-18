@@ -160,11 +160,15 @@ export class CognitiveGraph {
       // Merge provenance and update version
       const mergedProvenance = Array.from(new Set([...existing.provenance, ...validated.provenance]));
       const mergedKnowledge = Array.from(new Set([...existing.sourceKnowledgeIds, ...validated.sourceKnowledgeIds]));
+      const mergedExperiences = Array.from(new Set([...(existing.sourceExperienceIds || []), ...(validated.sourceExperienceIds || [])]));
+      const mergedEvidence = Array.from(new Set([...(existing.evidenceIds || []), ...(validated.evidenceIds || [])]));
       const updatedConcept: CognitiveConcept = {
         ...existing,
         description: validated.description.length > existing.description.length ? validated.description : existing.description,
         provenance: mergedProvenance,
         sourceKnowledgeIds: mergedKnowledge,
+        sourceExperienceIds: mergedExperiences,
+        evidenceIds: mergedEvidence.length > 0 ? mergedEvidence : undefined,
         version: existing.version + 1,
         updatedAt: new Date().toISOString(),
         confidence: Math.max(existing.confidence, validated.confidence)
@@ -205,18 +209,17 @@ export class CognitiveGraph {
         rel.predicate === validated.predicate &&
         rel.objectConceptId === validated.objectConceptId
       ) {
-        // Already exists - update confidence if higher
-        if (validated.confidence > rel.confidence) {
-          const updated: CognitiveRelation = {
-            ...rel,
-            confidence: validated.confidence,
-            provenance: Array.from(new Set([...rel.provenance, ...validated.provenance]))
-          };
-          this.relations.set(updated.relationId, updated);
-          await this.persistEntry(updated.relationId, 'COGNITIVE_RELATION', updated, updated.confidence, updated.provenance);
-          return updated;
-        }
-        return rel;
+        const mergedProvenance = Array.from(new Set([...rel.provenance, ...validated.provenance]));
+        const mergedEvidence = Array.from(new Set([...(rel.evidenceIds || []), ...(validated.evidenceIds || [])]));
+        const updated: CognitiveRelation = {
+          ...rel,
+          confidence: Math.max(rel.confidence, validated.confidence),
+          provenance: mergedProvenance,
+          evidenceIds: mergedEvidence.length > 0 ? mergedEvidence : undefined
+        };
+        this.relations.set(updated.relationId, updated);
+        await this.persistEntry(updated.relationId, 'COGNITIVE_RELATION', updated, updated.confidence, updated.provenance);
+        return updated;
       }
     }
 
@@ -869,7 +872,62 @@ export class CognitiveGraph {
     const frozen = freezeEvidence(validated);
     this.evidences.set(frozen.evidenceId, frozen);
     this.edg.addEvidence(frozen);
-    await this.persistEntry(frozen.evidenceId, 'COGNITIVE_EVIDENCE', frozen, 1.0, []);
+
+    const evidenceProvenance = Array.from(new Set([
+      this.cellId,
+      frozen.sourceId,
+      frozen.provenance.sourceId,
+      ...(frozen.provenance.derivedFrom || [])
+    ]));
+    await this.persistEntry(frozen.evidenceId, 'COGNITIVE_EVIDENCE', frozen, frozen.confidence ?? 1.0, evidenceProvenance);
+
+    // Bidirectional linkage: connect evidence to supporting representations and their epistemic states
+    if (frozen.provenance.supportingRepresentationIds && frozen.provenance.supportingRepresentationIds.length > 0) {
+      for (const repId of frozen.provenance.supportingRepresentationIds) {
+        // Concept
+        const concept = this.concepts.get(repId);
+        if (concept) {
+          concept.evidenceIds = Array.from(new Set([...(concept.evidenceIds || []), frozen.evidenceId]));
+          await this.persistEntry(concept.conceptId, 'COGNITIVE_CONCEPT', concept, concept.confidence, concept.provenance);
+
+          if (concept.epistemicStateId) {
+            const es = this.epistemicStates.get(concept.epistemicStateId);
+            if (es) {
+              es.evidenceIds = Array.from(new Set([...(es.evidenceIds || []), frozen.evidenceId]));
+              await this.persistEntry(
+                es.stateId,
+                'EPISTEMIC_STATE',
+                es,
+                es.rawConfidence || 0,
+                [this.cellId, es.context.contextId, ...(es.evidenceIds || [])]
+              );
+            }
+          }
+        }
+
+        // Relation
+        const relation = this.relations.get(repId);
+        if (relation) {
+          relation.evidenceIds = Array.from(new Set([...(relation.evidenceIds || []), frozen.evidenceId]));
+          await this.persistEntry(relation.relationId, 'COGNITIVE_RELATION', relation, relation.confidence, relation.provenance);
+
+          if (relation.epistemicStateId) {
+            const es = this.epistemicStates.get(relation.epistemicStateId);
+            if (es) {
+              es.evidenceIds = Array.from(new Set([...(es.evidenceIds || []), frozen.evidenceId]));
+              await this.persistEntry(
+                es.stateId,
+                'EPISTEMIC_STATE',
+                es,
+                es.rawConfidence || 0,
+                [this.cellId, es.context.contextId, ...(es.evidenceIds || [])]
+              );
+            }
+          }
+        }
+      }
+    }
+
     return frozen;
   }
 
@@ -931,7 +989,13 @@ export class CognitiveGraph {
   public async insertEpistemicState(state: EpistemicState): Promise<EpistemicState> {
     const validated = EpistemicStateSchema.parse(state);
     this.epistemicStates.set(validated.stateId, validated);
-    await this.persistEntry(validated.stateId, 'EPISTEMIC_STATE', validated, validated.rawConfidence || 0, []);
+    const epistemicProvenance = Array.from(new Set([
+      this.cellId,
+      validated.context.contextId,
+      ...(validated.evidenceIds || []),
+      ...(validated.previousStateId ? [validated.previousStateId] : [])
+    ]));
+    await this.persistEntry(validated.stateId, 'EPISTEMIC_STATE', validated, validated.rawConfidence || 0, epistemicProvenance);
     return validated;
   }
 
@@ -1266,14 +1330,21 @@ export class CognitiveGraph {
           case 'COGNITIVE_CONCEPT': {
             const parsed = CognitiveConceptSchema.safeParse(entry.content);
             if (parsed.success) {
-              this.concepts.set(parsed.data.conceptId, parsed.data);
+              const concept = { ...parsed.data };
+              if (entry.provenance && entry.provenance.length > 0) {
+                concept.provenance = Array.from(new Set([...concept.provenance, ...entry.provenance]));
+              }
+              this.concepts.set(concept.conceptId, concept);
             }
             break;
           }
           case 'COGNITIVE_RELATION': {
             const parsed = CognitiveRelationSchema.safeParse(entry.content);
             if (parsed.success) {
-              const rel = parsed.data;
+              const rel = { ...parsed.data };
+              if (entry.provenance && entry.provenance.length > 0) {
+                rel.provenance = Array.from(new Set([...rel.provenance, ...entry.provenance]));
+              }
               this.relations.set(rel.relationId, rel);
               if (!this.outgoingRelations.has(rel.subjectConceptId)) {
                 this.outgoingRelations.set(rel.subjectConceptId, new Set());
@@ -1289,35 +1360,61 @@ export class CognitiveGraph {
           case 'COGNITIVE_ABSTRACTION': {
             const parsed = CognitiveAbstractionSchema.safeParse(entry.content);
             if (parsed.success) {
-              this.abstractions.set(parsed.data.abstractionId, parsed.data);
+              const abs = { ...parsed.data };
+              if (entry.provenance && entry.provenance.length > 0) {
+                abs.provenance = Array.from(new Set([...abs.provenance, ...entry.provenance]));
+              }
+              this.abstractions.set(abs.abstractionId, abs);
             }
             break;
           }
           case 'COGNITIVE_GENERALIZATION': {
             const parsed = CognitiveGeneralizationSchema.safeParse(entry.content);
             if (parsed.success) {
-              this.generalizations.set(parsed.data.generalizationId, parsed.data);
+              const gen = { ...parsed.data };
+              if (entry.provenance && entry.provenance.length > 0) {
+                gen.provenance = Array.from(new Set([...gen.provenance, ...entry.provenance]));
+              }
+              this.generalizations.set(gen.generalizationId, gen);
             }
             break;
           }
           case 'COGNITIVE_ANALOGY': {
             const parsed = CognitiveAnalogySchema.safeParse(entry.content);
             if (parsed.success) {
-              this.analogies.set(parsed.data.analogyId, parsed.data);
+              const an = { ...parsed.data };
+              if (entry.provenance && entry.provenance.length > 0) {
+                an.provenance = Array.from(new Set([...an.provenance, ...entry.provenance]));
+              }
+              this.analogies.set(an.analogyId, an);
             }
             break;
           }
           case 'COGNITIVE_UNDERSTANDING': {
             const parsed = CognitiveUnderstandingSchema.safeParse(entry.content);
             if (parsed.success) {
-              this.understandings.set(parsed.data.understandingId, parsed.data);
+              const und = { ...parsed.data };
+              if (entry.provenance && entry.provenance.length > 0) {
+                und.provenance = Array.from(new Set([...und.provenance, ...entry.provenance]));
+              }
+              this.understandings.set(und.understandingId, und);
             }
             break;
           }
           case 'COGNITIVE_EVIDENCE': {
             const parsed = EvidenceSchema.safeParse(entry.content);
             if (parsed.success) {
-              const frozen = freezeEvidence(parsed.data);
+              const ev = { ...parsed.data };
+              if (entry.provenance && entry.provenance.length > 0) {
+                ev.provenance = {
+                  ...ev.provenance,
+                  derivedFrom: Array.from(new Set([
+                    ...(ev.provenance.derivedFrom || []),
+                    ...entry.provenance.filter(p => p !== ev.sourceId)
+                  ]))
+                };
+              }
+              const frozen = freezeEvidence(ev);
               this.evidences.set(frozen.evidenceId, frozen);
               this.edg.addEvidence(frozen);
             }

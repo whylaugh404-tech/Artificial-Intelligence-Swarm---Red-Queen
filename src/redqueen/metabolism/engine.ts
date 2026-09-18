@@ -124,10 +124,20 @@ export class MetabolismEngine {
           },
           earlyDupCheck.existingKnowledgeId
         );
+        let existingRepresentationIds: string[] | undefined = undefined;
+        if (this.graph && earlyDupCheck.existingKnowledgeId) {
+          const matchedConcepts = this.graph.getAllConcepts().filter(c =>
+            c.sourceKnowledgeIds.includes(earlyDupCheck.existingKnowledgeId!)
+          );
+          if (matchedConcepts.length > 0) {
+            existingRepresentationIds = matchedConcepts.map(c => c.conceptId);
+          }
+        }
         return {
           status: MetabolismStatus.DUPLICATE,
           informationId: record.informationId,
           knowledgeId: earlyDupCheck.existingKnowledgeId,
+          representationIds: existingRepresentationIds,
           cellId: this.cellId,
           reason: earlyDupCheck.reason || 'Duplicate information previously metabolized',
           receivedAt: new Date(startTime).toISOString(),
@@ -306,7 +316,7 @@ export class MetabolismEngine {
           updatedAt: knowledge.updatedAt,
           confidence: knowledge.confidence,
           hash: record.contentHash,
-          provenance: [this.cellId, record.sourceIdentifier],
+          provenance: [this.cellId, record.sourceIdentifier, record.informationId],
           version: knowledge.knowledgeVersion
         };
 
@@ -364,7 +374,7 @@ export class MetabolismEngine {
           updatedAt: experience.timestamp,
           confidence: experience.confidence,
           hash: record.contentHash,
-          provenance: [this.cellId],
+          provenance: [this.cellId, record.sourceIdentifier, knowledge.knowledgeId],
           version: 1
         });
         storedExperienceId = experience.experienceId;
@@ -394,25 +404,35 @@ export class MetabolismEngine {
             }, knowledge.knowledgeId);
 
             for (const c of rep.concepts) {
-              await this.graph.insertConcept(c);
-              storedRepresentationIds.push(c.conceptId);
-              this.cognitiveState.addConceptReference(c.conceptId);
+              const insertedConcept = await this.graph.insertConcept(c);
+              if (!storedRepresentationIds.includes(insertedConcept.conceptId)) {
+                storedRepresentationIds.push(insertedConcept.conceptId);
+              }
+              this.cognitiveState.addConceptReference(insertedConcept.conceptId);
             }
             for (const r of rep.relations) {
-              await this.graph.insertRelation(r);
-              storedRepresentationIds.push(r.relationId);
+              const insertedRel = await this.graph.insertRelation(r);
+              if (!storedRepresentationIds.includes(insertedRel.relationId)) {
+                storedRepresentationIds.push(insertedRel.relationId);
+              }
             }
             for (const a of rep.abstractions) {
-              await this.graph.insertAbstraction(a);
-              storedRepresentationIds.push(a.abstractionId);
+              const insertedAbs = await this.graph.insertAbstraction(a);
+              if (!storedRepresentationIds.includes(insertedAbs.abstractionId)) {
+                storedRepresentationIds.push(insertedAbs.abstractionId);
+              }
             }
             for (const g of rep.generalizations) {
-              await this.graph.insertGeneralization(g);
-              storedRepresentationIds.push(g.generalizationId);
+              const insertedGen = await this.graph.insertGeneralization(g);
+              if (!storedRepresentationIds.includes(insertedGen.generalizationId)) {
+                storedRepresentationIds.push(insertedGen.generalizationId);
+              }
             }
             for (const an of rep.analogies) {
-              await this.graph.insertAnalogy(an);
-              storedRepresentationIds.push(an.analogyId);
+              const insertedAnalogy = await this.graph.insertAnalogy(an);
+              if (!storedRepresentationIds.includes(insertedAnalogy.analogyId)) {
+                storedRepresentationIds.push(insertedAnalogy.analogyId);
+              }
             }
             if (rep.epistemicStates) {
               for (const es of rep.epistemicStates) {
@@ -546,11 +566,34 @@ export class MetabolismEngine {
     try {
       // 1. Provenance check
       const currentProvenance = incomingKnowledge.sourceProvenance;
-      if (!currentProvenance.some((p: any) => p.sourceIdentifier === sourcePeerId)) {
+      if (!currentProvenance || currentProvenance.length === 0) {
+        return {
+          status: MetabolismStatus.REJECTED,
+          informationId: infoId,
+          knowledgeId: incomingKnowledge.knowledgeId,
+          cellId: this.cellId,
+          reason: 'Provenance missing: sourceProvenance array is empty or undefined',
+          receivedAt: new Date(startTime).toISOString(),
+          processedAt: new Date().toISOString(),
+          processingDurationMs: Date.now() - startTime
+        };
+      }
+
+      if (sourcePeerId && !currentProvenance.some((p: any) => p.sourceIdentifier === sourcePeerId || p.originatingCellId === sourcePeerId)) {
         logger.warn(this.component, 'provenance_mismatch', {
           knowledgeId: incomingKnowledge.knowledgeId,
           sourcePeerId
         });
+        return {
+          status: MetabolismStatus.REJECTED,
+          informationId: infoId,
+          knowledgeId: incomingKnowledge.knowledgeId,
+          cellId: this.cellId,
+          reason: `Provenance mismatch: incoming knowledge does not contain claiming sourcePeerId "${sourcePeerId}" in its provenance trail`,
+          receivedAt: new Date(startTime).toISOString(),
+          processedAt: new Date().toISOString(),
+          processingDurationMs: Date.now() - startTime
+        };
       }
 
       // Check if we already have it
@@ -627,24 +670,40 @@ export class MetabolismEngine {
       this.cognitiveState.addKnowledgeReference(assimilatedKnowledge.knowledgeId);
 
       // P5.1: Derive and assimilate cognitive representations
+      const storedRepresentationIds: string[] = [];
       if (this.representationEngine && this.graph) {
         try {
           const rep = await this.representationEngine.extractRepresentations(assimilatedKnowledge, incomingExperience, this.graph);
           for (const c of rep.concepts) {
-            await this.graph.insertConcept(c);
-            this.cognitiveState.addConceptReference(c.conceptId);
+            const insertedConcept = await this.graph.insertConcept(c);
+            if (!storedRepresentationIds.includes(insertedConcept.conceptId)) {
+              storedRepresentationIds.push(insertedConcept.conceptId);
+            }
+            this.cognitiveState.addConceptReference(insertedConcept.conceptId);
           }
           for (const r of rep.relations) {
-            await this.graph.insertRelation(r);
+            const insertedRel = await this.graph.insertRelation(r);
+            if (!storedRepresentationIds.includes(insertedRel.relationId)) {
+              storedRepresentationIds.push(insertedRel.relationId);
+            }
           }
           for (const a of rep.abstractions) {
-            await this.graph.insertAbstraction(a);
+            const insertedAbs = await this.graph.insertAbstraction(a);
+            if (!storedRepresentationIds.includes(insertedAbs.abstractionId)) {
+              storedRepresentationIds.push(insertedAbs.abstractionId);
+            }
           }
           for (const g of rep.generalizations) {
-            await this.graph.insertGeneralization(g);
+            const insertedGen = await this.graph.insertGeneralization(g);
+            if (!storedRepresentationIds.includes(insertedGen.generalizationId)) {
+              storedRepresentationIds.push(insertedGen.generalizationId);
+            }
           }
           for (const an of rep.analogies) {
-            await this.graph.insertAnalogy(an);
+            const insertedAnalogy = await this.graph.insertAnalogy(an);
+            if (!storedRepresentationIds.includes(insertedAnalogy.analogyId)) {
+              storedRepresentationIds.push(insertedAnalogy.analogyId);
+            }
           }
           if (rep.epistemicStates) {
             for (const es of rep.epistemicStates) {
@@ -674,6 +733,7 @@ export class MetabolismEngine {
         status: MetabolismStatus.ACCEPTED,
         informationId: infoId,
         knowledgeId: assimilatedKnowledge.knowledgeId,
+        representationIds: storedRepresentationIds.length > 0 ? storedRepresentationIds : undefined,
         cellId: this.cellId,
         reason: `Successfully assimilated external knowledge`,
         receivedAt: new Date(startTime).toISOString(),
