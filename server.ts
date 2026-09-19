@@ -73,7 +73,7 @@ async function startServer() {
     fs.mkdirSync(dataDir, { recursive: true });
   }
 
-  const cell = new Cell('./data/memory.json', apiKey);
+  const cell = new Cell('./data/memory.json', apiKey, undefined, undefined, undefined, { storageSecret: process.env.REDQUEEN_STORAGE_SECRET || 'dev_secret_key_override_12345678' });
   
   const p2pPort = parseInt(process.env.P2P_PORT || '0', 10);
   if (p2pPort > 0) {
@@ -108,10 +108,10 @@ async function startServer() {
       }));
 
       // Setup cells
-      const orch = new Cell(':memory:', 'bench_orch', undefined, undefined, undefined, { capabilities: ['SWARM_COORDINATION'] as any, specialization: 'ORCHESTRATOR' });
-      const w1 = new Cell(':memory:', 'bench_w1', undefined, undefined, undefined, { capabilities: ['INFO_PROCESSING'] as any, specialization: 'WORKER_ALPHA' });
-      const w2 = new Cell(':memory:', 'bench_w2', undefined, undefined, undefined, { capabilities: ['INFO_PROCESSING'] as any, specialization: 'WORKER_BETA' });
-      const w3 = new Cell(':memory:', 'bench_w3', undefined, undefined, undefined, { capabilities: ['INFO_PROCESSING'] as any, specialization: 'WORKER_GAMMA' });
+      const orch = new Cell(':memory:', 'bench_orch', undefined, undefined, undefined, { storageSecret: 'bench_secret', capabilities: ['SWARM_COORDINATION'] as any, specialization: 'ORCHESTRATOR' });
+      const w1 = new Cell(':memory:', 'bench_w1', undefined, undefined, undefined, { storageSecret: 'bench_secret', capabilities: ['INFO_PROCESSING'] as any, specialization: 'WORKER_ALPHA' });
+      const w2 = new Cell(':memory:', 'bench_w2', undefined, undefined, undefined, { storageSecret: 'bench_secret', capabilities: ['INFO_PROCESSING'] as any, specialization: 'WORKER_BETA' });
+      const w3 = new Cell(':memory:', 'bench_w3', undefined, undefined, undefined, { storageSecret: 'bench_secret', capabilities: ['INFO_PROCESSING'] as any, specialization: 'WORKER_GAMMA' });
 
       await orch.start(41101);
       await w1.start(41102);

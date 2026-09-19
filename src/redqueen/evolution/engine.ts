@@ -7,8 +7,10 @@ import {
   deepFreeze
 } from '../genome';
 import { computeDeterministicHash } from '../cognition/computation/canonical';
-import { MetabolismStatus } from '../metabolism/types';
+import { MetabolismStatus, Experience } from '../metabolism/types';
 import { ComputationStatus } from '../cognition/computation/types';
+import { MemoryCategory, type MemoryStore } from '../memory/store';
+import type { CognitiveDevelopmentResult } from '../cognition/development/engine';
 import {
   FitnessComponents,
   FitnessComponentsSchema,
@@ -28,7 +30,16 @@ import {
   MutationOptions,
   EvolutionCycleOptions,
   ComputationFeedbackTelemetry,
-  ComputationFeedbackTelemetrySchema
+  ComputationFeedbackTelemetrySchema,
+  ExperienceFeedbackTelemetry,
+  ExperienceFeedbackTelemetrySchema,
+  ExperienceEvolutionMetrics,
+  EvolutionTriggerPolicy,
+  EvolutionTriggerPolicySchema,
+  EvolutionTriggerType,
+  EvolutionWarrantEvaluation,
+  PopulationTelemetryMetrics,
+  PopulationTelemetryMetricsSchema
 } from './types';
 import { logger } from '../core/logger';
 
@@ -74,6 +85,9 @@ export class EvolutionEngine {
   private events: Map<string, EvolutionEvent> = new Map();
   private genomeSnapshots: Map<string, CellGenome> = new Map();
   private computationTelemetries: Map<string, ComputationFeedbackTelemetry[]> = new Map();
+  private experienceTelemetries: Map<string, ExperienceFeedbackTelemetry[]> = new Map();
+  private consecutiveFailures: Map<string, number> = new Map();
+  private lastEvolutionTimestamp: Map<string, number> = new Map();
 
   constructor(private cell?: Cell) {}
 
@@ -179,13 +193,33 @@ export class EvolutionEngine {
       experience = total > 0 ? round4(clamp(positive / total)) : 0.5;
     }
 
-    // 7. resourceEfficiency [0.0, 1.0]
+    // 7. resourceEfficiency [0.0, 1.0] default
     let resourceEfficiency = 0.5;
     if (typeof input?.resourceScore === 'number') {
       resourceEfficiency = clamp(input.resourceScore);
     } else if (activeCell.collectiveComputation) {
       const cap = activeCell.collectiveComputation.getCellComputeCapacity(activeCell);
       resourceEfficiency = round4(clamp(cap.availability));
+    }
+
+    // Incorporate recorded experience telemetry if available
+    const expTelemetries = this.experienceTelemetries.get(activeCell.nodeId);
+    if (expTelemetries && expTelemetries.length > 0) {
+      const avgExpFitness = expTelemetries.reduce((sum, t) => sum + t.experienceFitnessScore, 0) / expTelemetries.length;
+      if (input?.experiences && input.experiences.length > 0) {
+        experience = round4(clamp(experience * 0.4 + avgExpFitness * 0.6));
+      } else {
+        experience = round4(clamp(avgExpFitness));
+      }
+
+      // Also adjust reliability and resource efficiency based on experience telemetry
+      const recent = expTelemetries.slice(-10);
+      const avgRobustness = recent.reduce((sum, t) => sum + t.metrics.robustness, 0) / recent.length;
+      const avgEfficiency = recent.reduce((sum, t) => sum + t.metrics.resourceEfficiency, 0) / recent.length;
+      reliability = round4(clamp(reliability * 0.6 + avgRobustness * 0.4));
+      if (typeof input?.resourceScore !== 'number') {
+        resourceEfficiency = round4(clamp(resourceEfficiency * 0.5 + avgEfficiency * 0.5));
+      }
     }
 
     const components: FitnessComponents = {
@@ -648,6 +682,557 @@ export class EvolutionEngine {
       all.push(...list);
     }
     return all;
+  }
+
+  /**
+   * P07: Extracts canonical evolutionary telemetry from an episodic Experience and
+   * optional ontogenetic CognitiveDevelopmentResult.
+   * Enforces mathematical separation: Experience -> Learning Signal -> Evolution Telemetry.
+   */
+  public extractTelemetryFromExperience(
+    experience: Experience,
+    learningResult?: CognitiveDevelopmentResult,
+    context?: { resourceScore?: number; operationalConfidence?: number },
+    targetCell?: Cell
+  ): ExperienceFeedbackTelemetry {
+    const activeCell = targetCell || this.cell;
+    if (!activeCell) {
+      throw new Error('EvolutionEngine: No active Cell provided for telemetry extraction');
+    }
+
+    const cellId = activeCell.nodeId;
+    const lineageId = activeCell.lineage?.lineageId || (activeCell as any).lineageId || 'lineage_default';
+    const generation = activeCell.genome?.generation ?? 0;
+
+    // 1. taskOutcome
+    const taskOutcome = experience.outcome;
+
+    // 2. predictionAccuracy [0.0, 1.0]
+    let predictionAccuracy = 0.5;
+    if (experience.verificationStatus === 'CONFIRMED_BY_WORLD') {
+      predictionAccuracy = 1.0;
+    } else if (experience.verificationStatus === 'CONTRADICTED_BY_WORLD') {
+      predictionAccuracy = 0.0;
+    } else if (experience.verificationStatus === 'VERIFIED') {
+      predictionAccuracy = 0.9;
+    } else if (experience.verificationStatus === 'UNVERIFIED') {
+      predictionAccuracy = 0.5;
+    } else if (experience.outcome === MetabolismStatus.ACCEPTED) {
+      predictionAccuracy = round4(clamp(1.0 - (experience.noveltyScore ?? 0.3) * 0.4));
+    } else {
+      predictionAccuracy = 0.1;
+    }
+
+    // 3. verificationResult
+    const verificationResult = experience.verificationStatus ||
+      (experience.outcome === MetabolismStatus.ACCEPTED ? 'CONFIRMED' : 'REJECTED');
+
+    // 4. confidenceChange [-1.0, 1.0]
+    let confidenceChange = 0.0;
+    const isFailure = experience.outcome === MetabolismStatus.REJECTED ||
+      experience.outcome === MetabolismStatus.FAILED ||
+      experience.verificationStatus === 'CONTRADICTED_BY_WORLD';
+
+    if (isFailure) {
+      confidenceChange = -0.35;
+    } else if (experience.verificationStatus === 'CONFIRMED_BY_WORLD' || experience.outcome === MetabolismStatus.ACCEPTED) {
+      confidenceChange = 0.20;
+    }
+
+    // 5. repeatedFailure
+    const currentFailures = this.consecutiveFailures.get(cellId) || 0;
+    const repeatedFailure = isFailure ? currentFailures + 1 : 0;
+
+    // 6. adaptation (ontogenetic plastic changes)
+    const conceptsAdapted = (learningResult?.conceptsStrengthened.length || 0) + (learningResult?.conceptsWeakened.length || 0);
+    const relationsAdapted = (learningResult?.relationsStrengthened.length || 0) + (learningResult?.relationsWeakened.length || 0);
+    const conflictsDetected = learningResult?.conflictsDetected || (experience.verificationStatus === 'CONTRADICTED_BY_WORLD' ? 1 : 0);
+    const adaptationMagnitude = round4(clamp(
+      (conceptsAdapted + relationsAdapted) * 0.1 + (conflictsDetected > 0 ? 0.3 : 0.0)
+    ));
+
+    // 7. resourceEfficiency [0.0, 1.0]
+    let resourceEfficiency = 0.8;
+    if (typeof context?.resourceScore === 'number') {
+      resourceEfficiency = clamp(context.resourceScore);
+    } else if (activeCell.collectiveComputation) {
+      resourceEfficiency = round4(clamp(activeCell.collectiveComputation.getCellComputeCapacity(activeCell).availability));
+    }
+
+    // 8. robustness [0.0, 1.0]
+    const robustness = round4(clamp(1.0 - conflictsDetected * 0.25));
+
+    // 9. knowledgeOutcome
+    const conceptsCount = activeCell.cognitiveGraph ? activeCell.cognitiveGraph.getAllConcepts().length : 0;
+    const relationsCount = activeCell.cognitiveGraph ? activeCell.cognitiveGraph.getAllRelations().length : 0;
+    const lessonsCount = experience.lessonsDerived ? experience.lessonsDerived.length : 0;
+
+    const metrics: ExperienceEvolutionMetrics = {
+      taskOutcome,
+      predictionAccuracy,
+      verificationResult,
+      confidenceChange,
+      repeatedFailure,
+      adaptation: {
+        conceptsAdapted,
+        relationsAdapted,
+        conflictsDetected,
+        adaptationMagnitude
+      },
+      resourceEfficiency,
+      robustness,
+      knowledgeOutcome: {
+        conceptsCount,
+        relationsCount,
+        lessonsCount
+      }
+    };
+
+    // Experience fitness score [0.0, 1.0]
+    const outcomeScore = isFailure ? 0.1 : (experience.confidence ?? 0.8);
+    const experienceFitnessScore = round4(clamp(
+      predictionAccuracy * 0.30 +
+      robustness * 0.25 +
+      resourceEfficiency * 0.20 +
+      outcomeScore * 0.25
+    ));
+
+    const timestamp = new Date().toISOString();
+    const hashData = {
+      cellId,
+      lineageId,
+      generation,
+      experienceId: experience.experienceId,
+      learningId: learningResult ? `learn_${experience.experienceId}` : undefined,
+      metrics,
+      experienceFitnessScore,
+      timestamp
+    };
+    const deterministicHash = createHash('sha256').update(JSON.stringify(hashData)).digest('hex');
+    const telemetryId = `telem_exp_${deterministicHash.substring(0, 24)}`;
+
+    const provenance = Array.from(new Set([
+      cellId,
+      experience.experienceId,
+      ...((experience as any).provenance || []),
+      'EXPERIENCE_EVOLUTION_TELEMETRY'
+    ]));
+
+    const telemetry: ExperienceFeedbackTelemetry = {
+      telemetryId,
+      cellId,
+      lineageId,
+      generation,
+      experienceId: experience.experienceId,
+      learningId: learningResult ? `learn_${experience.experienceId}` : undefined,
+      metrics,
+      experienceFitnessScore,
+      timestamp,
+      provenance,
+      deterministicHash
+    };
+
+    return ExperienceFeedbackTelemetrySchema.parse(telemetry);
+  }
+
+  /**
+   * P07: Records experience evolutionary telemetry.
+   * Telemetry is accumulated for phylogenetic evaluation without mutating the genome immediately.
+   */
+  public async recordExperienceTelemetry(
+    telemetry: ExperienceFeedbackTelemetry,
+    persistToMemory = true
+  ): Promise<void> {
+    ExperienceFeedbackTelemetrySchema.parse(telemetry);
+
+    const existing = this.experienceTelemetries.get(telemetry.cellId) || [];
+    existing.push(Object.freeze({ ...telemetry }));
+    this.experienceTelemetries.set(telemetry.cellId, existing);
+
+    // Update consecutive failures tracking
+    const isFailure = telemetry.metrics.taskOutcome === MetabolismStatus.REJECTED ||
+      telemetry.metrics.taskOutcome === MetabolismStatus.FAILED ||
+      telemetry.metrics.verificationResult === 'CONTRADICTED_BY_WORLD';
+
+    if (isFailure) {
+      const current = this.consecutiveFailures.get(telemetry.cellId) || 0;
+      this.consecutiveFailures.set(telemetry.cellId, current + 1);
+    } else {
+      this.consecutiveFailures.set(telemetry.cellId, 0);
+    }
+
+    // Persist to cell memory if available
+    const activeCell = this.cell;
+    const store = (activeCell as any)?.memory || (activeCell as any)?.memoryStore;
+    if (persistToMemory && store && typeof store.put === 'function') {
+      try {
+        await store.put({
+          id: `telem_exp_${telemetry.telemetryId.replace(/[^a-zA-Z0-9_]/g, '')}`,
+          cellId: telemetry.cellId,
+          category: MemoryCategory.PROCEDURAL,
+          type: 'experience_evolution_telemetry',
+          content: telemetry,
+          hash: telemetry.deterministicHash,
+          provenance: telemetry.provenance,
+          source: 'evolution_engine',
+          createdAt: telemetry.timestamp,
+          updatedAt: telemetry.timestamp,
+          confidence: telemetry.experienceFitnessScore
+        });
+      } catch (err) {
+        logger.warn(COMPONENT, 'failed_to_persist_experience_telemetry', {
+          telemetryId: telemetry.telemetryId,
+          error: (err as Error).message
+        });
+      }
+    }
+  }
+
+  /**
+   * Returns all recorded experience evolutionary telemetries for a cell or all cells.
+   */
+  public getExperienceTelemetry(cellId?: string): ExperienceFeedbackTelemetry[] {
+    if (cellId) {
+      return [...(this.experienceTelemetries.get(cellId) || [])];
+    }
+    const all: ExperienceFeedbackTelemetry[] = [];
+    for (const list of this.experienceTelemetries.values()) {
+      all.push(...list);
+    }
+    return all;
+  }
+
+  /**
+   * Returns current consecutive failure count for cell.
+   */
+  public getConsecutiveFailures(cellId?: string): number {
+    const id = cellId || this.cell?.nodeId;
+    return id ? (this.consecutiveFailures.get(id) || 0) : 0;
+  }
+
+  /**
+   * Resets consecutive failure count for cell.
+   */
+  public resetConsecutiveFailures(cellId?: string): void {
+    const id = cellId || this.cell?.nodeId;
+    if (id) {
+      this.consecutiveFailures.set(id, 0);
+    }
+  }
+
+  /**
+   * P07: Evaluates whether an evolution cycle is warranted based on accumulated telemetry
+   * and bounded policy triggers.
+   * Guarantees that NOT every experience results in a mutation.
+   */
+  public evaluateEvolutionWarrant(
+    targetCell?: Cell,
+    policyConfig?: Partial<EvolutionTriggerPolicy>
+  ): EvolutionWarrantEvaluation {
+    const activeCell = targetCell || this.cell;
+    if (!activeCell) {
+      throw new Error('EvolutionEngine: No active Cell for warrant evaluation');
+    }
+
+    const policy = EvolutionTriggerPolicySchema.parse(policyConfig || {});
+    const cellId = activeCell.nodeId;
+    const telemetries = this.experienceTelemetries.get(cellId) || [];
+    const consecutiveFailures = this.consecutiveFailures.get(cellId) || 0;
+    const now = Date.now();
+    const lastCycle = this.lastEvolutionTimestamp.get(cellId) || 0;
+
+    const cellFitness = this.evaluateFitness(activeCell).overallFitness;
+    const avgFitness = telemetries.length > 0
+      ? round4(telemetries.reduce((sum, t) => sum + t.experienceFitnessScore, 0) / telemetries.length)
+      : cellFitness;
+
+    const timestamp = new Date().toISOString();
+
+    if (!policy.enabled) {
+      return {
+        warranted: false,
+        reason: 'Evolution trigger policy is disabled',
+        triggerType: EvolutionTriggerType.NONE,
+        telemetryCount: telemetries.length,
+        consecutiveFailures,
+        averageFitnessScore: avgFitness,
+        evaluatedAt: timestamp
+      };
+    }
+
+    // Cooldown check: prevent thrashing
+    if (now - lastCycle < policy.minCooldownMs) {
+      return {
+        warranted: false,
+        reason: `Evolution in cooldown (${now - lastCycle}ms < ${policy.minCooldownMs}ms)`,
+        triggerType: EvolutionTriggerType.NONE,
+        telemetryCount: telemetries.length,
+        consecutiveFailures,
+        averageFitnessScore: avgFitness,
+        evaluatedAt: timestamp
+      };
+    }
+
+    // Trigger Condition 1: Severe repeated failure (phylogenetic intervention required)
+    if (consecutiveFailures >= policy.maxConsecutiveFailures) {
+      return {
+        warranted: true,
+        reason: `Threshold of repeated failures reached (${consecutiveFailures} >= ${policy.maxConsecutiveFailures})`,
+        triggerType: EvolutionTriggerType.CONSECUTIVE_FAILURES,
+        telemetryCount: telemetries.length,
+        consecutiveFailures,
+        averageFitnessScore: avgFitness,
+        evaluatedAt: timestamp
+      };
+    }
+
+    // Trigger Condition 2: Telemetry accumulation window
+    if (telemetries.length >= policy.minTelemetryCount) {
+      // Check significant fitness drop
+      if (cellFitness - avgFitness >= policy.fitnessDropThreshold) {
+        return {
+          warranted: true,
+          reason: `Significant fitness drop detected (${round4(cellFitness - avgFitness)} >= ${policy.fitnessDropThreshold})`,
+          triggerType: EvolutionTriggerType.FITNESS_DROP,
+          telemetryCount: telemetries.length,
+          consecutiveFailures,
+          averageFitnessScore: avgFitness,
+          evaluatedAt: timestamp
+        };
+      }
+
+      // Check adaptation plateau / batch accumulation limit
+      if (telemetries.length >= policy.adaptationPlateauThreshold) {
+        return {
+          warranted: true,
+          reason: `Adaptation batch epoch reached (${telemetries.length} telemetries accumulated)`,
+          triggerType: EvolutionTriggerType.TELEMETRY_WINDOW,
+          telemetryCount: telemetries.length,
+          consecutiveFailures,
+          averageFitnessScore: avgFitness,
+          evaluatedAt: timestamp
+        };
+      }
+    }
+
+    return {
+      warranted: false,
+      reason: 'Evolution bounds not exceeded; maintaining current genomic configuration',
+      triggerType: EvolutionTriggerType.NONE,
+      telemetryCount: telemetries.length,
+      consecutiveFailures,
+      averageFitnessScore: avgFitness,
+      evaluatedAt: timestamp
+    };
+  }
+
+  /**
+   * P07: Triggers an evolution cycle ONLY if warranted by the bounded policy.
+   * If not warranted, returns null without modifying the genome.
+   */
+  public async triggerEvolutionIfWarranted(
+    options: EvolutionCycleOptions & { policy?: Partial<EvolutionTriggerPolicy> },
+    targetCell?: Cell
+  ): Promise<EvolutionEvent | null> {
+    const activeCell = targetCell || this.cell;
+    if (!activeCell) {
+      throw new Error('EvolutionEngine: No active Cell for evolution triggering');
+    }
+
+    const evaluation = this.evaluateEvolutionWarrant(activeCell, options.policy);
+    if (!evaluation.warranted) {
+      logger.debug(COMPONENT, 'evolution_cycle_not_warranted', {
+        cellId: activeCell.nodeId,
+        reason: evaluation.reason
+      });
+      return null;
+    }
+
+    logger.info(COMPONENT, 'triggering_warranted_evolution_cycle', {
+      cellId: activeCell.nodeId,
+      triggerType: evaluation.triggerType,
+      reason: evaluation.reason
+    });
+
+    const cycleOptions: EvolutionCycleOptions = {
+      ...options,
+      seed: options.seed || `seed_${activeCell.nodeId}_${Date.now()}`
+    };
+
+    const event = this.executeEvolutionCycle(cycleOptions, activeCell);
+
+    // Reset failure counter and update cooldown timer
+    this.consecutiveFailures.set(activeCell.nodeId, 0);
+    this.lastEvolutionTimestamp.set(activeCell.nodeId, Date.now());
+
+    // Persist event to memory store
+    const store = (activeCell as any)?.memory || (activeCell as any)?.memoryStore;
+    if (store && typeof store.put === 'function') {
+      try {
+        await store.put({
+          id: `evolution_event_${event.eventId.replace(/[^a-zA-Z0-9_]/g, '')}`,
+          cellId: activeCell.nodeId,
+          category: MemoryCategory.PROCEDURAL,
+          type: 'evolution_event',
+          content: event,
+          hash: event.deterministicHash,
+          provenance: [activeCell.nodeId, event.eventId],
+          source: 'evolution_engine',
+          createdAt: event.timestamp,
+          updatedAt: event.timestamp,
+          confidence: event.currentFitness ? event.currentFitness.overallFitness : 0.5
+        });
+      } catch (err) {
+        logger.warn(COMPONENT, 'failed_to_persist_evolution_event', {
+          eventId: event.eventId,
+          error: (err as Error).message
+        });
+      }
+    }
+
+    return event;
+  }
+
+  /**
+   * Recovers persisted telemetry and events from MemoryStore into the engine state.
+   */
+  public async recoverTelemetry(
+    memoryStore?: MemoryStore,
+    targetCellId?: string
+  ): Promise<number> {
+    const activeCell = this.cell;
+    const store = memoryStore || (activeCell as any)?.memory || (activeCell as any)?.memoryStore;
+    if (!store) return 0;
+    const searchFn = typeof (store as any).search === 'function'
+      ? (store as any).search.bind(store)
+      : typeof (store as any).query === 'function'
+        ? (store as any).query.bind(store)
+        : null;
+    if (!searchFn) return 0;
+
+    const cellId = targetCellId || this.cell?.nodeId;
+    let recoveredCount = 0;
+
+    try {
+      const records = await searchFn({
+        category: MemoryCategory.PROCEDURAL,
+        type: 'experience_evolution_telemetry',
+        cellId
+      });
+
+      for (const record of records) {
+        if (record.content) {
+          const parsed = ExperienceFeedbackTelemetrySchema.safeParse(record.content);
+          if (parsed.success) {
+            const list = this.experienceTelemetries.get(parsed.data.cellId) || [];
+            if (!list.some(t => t.telemetryId === parsed.data.telemetryId)) {
+              list.push(Object.freeze(parsed.data));
+              this.experienceTelemetries.set(parsed.data.cellId, list);
+              recoveredCount++;
+            }
+          }
+        }
+      }
+
+      // Also recover evolution events if any
+      const eventRecords = await searchFn({
+        category: MemoryCategory.PROCEDURAL,
+        type: 'evolution_event',
+        cellId
+      });
+
+      for (const rec of eventRecords) {
+        if (rec.content) {
+          const parsed = EvolutionEventSchema.safeParse(rec.content);
+          if (parsed.success && !this.events.has(parsed.data.eventId)) {
+            this.events.set(parsed.data.eventId, parsed.data);
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn(COMPONENT, 'telemetry_recovery_failed', {
+        error: (err as Error).message
+      });
+    }
+
+    return recoveredCount;
+  }
+
+  /**
+   * P07: Aggregates peer telemetries locally in a decentralized, cell-centric manner.
+   * Guarantees: Red Queen has NO central controller; each cell computes its own
+   * distributed population statistics.
+   */
+  public aggregatePeerTelemetry(
+    peerTelemetries: ExperienceFeedbackTelemetry[]
+  ): PopulationTelemetryMetrics {
+    const cellIds = new Set<string>();
+    const fitnessScores: number[] = [];
+    let failureCount = 0;
+
+    for (const t of peerTelemetries) {
+      cellIds.add(t.cellId);
+      fitnessScores.push(t.experienceFitnessScore);
+      if (
+        t.metrics.taskOutcome === MetabolismStatus.REJECTED ||
+        t.metrics.taskOutcome === MetabolismStatus.FAILED ||
+        t.metrics.verificationResult === 'CONTRADICTED_BY_WORLD'
+      ) {
+        failureCount++;
+      }
+    }
+
+    const totalTelemetries = peerTelemetries.length;
+    if (totalTelemetries === 0) {
+      const emptyHash = createHash('sha256').update('empty_population').digest('hex');
+      return {
+        cellCount: 0,
+        totalTelemetries: 0,
+        averageFitness: 0.5,
+        medianFitness: 0.5,
+        overallFailureRate: 0.0,
+        diversityScore: 1.0,
+        aggregatedAt: new Date().toISOString(),
+        deterministicHash: emptyHash
+      };
+    }
+
+    fitnessScores.sort((a, b) => a - b);
+    const sumFitness = fitnessScores.reduce((a, b) => a + b, 0);
+    const averageFitness = round4(sumFitness / totalTelemetries);
+    const mid = Math.floor(fitnessScores.length / 2);
+    const medianFitness = fitnessScores.length % 2 !== 0
+      ? fitnessScores[mid]
+      : round4((fitnessScores[mid - 1] + fitnessScores[mid]) / 2);
+
+    const overallFailureRate = round4(failureCount / totalTelemetries);
+
+    // Variance-based diversity score
+    const variance = fitnessScores.reduce((acc, val) => acc + Math.pow(val - averageFitness, 2), 0) / totalTelemetries;
+    const diversityScore = round4(clamp(Math.sqrt(variance) * 2.0));
+
+    const aggregatedAt = new Date().toISOString();
+    const hashData = {
+      cellCount: cellIds.size,
+      totalTelemetries,
+      averageFitness,
+      medianFitness,
+      overallFailureRate,
+      diversityScore,
+      aggregatedAt
+    };
+    const deterministicHash = createHash('sha256').update(JSON.stringify(hashData)).digest('hex');
+
+    return PopulationTelemetryMetricsSchema.parse({
+      cellCount: cellIds.size,
+      totalTelemetries,
+      averageFitness,
+      medianFitness,
+      overallFailureRate,
+      diversityScore,
+      aggregatedAt,
+      deterministicHash
+    });
   }
 }
 

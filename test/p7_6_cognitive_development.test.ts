@@ -20,8 +20,8 @@ describe('P7.6 - Cognitive Development', () => {
   beforeEach(async () => {
     if (existsSync(storagePath)) unlinkSync(storagePath);
     if (existsSync(storagePathNeighbor)) unlinkSync(storagePathNeighbor);
-    cell = new Cell(storagePath, 'dummy-key');
-    cellNeighbor = new Cell(storagePathNeighbor, 'dummy-key');
+    cell = new Cell(storagePath, 'dummy-key', undefined, undefined, undefined, { storageSecret: 'test-secret' });
+    cellNeighbor = new Cell(storagePathNeighbor, 'dummy-key', undefined, undefined, undefined, { storageSecret: 'test-secret' });
   });
 
   afterEach(async () => {
@@ -379,5 +379,97 @@ describe('P7.6 - Cognitive Development', () => {
     expect(neighborConcept?.version).toBe(1);
     expect(cellNeighbor.cognitiveGraph.getConcept('concept_cell1')).toBeUndefined();
     expect(cellNeighbor.cognitiveGraph.getAllTransitions().length).toBe(0);
+  });
+
+  it('strengthenBelief() with all undefined evidence confidence MUST NOT increase confidence', async () => {
+    const concept = await cell.cognitiveGraph.executeAtomicDevelopmentUpdate('test_c_1', async () => {
+      return cell.cognitiveGraph.insertConcept({
+        conceptId: 'test_c_1',
+        canonicalName: 'TEST_CONCEPT_1',
+        description: 'A test concept',
+        category: InformationCategory.UNKNOWN,
+        sourceKnowledgeIds: ['k_1'],
+        sourceExperienceIds: [],
+        originatingCellId: cell.nodeId,
+        confidence: 0.1,
+        verificationStatus: RepresentationVerificationStatus.PENDING,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        version: 1,
+        provenance: ['node_1'],
+        metadata: {}
+      });
+    });
+
+    const evidence = [
+      { evidenceId: 'ev_1', confidence: undefined, reason: 'test', type: 'SUPPORTING' },
+      { evidenceId: 'ev_2', confidence: undefined, reason: 'test', type: 'SUPPORTING' }
+    ] as any;
+
+    const result = await cell.cognitiveDevelopment.strengthenBelief(concept.conceptId, dummyContext, evidence, 'test');
+    expect(result.confidence).toBe(0.1);
+  });
+
+  it('strengthenRelation() with all undefined evidence confidence MUST NOT increase confidence', async () => {
+    const concept1 = await cell.cognitiveGraph.executeAtomicDevelopmentUpdate('test_c_2', async () => {
+      return cell.cognitiveGraph.insertConcept({
+        conceptId: 'test_c_2',
+        canonicalName: 'TEST_CONCEPT_2',
+        description: 'A test concept',
+        category: InformationCategory.UNKNOWN,
+        sourceKnowledgeIds: ['k_1'],
+        sourceExperienceIds: [],
+        originatingCellId: cell.nodeId,
+        confidence: 0.5,
+        verificationStatus: RepresentationVerificationStatus.PENDING,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        version: 1,
+        provenance: ['node_1'],
+        metadata: {}
+      });
+    });
+
+    const concept2 = await cell.cognitiveGraph.executeAtomicDevelopmentUpdate('test_c_3', async () => {
+      return cell.cognitiveGraph.insertConcept({
+        conceptId: 'test_c_3',
+        canonicalName: 'TEST_CONCEPT_3',
+        description: 'A test concept',
+        category: InformationCategory.UNKNOWN,
+        sourceKnowledgeIds: ['k_1'],
+        sourceExperienceIds: [],
+        originatingCellId: cell.nodeId,
+        confidence: 0.5,
+        verificationStatus: RepresentationVerificationStatus.PENDING,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        version: 1,
+        provenance: ['node_1'],
+        metadata: {}
+      });
+    });
+
+    const rel = await cell.cognitiveGraph.executeAtomicDevelopmentUpdate('test_r_1', async () => {
+      return cell.cognitiveGraph.insertRelation({
+        relationId: 'test_r_1',
+        subjectConceptId: concept1.conceptId,
+        predicate: CognitiveRelationPredicate.CAUSES,
+        objectConceptId: concept2.conceptId,
+        confidence: 0.1,
+        verificationStatus: RepresentationVerificationStatus.PENDING,
+        createdAt: new Date().toISOString(),
+        originatingCellId: cell.nodeId,
+        provenance: ['node_1'],
+        metadata: {}
+      });
+    });
+
+    const evidence = [
+      { evidenceId: 'ev_3', confidence: undefined, reason: 'test', type: 'SUPPORTING' },
+      { evidenceId: 'ev_4', confidence: undefined, reason: 'test', type: 'SUPPORTING' }
+    ] as any;
+
+    const result = await cell.cognitiveDevelopment.strengthenRelation(rel.relationId, dummyContext, evidence, 'test');
+    expect(result.confidence).toBe(0.1);
   });
 });

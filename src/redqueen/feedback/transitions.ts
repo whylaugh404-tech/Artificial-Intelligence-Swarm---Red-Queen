@@ -31,7 +31,7 @@ import {
 } from './errors';
 import { EpistemicStatus, SubjectiveOpinion } from '../cognition/epistemic/types';
 import { InformationCategory, InformationSourceType, MetabolismStatus, NoveltyClassification } from '../metabolism/types';
-import { FitnessComponents } from '../evolution/types';
+import { FitnessComponents, ExperienceEvolutionMetrics } from '../evolution/types';
 import { ComputationStatus } from '../cognition/computation/types';
 
 /**
@@ -710,6 +710,152 @@ export function transitionToEvolutionTelemetry(
     sourceDomain: DomainKind.COMPUTATION_RESULT,
     targetDomain: DomainKind.EVOLUTION_TELEMETRY,
     sourceId: computationResult.deterministicId,
+    targetId: evolutionTelemetry.deterministicId,
+    cellId: params.cellId,
+    cycleNumber: params.cycleNumber,
+    timestamp,
+    causalReferences,
+    provenance: evolutionTelemetry.provenance,
+    confidence: params.overallFitness,
+    status: 'COMMITTED',
+    persistenceSemantics: evolutionTelemetry.persistenceSemantics,
+    deterministicHash: computeCanonicalHash(evolutionTelemetry)
+  });
+
+  return { evolutionTelemetry, envelope };
+}
+
+/**
+ * Transition 5b: Experience / Learning Update -> Evolution Telemetry
+ * Bridges cell-level episodic experience and ontogenetic learning into phylogenetic evolution telemetry.
+ * Enforces: Experience ≠ EvolutionTelemetry, LearningUpdate ≠ EvolutionTelemetry, EvolutionTelemetry ≠ MitosisDecision.
+ */
+export function transitionExperienceToEvolutionTelemetry(
+  experience: DomainExperience,
+  params: {
+    cellId: string;
+    lineageId: string;
+    generation: number;
+    cycleNumber: number;
+    learningUpdate?: DomainLearningUpdate;
+    fitnessComponents: FitnessComponents;
+    overallFitness: number;
+    metrics: ExperienceEvolutionMetrics;
+    measurementWindow: { startedAt: string; endedAt: string };
+  }
+): { evolutionTelemetry: DomainEvolutionTelemetry; envelope: DomainTransitionEnvelope } {
+  if (experience.domainKind !== DomainKind.EXPERIENCE) {
+    throw new SemanticBoundaryViolationError(
+      DomainKind.EXPERIENCE,
+      (experience as any).domainKind || 'UNKNOWN',
+      'Evolution telemetry must originate from a valid DomainExperience'
+    );
+  }
+
+  if (params?.learningUpdate && params.learningUpdate.domainKind !== DomainKind.LEARNING_UPDATE) {
+    throw new SemanticBoundaryViolationError(
+      DomainKind.LEARNING_UPDATE,
+      (params.learningUpdate as any).domainKind || 'UNKNOWN',
+      'Optional learning update must be a valid DomainLearningUpdate'
+    );
+  }
+
+  // Reject raw observation masquerading as Experience
+  assertNotObservation(experience.payload, 'ExperienceToEvolutionTelemetryTransition');
+  // Reject MitosisDecision masquerading as input
+  assertNotMitosisDecision(experience.payload, 'ExperienceToEvolutionTelemetryTransition');
+
+  const timestamp = new Date().toISOString();
+  const telemetrySeed = {
+    cellId: params.cellId,
+    lineageId: params.lineageId,
+    generation: params.generation,
+    experienceId: experience.deterministicId,
+    learningId: params.learningUpdate?.deterministicId,
+    cycleNumber: params.cycleNumber,
+    timestamp
+  };
+  const deterministicId = `telem_exp_${computeCanonicalHash(telemetrySeed).substring(0, 24)}`;
+
+  const causalReferences: CausalReference[] = [
+    {
+      antecedentDomain: DomainKind.EXPERIENCE,
+      antecedentId: experience.deterministicId,
+      relation: 'EPISODIC_EXPERIENCE_FITNESS_MEASUREMENT'
+    }
+  ];
+
+  if (params.learningUpdate) {
+    causalReferences.push({
+      antecedentDomain: DomainKind.LEARNING_UPDATE,
+      antecedentId: params.learningUpdate.deterministicId,
+      relation: 'ONTOGENETIC_LEARNING_ADAPTATION_MEASUREMENT'
+    });
+  }
+
+  const mergedProvenance = Array.from(
+    new Set([
+      ...experience.provenance,
+      ...(params.learningUpdate ? params.learningUpdate.provenance : []),
+      params.cellId,
+      'EXPERIENCE_EVOLUTION_TELEMETRY'
+    ])
+  );
+
+  const evolutionTelemetry: DomainEvolutionTelemetry = DomainEvolutionTelemetrySchema.parse({
+    contractVersion: 1,
+    domainKind: DomainKind.EVOLUTION_TELEMETRY,
+    deterministicId,
+    cellId: params.cellId,
+    cycleNumber: params.cycleNumber,
+    timestamp,
+    causalReferences,
+    provenance: mergedProvenance,
+    confidence: params.overallFitness,
+    status: 'RECORDED',
+    persistenceSemantics: {
+      category: MemoryCategory.PROCEDURAL,
+      storageKey: `telemetry_${deterministicId}`,
+      immutable: true,
+      retentionPolicy: 'RETAIN_GENERATIONAL'
+    },
+    payload: {
+      telemetryId: deterministicId,
+      lineageId: params.lineageId,
+      generation: params.generation,
+      fitnessComponents: params.fitnessComponents,
+      overallFitness: params.overallFitness,
+      sourceExperienceId: experience.deterministicId,
+      sourceLearningId: params.learningUpdate?.deterministicId,
+      taskOutcome: params.metrics.taskOutcome,
+      predictionAccuracy: params.metrics.predictionAccuracy,
+      verificationResult: params.metrics.verificationResult,
+      confidenceChange: params.metrics.confidenceChange,
+      repeatedFailure: params.metrics.repeatedFailure,
+      adaptationScore: params.metrics.adaptation.adaptationMagnitude,
+      resourceEfficiency: params.metrics.resourceEfficiency,
+      robustnessScore: params.metrics.robustness,
+      knowledgeOutcomeScore: Math.min(1.0, params.metrics.knowledgeOutcome.conceptsCount / 20.0),
+      metrics: { ...params.metrics },
+      measurementWindow: params.measurementWindow
+    }
+  });
+
+  const transitionSeed = {
+    sourceId: params.learningUpdate
+      ? `${experience.deterministicId},${params.learningUpdate.deterministicId}`
+      : experience.deterministicId,
+    targetId: evolutionTelemetry.deterministicId,
+    cellId: params.cellId,
+    cycleNumber: params.cycleNumber,
+    timestamp
+  };
+
+  const envelope: DomainTransitionEnvelope = DomainTransitionEnvelopeSchema.parse({
+    transitionId: `tx_exp_to_telem_${computeCanonicalHash(transitionSeed).substring(0, 20)}`,
+    sourceDomain: DomainKind.EXPERIENCE,
+    targetDomain: DomainKind.EVOLUTION_TELEMETRY,
+    sourceId: experience.deterministicId,
     targetId: evolutionTelemetry.deterministicId,
     cellId: params.cellId,
     cycleNumber: params.cycleNumber,

@@ -1,0 +1,98 @@
+[
+  {
+    "id": "cell_identity_13ccd290fcd6a5b72909db4e0f4c06a5a0cb8b78b26b1e9efdaf9551061ab828",
+    "cellId": "13ccd290fcd6a5b72909db4e0f4c06a5a0cb8b78b26b1e9efdaf9551061ab828",
+    "category": "PROCEDURAL",
+    "content": {
+      "nodeId": "13ccd290fcd6a5b72909db4e0f4c06a5a0cb8b78b26b1e9efdaf9551061ab828",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEACMELtxFfr5bHEt92gPMF/P5JYeQ35qPV/QjusIonSfM=\n-----END PUBLIC KEY-----",
+      "encryptedPrivateKey": {
+        "ciphertext": "poO928cJQHeWyejyipYcDx79TEln+uj3+E3bD8znHKxcA9jvRV0znCP0uV/B+QH88COR/ndLvytARWRwLnnUz/jMH+iYoStkQifBMrqA97LdA5xYd5gTwRyEDmSLFBp1ZVVSzIKelLXOQdJVApCjTfqvuTsn8A==",
+        "iv": "hBoDZacsyz3JPHgR",
+        "authTag": "udzp/EuwBgpi+1NiK3FIRQ==",
+        "aad": "13ccd290fcd6a5b72909db4e0f4c06a5a0cb8b78b26b1e9efdaf9551061ab828"
+      }
+    },
+    "source": "cell_initialization",
+    "createdAt": "2026-09-19T13:25:44.728Z",
+    "updatedAt": "2026-09-19T13:25:44.728Z",
+    "confidence": 1,
+    "hash": "bdd125c48151c8558f14c45aea083bdfe2555c68983dc7d17e7ff8fbaecbbf18",
+    "provenance": [
+      "13ccd290fcd6a5b72909db4e0f4c06a5a0cb8b78b26b1e9efdaf9551061ab828"
+    ],
+    "version": 1
+  },
+  {
+    "id": "cell_genome_13ccd290fcd6a5b72909db4e0f4c06a5a0cb8b78b26b1e9efdaf9551061ab828",
+    "cellId": "13ccd290fcd6a5b72909db4e0f4c06a5a0cb8b78b26b1e9efdaf9551061ab828",
+    "category": "SEMANTIC",
+    "content": {
+      "genomeId": "0ccfea5b88304abda3a49b7737e9f54f",
+      "parentGenomeId": null,
+      "parentCellId": null,
+      "generation": 0,
+      "lineageId": "335b524d06654cd48411bde1668f1d90",
+      "createdAt": "2026-09-19T13:25:44.723Z",
+      "logicVersion": "1.0.0",
+      "traits": {
+        "mutationRate": 0.05,
+        "riskTolerance": 0.2,
+        "explorationVsExploitation": 0.5,
+        "maxCognitiveCycleDepth": 5,
+        "executionParallelism": 1
+      },
+      "capabilities": [
+        "KNOWLEDGE_QUERY",
+        "AUTHORIZED_MEMORY_OPS",
+        "SWARM_COORDINATION"
+      ],
+      "specialization": null,
+      "genomeVersion": 1,
+      "ancestorGenomeIds": [],
+      "ancestorCellIds": []
+    },
+    "source": "cell_initialization",
+    "createdAt": "2026-09-19T13:25:44.729Z",
+    "updatedAt": "2026-09-19T13:25:44.729Z",
+    "confidence": 1,
+    "hash": "b5b11c90fc5e915bec84e8c33e7485d8d97d78887889ac4dcfc9c16f7c365d38",
+    "provenance": [
+      "13ccd290fcd6a5b72909db4e0f4c06a5a0cb8b78b26b1e9efdaf9551061ab828"
+    ],
+    "version": 1
+  },
+  {
+    "id": "cognitive_state_13ccd290fcd6a5b72909db4e0f4c06a5a0cb8b78b26b1e9efdaf9551061ab828",
+    "cellId": "13ccd290fcd6a5b72909db4e0f4c06a5a0cb8b78b26b1e9efdaf9551061ab828",
+    "category": "SEMANTIC",
+    "content": {
+      "cellId": "13ccd290fcd6a5b72909db4e0f4c06a5a0cb8b78b26b1e9efdaf9551061ab828",
+      "lifecycleState": "ACTIVE",
+      "specialization": null,
+      "activeGoals": [],
+      "knowledgeReferences": [],
+      "conceptReferences": [],
+      "experienceReferences": [],
+      "knowledgeGaps": [],
+      "operationalConfidence": 1,
+      "lastCognitiveUpdate": "2026-09-19T13:25:44.732Z",
+      "memoryStats": {
+        "total": 2,
+        "episodic": 0,
+        "semantic": 1,
+        "procedural": 1
+      },
+      "metadata": {}
+    },
+    "source": "cognitive_state_manager",
+    "createdAt": "2026-09-19T13:25:44.732Z",
+    "updatedAt": "2026-09-19T13:25:44.732Z",
+    "confidence": 1,
+    "hash": "d3f7183e7be3744d9be380c898eae7a0757da0e58a0eaae753f45bd66798c7f2",
+    "provenance": [
+      "13ccd290fcd6a5b72909db4e0f4c06a5a0cb8b78b26b1e9efdaf9551061ab828"
+    ],
+    "version": 1
+  }
+]

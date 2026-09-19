@@ -251,3 +251,89 @@ export const ComputationFeedbackTelemetrySchema = z.object({
 
 export type ComputationFeedbackTelemetry = z.infer<typeof ComputationFeedbackTelemetrySchema>;
 
+// 14. P07: Experience / Learning -> Evolution Telemetry
+export const ExperienceEvolutionMetricsSchema = z.object({
+  taskOutcome: z.string().min(1),
+  predictionAccuracy: z.number().min(0.0).max(1.0),
+  verificationResult: z.string().min(1),
+  confidenceChange: z.number().min(-1.0).max(1.0),
+  repeatedFailure: z.number().int().nonnegative(),
+  adaptation: z.object({
+    conceptsAdapted: z.number().int().nonnegative(),
+    relationsAdapted: z.number().int().nonnegative(),
+    conflictsDetected: z.number().int().nonnegative(),
+    adaptationMagnitude: z.number().min(0.0).max(1.0)
+  }),
+  resourceEfficiency: z.number().min(0.0).max(1.0),
+  robustness: z.number().min(0.0).max(1.0),
+  knowledgeOutcome: z.object({
+    conceptsCount: z.number().int().nonnegative(),
+    relationsCount: z.number().int().nonnegative(),
+    lessonsCount: z.number().int().nonnegative()
+  })
+});
+
+export type ExperienceEvolutionMetrics = z.infer<typeof ExperienceEvolutionMetricsSchema>;
+
+export const ExperienceFeedbackTelemetrySchema = z.object({
+  telemetryId: z.string().min(1),
+  cellId: z.string().min(1),
+  lineageId: z.string().min(1),
+  generation: z.number().int().nonnegative(),
+  experienceId: z.string().min(1),
+  learningId: z.string().optional(),
+  metrics: ExperienceEvolutionMetricsSchema,
+  experienceFitnessScore: z.number().min(0.0).max(1.0),
+  timestamp: z.string(),
+  provenance: z.array(z.string()).min(1),
+  deterministicHash: z.string().min(1)
+});
+
+export type ExperienceFeedbackTelemetry = z.infer<typeof ExperienceFeedbackTelemetrySchema>;
+
+export const EvolutionTriggerPolicySchema = z.object({
+  minTelemetryCount: z.number().int().positive().default(5),
+  maxConsecutiveFailures: z.number().int().positive().default(3),
+  adaptationPlateauThreshold: z.number().int().positive().default(10),
+  minCooldownMs: z.number().nonnegative().default(1000),
+  fitnessDropThreshold: z.number().min(0.0).max(1.0).default(0.20),
+  enabled: z.boolean().default(true)
+});
+
+export type EvolutionTriggerPolicy = z.infer<typeof EvolutionTriggerPolicySchema>;
+
+export const EvolutionTriggerType = {
+  CONSECUTIVE_FAILURES: 'CONSECUTIVE_FAILURES',
+  TELEMETRY_WINDOW: 'TELEMETRY_WINDOW',
+  FITNESS_DROP: 'FITNESS_DROP',
+  MANUAL: 'MANUAL',
+  NONE: 'NONE'
+} as const;
+
+export type EvolutionTriggerType = (typeof EvolutionTriggerType)[keyof typeof EvolutionTriggerType];
+
+export const EvolutionWarrantEvaluationSchema = z.object({
+  warranted: z.boolean(),
+  reason: z.string(),
+  triggerType: z.enum(['CONSECUTIVE_FAILURES', 'TELEMETRY_WINDOW', 'FITNESS_DROP', 'MANUAL', 'NONE']),
+  telemetryCount: z.number().int().nonnegative(),
+  consecutiveFailures: z.number().int().nonnegative(),
+  averageFitnessScore: z.number().min(0.0).max(1.0),
+  evaluatedAt: z.string()
+});
+
+export type EvolutionWarrantEvaluation = z.infer<typeof EvolutionWarrantEvaluationSchema>;
+
+export const PopulationTelemetryMetricsSchema = z.object({
+  cellCount: z.number().int().nonnegative(),
+  totalTelemetries: z.number().int().nonnegative(),
+  averageFitness: z.number().min(0.0).max(1.0),
+  medianFitness: z.number().min(0.0).max(1.0),
+  overallFailureRate: z.number().min(0.0).max(1.0),
+  diversityScore: z.number().min(0.0).max(1.0),
+  aggregatedAt: z.string(),
+  deterministicHash: z.string().min(1)
+});
+
+export type PopulationTelemetryMetrics = z.infer<typeof PopulationTelemetryMetricsSchema>;
+

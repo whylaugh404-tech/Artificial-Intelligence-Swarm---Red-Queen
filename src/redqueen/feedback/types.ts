@@ -204,7 +204,19 @@ export const EvolutionTelemetryPayloadSchema = z.object({
   measurementWindow: z.object({
     startedAt: z.string().datetime(),
     endedAt: z.string().datetime()
-  })
+  }),
+  sourceExperienceId: z.string().optional(),
+  sourceLearningId: z.string().optional(),
+  taskOutcome: z.string().optional(),
+  predictionAccuracy: z.number().min(0).max(1).optional(),
+  verificationResult: z.string().optional(),
+  confidenceChange: z.number().min(-1).max(1).optional(),
+  repeatedFailure: z.number().int().nonnegative().optional(),
+  adaptationScore: z.number().min(0).max(1).optional(),
+  resourceEfficiency: z.number().min(0).max(1).optional(),
+  robustnessScore: z.number().min(0).max(1).optional(),
+  knowledgeOutcomeScore: z.number().min(0).max(1).optional(),
+  metrics: z.record(z.string(), z.unknown()).optional()
 });
 
 export type EvolutionTelemetryPayload = z.infer<typeof EvolutionTelemetryPayloadSchema>;

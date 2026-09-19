@@ -57,7 +57,13 @@ import { CognitiveDevelopmentEngine, CognitiveDevelopmentResult } from '../cogni
 import { computeCanonicalHash } from './canonical';
 import { CollectiveComputationEngine } from '../cognition/computation/engine';
 import { DistributedComputationFabric } from '../cognition/computation/fabric';
-import { EvolutionEngine } from '../evolution';
+import {
+  EvolutionEngine,
+  ExperienceFeedbackTelemetry,
+  EvolutionEvent,
+  EvolutionCycleOptions,
+  EvolutionTriggerPolicy
+} from '../evolution';
 import {
   OrganicExperienceTransitionEngine,
   ExperienceTransitionOptions,
@@ -236,8 +242,9 @@ export class Cell {
   }
 
   /**
-   * P06: Canonical Cognitive Development triggered by Experience
-   * Allows an episodic Experience to causally evaluate and update representations.
+   * P06 & P07: Canonical Cognitive Development triggered by Experience
+   * Allows an episodic Experience to causally evaluate and update representations,
+   * then automatically bridges the ontogenetic learning signal into phylogenetic evolutionary telemetry.
    */
   public async developFromExperience(
     experience: Experience,
@@ -248,13 +255,63 @@ export class Cell {
       evidence?: Evidence[];
     }
   ): Promise<CognitiveDevelopmentResult> {
-    return this.cognitiveDevelopment.evaluateExperience(
+    const result = await this.cognitiveDevelopment.evaluateExperience(
       experience,
       options?.context,
       options?.relatedConceptIds,
       options?.relatedRelationIds,
       options?.evidence
     );
+
+    // Causal bridge: Experience + Ontogenetic Learning -> Phylogenetic Evolution Telemetry
+    if (this.evolution) {
+      try {
+        const telemetry = this.evolution.extractTelemetryFromExperience(experience, result, undefined, this);
+        await this.evolution.recordExperienceTelemetry(telemetry);
+      } catch (err: any) {
+        logger.warn(this.component, 'failed_to_bridge_experience_telemetry', {
+          experienceId: experience.experienceId,
+          error: err.message
+        });
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * P07: Explicitly records an episodic Experience into phylogenetic evolutionary telemetry.
+   * Can be called with or without cognitive development results.
+   */
+  public async recordExperienceTelemetry(
+    experience: Experience,
+    learningResult?: CognitiveDevelopmentResult,
+    context?: { resourceScore?: number; operationalConfidence?: number }
+  ): Promise<ExperienceFeedbackTelemetry> {
+    const telemetry = this.evolution.extractTelemetryFromExperience(experience, learningResult, context, this);
+    await this.evolution.recordExperienceTelemetry(telemetry);
+    return telemetry;
+  }
+
+  /**
+   * P07: Bounded phylogenetic adaptation check.
+   * Evaluates if accumulated experience telemetries warrant an evolution cycle.
+   * Guarantees that NOT every experience causes a mutation.
+   */
+  public async checkAndTriggerEvolution(
+    options?: EvolutionCycleOptions & { policy?: Partial<EvolutionTriggerPolicy> }
+  ): Promise<EvolutionEvent | null> {
+    return this.evolution.triggerEvolutionIfWarranted(
+      options || { seed: `seed_${this.nodeId}_${Date.now()}` },
+      this
+    );
+  }
+
+  /**
+   * P07: Recovers persisted evolutionary telemetries and events from Cell storage.
+   */
+  public async recoverEvolutionTelemetry(): Promise<number> {
+    return this.evolution.recoverTelemetry(this.memory, this.nodeId);
   }
 
   private readonly component = 'cell';
