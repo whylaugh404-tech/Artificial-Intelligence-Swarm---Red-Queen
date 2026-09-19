@@ -273,7 +273,8 @@ export class MitosisEngine {
                   {
                     parentCellId: parent.nodeId,
                     generation: record.generation || (parent.genome.generation + 1),
-                    specialization: record.differentiationSummary?.specialization
+                    specialization: record.differentiationSummary?.specialization,
+                    governance: parent.governance
                   }
                 );
               } catch (loadErr: any) {
@@ -612,7 +613,8 @@ export class MitosisEngine {
           parentCellId: parent.nodeId,
           generation: childGenome.generation,
           lineageId: childGenome.lineageId,
-          specialization: childSpecialization
+          specialization: childSpecialization,
+          governance: parent.governance
         }
       );
 

@@ -1,4 +1,5 @@
 import * as fs from 'fs/promises';
+import * as path from 'path';
 import { identityCrypto } from '../crypto/identity';
 import { encryptionCrypto, EncryptedEnvelope } from '../crypto/encryption';
 import { CellState, Lifecycle } from './lifecycle';
@@ -71,6 +72,14 @@ import {
   ExperienceReplayTrace
 } from '../cognition/experience';
 import { Experience } from '../metabolism/types';
+import {
+  MitosisEngine,
+  MitosisOptions,
+  MitosisResult,
+  GovernanceEnforcer,
+  ReproductionPolicy,
+  AuthorizationTrustAnchor
+} from '../reproduction';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -84,6 +93,9 @@ export interface CellOptions {
   exchangeConfig?: Partial<ExchangeConfig>;
   representationBudget?: Partial<CognitiveRepresentationBudget>;
   storageSecret?: string;
+  governance?: GovernanceEnforcer;
+  reproductionPolicy?: Partial<ReproductionPolicy>;
+  trustAnchor?: AuthorizationTrustAnchor;
 }
 
 export class Cell {
@@ -314,8 +326,36 @@ export class Cell {
     return this.evolution.recoverTelemetry(this.memory, this.nodeId);
   }
 
+  /**
+   * P06 / P08: Biological Mitosis Lifecycle Organ
+   * Triggers governed cellular reproduction directly on this Cell.
+   * Derives progeny, isolates parent identity, transfers lineage, and partitions memory.
+   */
+  public async reproduce(
+    options?: Partial<MitosisOptions> & {
+      storageBasePath?: string;
+      currentPopulation?: number;
+      openRouterApiKey?: string;
+    }
+  ): Promise<{ result: MitosisResult; child?: Cell }> {
+    const basePath = options?.storageBasePath || path.dirname(this.storagePath);
+    const currentPop = options?.currentPopulation ?? (this.transport ? (this.transport.getActivePeerCount() + 1) : 1);
+    const apiKey = options?.openRouterApiKey || this.openRouterApiKey;
+
+    const fullOptions: MitosisOptions = {
+      ...options,
+      storageBasePath: basePath,
+      currentPopulation: currentPop,
+      openRouterApiKey: apiKey
+    };
+
+    return this.mitosis.reproduce(this, fullOptions);
+  }
+
   private readonly component = 'cell';
   
+  public readonly storagePath: string;
+  public readonly openRouterApiKey: string;
   public readonly privateKey!: string;
   public readonly publicKey: string;
   public readonly nodeId: string;
@@ -341,6 +381,8 @@ export class Cell {
   public readonly cognitiveDevelopment: CognitiveDevelopmentEngine;
   public readonly collectiveComputation: CollectiveComputationEngine;
   public readonly evolution: EvolutionEngine;
+  public readonly governance: GovernanceEnforcer;
+  public readonly mitosis: MitosisEngine;
 
   private _genome: CellGenome;
   private _lineage: CellLineage;
@@ -371,6 +413,8 @@ export class Cell {
       throw new Error('REDQUEEN_STORAGE_SECRET is required to securely encrypt/decrypt cell private keys');
     }
     this.storageSecret = secret;
+    this.storagePath = storagePath;
+    this.openRouterApiKey = openRouterApiKey;
 
     let rawPrivateKey: string;
     if (existingPrivateKey && existingPublicKey) {
@@ -493,6 +537,17 @@ export class Cell {
       this.cognitiveGraph,
       cellOptions?.exchangeConfig
     );
+
+    // Initialize Mitosis & Governance Subsystem
+    if (cellOptions?.governance) {
+      this.governance = cellOptions.governance;
+    } else {
+      this.governance = new GovernanceEnforcer(
+        cellOptions?.reproductionPolicy,
+        cellOptions?.trustAnchor
+      );
+    }
+    this.mitosis = new MitosisEngine(this.governance);
 
     this.setupHooks();
 
@@ -1034,6 +1089,14 @@ export class Cell {
         generalizationsCount: this.cognitiveGraph.getAllGeneralizations().length,
         analogiesCount: this.cognitiveGraph.getAllAnalogies().length,
         conflictsCount: this.cognitiveGraph.getAllConflicts().length
+      },
+      mitosis: {
+        cooldownMs: this.governance.cooldownMs,
+        populationCeiling: this.governance.populationCeiling,
+        requireAuthorization: this.governance.requireAuthorization,
+        lastReproductionEvent: this.cognitiveState.getState().metadata?.lastReproductionEvent,
+        lastReproductionTimestamp: this.cognitiveState.getState().metadata?.lastReproductionTimestamp,
+        descendantsCount: parseInt(this.cognitiveState.getState().metadata?.descendantsCount || '0', 10)
       }
     };
   }
