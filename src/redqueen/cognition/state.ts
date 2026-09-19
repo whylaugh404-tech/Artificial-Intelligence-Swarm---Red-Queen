@@ -193,9 +193,16 @@ export class CognitiveStateManager {
   }
 
   public setMetadata(key: string, value: string): void {
-
     this.state.metadata[key] = value;
     this.state.lastCognitiveUpdate = new Date().toISOString();
+  }
+
+  public getMetadata(key: string): string | undefined {
+    return this.state.metadata[key];
+  }
+
+  public getAllMetadata(): Record<string, string> {
+    return { ...this.state.metadata };
   }
 
   /**

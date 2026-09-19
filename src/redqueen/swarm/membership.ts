@@ -575,6 +575,51 @@ export class SwarmMembershipManager {
   }
 
   /**
+   * Recovers a failed or denied join attempt by resetting the local peer state
+   * to allow retrying with an alternative peer, updated authorization, or renewed credentials.
+   */
+  public resetJoinState(targetNodeId?: string): void {
+    if (targetNodeId && this.peerRecords.has(targetNodeId)) {
+      const record = this.peerRecords.get(targetNodeId)!;
+      if (record.state === MembershipState.DENIED) {
+        record.state = MembershipState.AUTHENTICATED;
+        record.updatedAt = Date.now();
+      }
+    }
+    const localRecord = this.peerRecords.get(this.localNodeId);
+    if (localRecord && localRecord.state === MembershipState.DENIED) {
+      localRecord.state = MembershipState.AUTHENTICATED;
+      localRecord.updatedAt = Date.now();
+      logger.info(this.component, 'reset_join_state_recovered', { nodeId: this.localNodeId });
+    }
+  }
+
+  /**
+   * Retries swarm join with bounded recovery attempts.
+   */
+  public async retryJoin(targetNodeId: string, maxAttempts: number = 3, timeoutMs: number = 5000): Promise<MembershipCertificate> {
+    let lastError: any;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        this.resetJoinState(targetNodeId);
+        return await this.requestJoin(targetNodeId, timeoutMs);
+      } catch (err: any) {
+        lastError = err;
+        logger.warn(this.component, 'join_attempt_failed_retrying', {
+          attempt,
+          maxAttempts,
+          targetNodeId,
+          error: err.message
+        });
+        if (attempt < maxAttempts) {
+          await new Promise(r => setTimeout(r, 50 * attempt));
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  /**
    * Broadcasts or announces this node's membership certificate to peers.
    */
   public announceMembership(targetNodeId?: string): void {

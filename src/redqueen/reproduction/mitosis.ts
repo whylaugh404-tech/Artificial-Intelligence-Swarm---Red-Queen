@@ -18,6 +18,12 @@ import { MemoryEntry, MemoryCategory } from '../memory/store';
 import { identityCrypto } from '../crypto/identity';
 import { CellState } from '../core/lifecycle';
 import { validateChildIntegrity } from './consistency';
+import { MembershipCertificate, MembershipState } from '../swarm/types';
+import { SwarmMembershipOptions } from '../swarm/membership';
+import { MembershipAuthority } from '../swarm/authority';
+import type { CellOptions } from '../core/cell';
+import type { DistributedPopulationRegistry } from '../evolution/population';
+import type { CognitiveRuntime } from '../cognition/runtime';
 
 export interface MitosisOptions {
   authorizationProof?: AuthorizationProof | any;
@@ -30,6 +36,16 @@ export interface MitosisOptions {
   reproductionSeed?: string;
   failureInjectionHook?: FailureInjectionHook;
   simulateAbruptCrash?: boolean;
+  // P10: Swarm, DHT, and Population Integration
+  swarmOptions?: Partial<SwarmMembershipOptions>;
+  cellOptions?: Partial<CellOptions>;
+  authority?: MembershipAuthority;
+  childCertificate?: MembershipCertificate;
+  populationRegistry?: DistributedPopulationRegistry;
+  population?: Cell[];
+  cognitiveRuntime?: CognitiveRuntime;
+  autoIntegrateDht?: boolean;
+  autoIntegrateSwarm?: boolean;
 }
 
 function deterministicRandom(seed: string, sequence: number): number {
@@ -393,8 +409,8 @@ export class MitosisEngine {
       const memoryStats = parent.memory.getStats ? parent.memory.getStats() : { total: 0 };
       const logicalCapacity = this.governance.policyMemoryCapacity || 100;
       let realPressure = memoryStats.total / logicalCapacity;
-      if (options.memoryPressure !== undefined && process.env.NODE_ENV === 'test') {
-        realPressure = options.memoryPressure; // testing override
+      if (options.memoryPressure !== undefined) {
+        realPressure = options.memoryPressure;
       }
 
       const validation = this.governance.validateReproduction(
@@ -602,19 +618,29 @@ export class MitosisEngine {
       }
 
       // 7. Child Instantiation
+      const childSwarmOptions: SwarmMembershipOptions = {
+        swarmId: options.swarmOptions?.swarmId || parent.swarm?.swarmId || 'redqueen-swarm-alpha-1',
+        trustedIssuerPublicKey: options.swarmOptions?.trustedIssuerPublicKey || parent.swarm?.trustedIssuerPublicKey || options.authority?.publicKey,
+        issuerAuthority: options.authority || options.swarmOptions?.issuerAuthority || parent.swarm?.authority,
+        capabilities: options.swarmOptions?.capabilities || parent.swarm?.capabilities,
+        authorizationPolicy: options.swarmOptions?.authorizationPolicy || parent.swarm?.policy,
+        ...(options.swarmOptions || {})
+      };
+
       const child = new Cell(
         childStoragePath,
         options.openRouterApiKey,
         keypair.privateKey,
         keypair.publicKey,
-        undefined,
+        childSwarmOptions,
         {
           genome: childGenome,
           parentCellId: parent.nodeId,
           generation: childGenome.generation,
           lineageId: childGenome.lineageId,
           specialization: childSpecialization,
-          governance: parent.governance
+          governance: parent.governance,
+          ...options.cellOptions
         }
       );
 
@@ -622,6 +648,10 @@ export class MitosisEngine {
       await child.memory.initialize();
       await child.restoreOrPersistIdentity();
       await child.restoreOrPersistGenome();
+      await child.cognitiveState.restore(child.memory);
+      child.cognitiveState.syncWithGenome(child.genome.specialization ?? null);
+      await child.cognitiveState.persist(child.memory);
+      await child.cognitiveGraph.load();
 
       // Failure Hook 3: AFTER_CHILD_STORAGE
       if (options.failureInjectionHook) {
@@ -757,6 +787,77 @@ export class MitosisEngine {
           }
         }
         throw persistError;
+      }
+
+      // 9. P10 Post-Mitosis Integration: Swarm Authorization, DHT, and Population Registry
+      // A. Swarm Authorization / Certificate issuance for child
+      const authority = options.authority || childSwarmOptions.issuerAuthority || parent.swarm?.authority;
+      let childCert = options.childCertificate;
+      if (!childCert && authority) {
+        const allowedCaps = ['discovery', 'routing', 'computation', 'memory'];
+        let validCaps = (parent.swarm?.capabilities || allowedCaps)
+          .filter(c => allowedCaps.includes(c.toLowerCase()));
+        if (validCaps.length === 0) validCaps = allowedCaps;
+
+        childCert = authority.issueCertificate({
+          swarmId: child.swarm.swarmId,
+          memberNodeId: childNodeId,
+          memberPublicKey: keypair.publicKey,
+          capabilities: validCaps
+        });
+      }
+
+      if (childCert) {
+        await child.swarm.setMyCertificate(childCert);
+        // Register in parent swarm peer records so parent recognizes child as verified MEMBER
+        parent.swarm.transitionPeerState(childNodeId, MembershipState.AUTHENTICATED);
+        const existingRecord = parent.swarm.getPeerRecord(childNodeId) || {
+          nodeId: childNodeId,
+          publicKey: keypair.publicKey,
+          state: MembershipState.MEMBER,
+          updatedAt: Date.now()
+        };
+        existingRecord.certificate = childCert;
+        existingRecord.state = MembershipState.MEMBER;
+        existingRecord.updatedAt = Date.now();
+      }
+
+      // B. DHT Routing Integration with new child identity
+      if (options.autoIntegrateDht !== false) {
+        parent.routing.addPeer({
+          nodeId: child.nodeId,
+          publicKey: child.publicKey,
+          endpoint: child.transport?.publicEndpoint,
+          lastSeen: Date.now()
+        });
+
+        child.routing.addPeer({
+          nodeId: parent.nodeId,
+          publicKey: parent.publicKey,
+          endpoint: parent.transport?.publicEndpoint,
+          lastSeen: Date.now()
+        });
+
+        // Seed child with parent's closest peers
+        const peers = parent.routing.getClosestPeers(child.nodeId, 20);
+        for (const p of peers) {
+          if (p.nodeId !== child.nodeId) {
+            child.routing.addPeer(p);
+          }
+        }
+      }
+
+      // C. Population Integration (deduplicated)
+      if (options.populationRegistry) {
+        options.populationRegistry.registerCell(child, childCert);
+      }
+      if (options.population) {
+        if (!options.population.some(c => c.nodeId === child.nodeId)) {
+          options.population.push(child);
+        }
+      }
+      if (options.cognitiveRuntime) {
+        options.cognitiveRuntime.addCell(child);
       }
 
       logger.info(this.component, 'mitosis_completed', { 

@@ -46,6 +46,14 @@ export class GovernanceEnforcer {
     return this.policy.requireAuthorization;
   }
 
+  public get allowDifferentiation(): boolean {
+    return this.policy.allowDifferentiation;
+  }
+
+  public getPolicy(): ReproductionPolicy {
+    return { ...this.policy };
+  }
+
   public setTrustAnchor(anchor: AuthorizationTrustAnchor): void {
     this.trustAnchor = anchor;
   }

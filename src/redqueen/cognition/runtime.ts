@@ -150,6 +150,43 @@ export class CognitiveRuntime {
   }
 
   /**
+   * Adds a Cell to the runtime's population view, preventing duplicates.
+   */
+  public addCell(cell: Cell): boolean {
+    if (this.population.some(c => c.nodeId === cell.nodeId)) {
+      return false; // Already present, avoid duplicates!
+    }
+    this.population.push(cell);
+    return true;
+  }
+
+  /**
+   * Removes a Cell from the runtime's population view by Node ID.
+   */
+  public removeCell(nodeId: string): boolean {
+    const idx = this.population.findIndex(c => c.nodeId === nodeId);
+    if (idx !== -1) {
+      this.population.splice(idx, 1);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Checks if a Cell exists in the runtime's population view.
+   */
+  public hasCell(nodeId: string): boolean {
+    return this.population.some(c => c.nodeId === nodeId);
+  }
+
+  /**
+   * Returns a copy of the active population cells.
+   */
+  public getPopulation(): Cell[] {
+    return [...this.population];
+  }
+
+  /**
    * P8 -> P7 -> P9 Complete Deterministic Cognitive Feedback Loop Orchestrator:
    * 1. P9 Cognitive State Request Check (and cycle bounding check)
    * 2. P8 Distributed Execution via CollectiveComputationEngine

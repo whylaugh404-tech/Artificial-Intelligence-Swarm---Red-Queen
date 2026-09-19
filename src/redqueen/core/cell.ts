@@ -63,7 +63,10 @@ import {
   ExperienceFeedbackTelemetry,
   EvolutionEvent,
   EvolutionCycleOptions,
-  EvolutionTriggerPolicy
+  EvolutionTriggerPolicy,
+  ReproductionWarrant,
+  ReproductionEligibilityOptions,
+  CausalReproductionResult
 } from '../evolution';
 import {
   OrganicExperienceTransitionEngine,
@@ -80,6 +83,9 @@ import {
   ReproductionPolicy,
   AuthorizationTrustAnchor
 } from '../reproduction';
+import type { DistributedPopulationRegistry } from '../evolution/population';
+import type { MembershipAuthority } from '../swarm/authority';
+import { MembershipCertificate, MembershipState } from '../swarm/types';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -352,6 +358,30 @@ export class Cell {
     return this.mitosis.reproduce(this, fullOptions);
   }
 
+  /**
+   * P09: Causal Bridge - Evaluates cellular reproduction eligibility & warrant.
+   * Connects evolutionary fitness, experience telemetry, and governance policies.
+   */
+  public evaluateReproductionEligibility(
+    options?: ReproductionEligibilityOptions
+  ): ReproductionWarrant {
+    return this.evolution.evaluateReproductionEligibility(options, this);
+  }
+
+  /**
+   * P09: Causal Bridge - Executes causal reproduction if warrant is eligible.
+   * Gated by telemetry evidence, reproduction pressure, and governance policies.
+   */
+  public async triggerCausalReproduction(
+    options?: ReproductionEligibilityOptions & Partial<MitosisOptions> & {
+      storageBasePath?: string;
+      currentPopulation?: number;
+      openRouterApiKey?: string;
+    }
+  ): Promise<CausalReproductionResult> {
+    return this.evolution.triggerReproductionIfEligible(options || {}, this);
+  }
+
   private readonly component = 'cell';
   
   public readonly storagePath: string;
@@ -390,6 +420,10 @@ export class Cell {
 
   public get genome(): Readonly<CellGenome> {
     return this._genome;
+  }
+
+  public get lifecycleState(): CellState {
+    return this.lifecycle.getState();
   }
 
   public get lineage(): Readonly<CellLineage> {
@@ -1057,6 +1091,90 @@ export class Cell {
 
   async shutdown(): Promise<void> {
     await this.stop();
+  }
+
+  /**
+   * P10: Joins the swarm via a target peer with retry recovery.
+   */
+  public async joinSwarm(
+    targetNodeId: string,
+    options?: { maxRetries?: number; timeoutMs?: number }
+  ): Promise<MembershipCertificate> {
+    const maxRetries = options?.maxRetries ?? 3;
+    const timeout = options?.timeoutMs ?? 5000;
+    return await this.swarm.retryJoin(targetNodeId, maxRetries, timeout);
+  }
+
+  /**
+   * P10: Integrates a child cell into DHT routing, Swarm membership, and population registry.
+   * Guarantees parent's own membership and state remain 100% intact.
+   */
+  public async integrateChildCell(
+    child: Cell,
+    options?: {
+      certificate?: MembershipCertificate;
+      populationRegistry?: DistributedPopulationRegistry;
+      authority?: MembershipAuthority;
+    }
+  ): Promise<{ certificate?: MembershipCertificate }> {
+    // 1. DHT Interconnection
+    this.routing.addPeer({
+      nodeId: child.nodeId,
+      publicKey: child.publicKey,
+      endpoint: child.transport?.publicEndpoint,
+      lastSeen: Date.now()
+    });
+    child.routing.addPeer({
+      nodeId: this.nodeId,
+      publicKey: this.publicKey,
+      endpoint: this.transport?.publicEndpoint,
+      lastSeen: Date.now()
+    });
+
+    const peers = this.routing.getClosestPeers(child.nodeId, 20);
+    for (const p of peers) {
+      if (p.nodeId !== child.nodeId) {
+        child.routing.addPeer(p);
+      }
+    }
+
+    // 2. Swarm Certificate
+    const auth = options?.authority || this.swarm.authority;
+    let cert = options?.certificate || child.swarm.getMyCertificate();
+    if (!cert && auth) {
+      const allowedCaps = ['discovery', 'routing', 'computation', 'memory'];
+      let validCaps = (this.swarm.capabilities || allowedCaps)
+        .filter(c => allowedCaps.includes(c.toLowerCase()));
+      if (validCaps.length === 0) validCaps = allowedCaps;
+
+      cert = auth.issueCertificate({
+        swarmId: this.swarm.swarmId,
+        memberNodeId: child.nodeId,
+        memberPublicKey: child.publicKey,
+        capabilities: validCaps
+      });
+    }
+
+    if (cert) {
+      await child.swarm.setMyCertificate(cert);
+      this.swarm.transitionPeerState(child.nodeId, MembershipState.AUTHENTICATED);
+      const rec = this.swarm.getPeerRecord(child.nodeId) || {
+        nodeId: child.nodeId,
+        publicKey: child.publicKey,
+        state: MembershipState.MEMBER,
+        updatedAt: Date.now()
+      };
+      rec.certificate = cert;
+      rec.state = MembershipState.MEMBER;
+      rec.updatedAt = Date.now();
+    }
+
+    // 3. Population Registry
+    if (options?.populationRegistry) {
+      options.populationRegistry.registerCell(child, cert);
+    }
+
+    return { certificate: cert };
   }
 
   getStatus() {

@@ -337,3 +337,98 @@ export const PopulationTelemetryMetricsSchema = z.object({
 
 export type PopulationTelemetryMetrics = z.infer<typeof PopulationTelemetryMetricsSchema>;
 
+/**
+ * P09: Evolution -> Mitosis Causal Bridge Types
+ */
+export const ReproductionTriggerReason = {
+  HIGH_FITNESS_COGNITIVE_SURPLUS: 'HIGH_FITNESS_COGNITIVE_SURPLUS',
+  MEMORY_PRESSURE_REPRODUCTION_THRESHOLD: 'MEMORY_PRESSURE_REPRODUCTION_THRESHOLD',
+  EVOLUTION_POPULATION_EXPANSION: 'EVOLUTION_POPULATION_EXPANSION',
+  SCHEDULED_LINEAGE_PROPAGATION: 'SCHEDULED_LINEAGE_PROPAGATION',
+  REPRODUCTION_ELIGIBLE_FITNESS_AND_PRESSURE_MET: 'REPRODUCTION_ELIGIBLE_FITNESS_AND_PRESSURE_MET',
+  POLICY_DISALLOWED: 'POLICY_DISALLOWED',
+  INSUFFICIENT_FITNESS: 'INSUFFICIENT_FITNESS',
+  INSUFFICIENT_TELEMETRY: 'INSUFFICIENT_TELEMETRY',
+  REPRODUCTION_COOLDOWN_ACTIVE: 'REPRODUCTION_COOLDOWN_ACTIVE',
+  POPULATION_CEILING_REACHED: 'POPULATION_CEILING_REACHED',
+  PARENT_INACTIVE: 'PARENT_INACTIVE',
+  UNAUTHORIZED: 'UNAUTHORIZED'
+} as const;
+
+export type ReproductionTriggerReason = (typeof ReproductionTriggerReason)[keyof typeof ReproductionTriggerReason];
+
+export const ReproductionEligibilityEvidenceSchema = z.object({
+  telemetryCount: z.number().int().nonnegative(),
+  averageFitness: z.number().min(0.0).max(1.0),
+  overallFitness: z.number().min(0.0).max(1.0),
+  memoryPressure: z.number().min(0.0).max(1.0),
+  consecutiveFailures: z.number().int().nonnegative(),
+  operationalConfidence: z.number().min(0.0).max(1.0),
+  specialization: z.string().nullable(),
+  reproductionPressure: z.number().min(0.0).max(1.0)
+});
+
+export type ReproductionEligibilityEvidence = z.infer<typeof ReproductionEligibilityEvidenceSchema>;
+
+export const ReproductionPolicyConditionsSchema = z.object({
+  parentActive: z.boolean(),
+  populationWithinCeiling: z.boolean(),
+  currentPopulation: z.number().int().nonnegative(),
+  populationCeiling: z.number().int().positive(),
+  cooldownPassed: z.boolean(),
+  cooldownRemainingMs: z.number().nonnegative(),
+  memoryPressureMet: z.boolean(),
+  memoryPressure: z.number().min(0.0).max(1.0),
+  minMemoryPressure: z.number().min(0.0).max(1.0),
+  authorizationVerified: z.boolean()
+});
+
+export type ReproductionPolicyConditions = z.infer<typeof ReproductionPolicyConditionsSchema>;
+
+export const ReproductionPolicyDecisionSchema = z.object({
+  allowed: z.boolean(),
+  reason: z.string().optional(),
+  verificationState: z.string().optional(),
+  conditions: ReproductionPolicyConditionsSchema
+});
+
+export type ReproductionPolicyDecision = z.infer<typeof ReproductionPolicyDecisionSchema>;
+
+export const ReproductionWarrantSchema = z.object({
+  warrantId: z.string().min(1),
+  parentCellId: z.string().min(1),
+  parentGenomeId: z.string().min(1),
+  lineageId: z.string().min(1),
+  generation: z.number().int().nonnegative(),
+  ancestorCellIds: z.array(z.string()).default([]),
+  isEligible: z.boolean(),
+  reason: z.string(),
+  evidence: ReproductionEligibilityEvidenceSchema,
+  policyDecision: ReproductionPolicyDecisionSchema,
+  recommendedSpecializationBias: z.string().optional(),
+  evaluatedAt: z.string(),
+  deterministicHash: z.string().min(1)
+});
+
+export type ReproductionWarrant = z.infer<typeof ReproductionWarrantSchema>;
+
+export interface ReproductionEligibilityOptions {
+  currentPopulation?: number;
+  memoryPressure?: number;
+  authorizationProof?: unknown;
+  minFitnessThreshold?: number; // default: 0.50
+  minTelemetryCount?: number;   // default: 0
+  minMemoryPressure?: number;
+  specializationBias?: string;
+  reproductionSeed?: string;
+  timestamp?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CausalReproductionResult {
+  eligible: boolean;
+  warrant: ReproductionWarrant;
+  result: any | null; // MitosisResult | null
+  child?: any | null; // Cell | null
+}
+

@@ -11,6 +11,7 @@ import { MetabolismStatus, Experience } from '../metabolism/types';
 import { ComputationStatus } from '../cognition/computation/types';
 import { MemoryCategory, type MemoryStore } from '../memory/store';
 import type { CognitiveDevelopmentResult } from '../cognition/development/engine';
+import { CellState } from '../core/lifecycle';
 import {
   FitnessComponents,
   FitnessComponentsSchema,
@@ -39,7 +40,15 @@ import {
   EvolutionTriggerType,
   EvolutionWarrantEvaluation,
   PopulationTelemetryMetrics,
-  PopulationTelemetryMetricsSchema
+  PopulationTelemetryMetricsSchema,
+  ReproductionTriggerReason,
+  ReproductionEligibilityEvidence,
+  ReproductionPolicyConditions,
+  ReproductionPolicyDecision,
+  ReproductionWarrant,
+  ReproductionWarrantSchema,
+  ReproductionEligibilityOptions,
+  CausalReproductionResult
 } from './types';
 import { logger } from '../core/logger';
 
@@ -1233,6 +1242,285 @@ export class EvolutionEngine {
       aggregatedAt,
       deterministicHash
     });
+  }
+
+  /**
+   * P09: Evolution -> Mitosis Causal Bridge
+   * Evaluates if this Cell is eligible for reproduction based on:
+   * 1. Parent identity & lineage
+   * 2. Evolutionary fitness & accumulated experience telemetries
+   * 3. Memory pressure & operational metrics
+   * 4. GovernanceEnforcer policy validation (ceiling, cooldown, state, authorization)
+   */
+  public evaluateReproductionEligibility(
+    options: ReproductionEligibilityOptions = {},
+    targetCell?: Cell
+  ): ReproductionWarrant {
+    const activeCell = targetCell || this.cell;
+    if (!activeCell) {
+      throw new Error('EvolutionEngine: evaluateReproductionEligibility requires an active Cell context');
+    }
+
+    const parentCellId = activeCell.nodeId;
+    const parentGenomeId = activeCell.genome.genomeId;
+    const lineageId = activeCell.genome.lineageId;
+    const generation = activeCell.genome.generation;
+    const ancestorCellIds = [...(activeCell.genome.ancestorCellIds || [])];
+
+    // Evaluate current fitness
+    const fitnessState = this.evaluateFitness(activeCell);
+    const overallFitness = fitnessState.overallFitness;
+
+    // Retrieve accumulated telemetries
+    const telemetries = this.experienceTelemetries.get(parentCellId) || [];
+    const telemetryCount = telemetries.length;
+    const averageFitness = telemetryCount > 0
+      ? round4(telemetries.reduce((acc, t) => acc + t.experienceFitnessScore, 0) / telemetryCount)
+      : overallFitness;
+    const consecutiveFailures = this.consecutiveFailures.get(parentCellId) || 0;
+
+    // Operational confidence
+    const operationalConfidence = activeCell.cognitiveState
+      ? clamp(activeCell.cognitiveState.getState().operationalConfidence)
+      : 1.0;
+
+    // Memory pressure
+    let memoryPressure = options.memoryPressure;
+    if (memoryPressure === undefined) {
+      // derive from memory store or default
+      memoryPressure = 0.8;
+    }
+    memoryPressure = clamp(memoryPressure);
+
+    // Reproduction pressure composite
+    const reproductionPressure = round4(
+      clamp(memoryPressure * 0.4 + overallFitness * 0.4 + clamp(1.0 - consecutiveFailures / 5.0) * 0.2)
+    );
+
+    const evidence: ReproductionEligibilityEvidence = {
+      telemetryCount,
+      averageFitness,
+      overallFitness,
+      memoryPressure,
+      consecutiveFailures,
+      operationalConfidence,
+      specialization: activeCell.genome.specialization,
+      reproductionPressure
+    };
+
+    // Governance Policy validation
+    const governance = activeCell.governance;
+    const governancePolicy = governance.getPolicy();
+    const currentPopulation = options.currentPopulation ?? 1;
+    const populationCeiling = governancePolicy.populationCeiling;
+    const minMemoryPressure = options.minMemoryPressure ?? governancePolicy.minMemoryPressure;
+    const cooldownMs = governancePolicy.cooldownMs;
+
+    const parentActive = activeCell.lifecycleState === CellState.ACTIVE;
+    const populationWithinCeiling = currentPopulation < populationCeiling;
+
+    // Check cooldown
+    const parentMetadata = activeCell.cognitiveState ? activeCell.cognitiveState.getAllMetadata() : {};
+    const now = options.timestamp ? new Date(options.timestamp).getTime() : Date.now();
+    let cooldownPassed = true;
+    let cooldownRemainingMs = 0;
+    const lastReproStr = parentMetadata['lastReproductionTimestamp'];
+    if (lastReproStr) {
+      const lastRepro = parseInt(lastReproStr, 10);
+      if (!isNaN(lastRepro)) {
+        const elapsed = now - lastRepro;
+        if (elapsed < cooldownMs) {
+          cooldownPassed = false;
+          cooldownRemainingMs = cooldownMs - elapsed;
+        }
+      }
+    }
+
+    const memoryPressureMet = memoryPressure >= minMemoryPressure;
+
+    // Authorization verification
+    const eventId = options.reproductionSeed || ((options.authorizationProof as any)?.payload?.eventId) || `evt_eval_${Date.now()}`;
+    let authorizationVerified = true;
+    let verificationState: string | undefined = undefined;
+
+    if (governancePolicy.requireAuthorization) {
+      const authResult = governance.verifyAuthorizationProof(options.authorizationProof, parentCellId, eventId, now);
+      authorizationVerified = authResult.valid;
+      verificationState = authResult.state;
+    }
+
+    // Call governance.validateReproduction
+    const policyResult = governance.validateReproduction(
+      activeCell.lifecycleState,
+      parentMetadata,
+      currentPopulation,
+      memoryPressure,
+      eventId,
+      parentCellId,
+      options.authorizationProof,
+      now
+    );
+
+    const policyConditions: ReproductionPolicyConditions = {
+      parentActive,
+      populationWithinCeiling,
+      currentPopulation,
+      populationCeiling,
+      cooldownPassed,
+      cooldownRemainingMs,
+      memoryPressureMet,
+      memoryPressure,
+      minMemoryPressure,
+      authorizationVerified
+    };
+
+    const policyDecision: ReproductionPolicyDecision = {
+      allowed: policyResult.allowed,
+      reason: policyResult.reason,
+      verificationState: policyResult.verificationState || verificationState,
+      conditions: policyConditions
+    };
+
+    // Overall eligibility evaluation
+    const minFitnessThreshold = options.minFitnessThreshold ?? 0.50;
+    const minTelemetryCount = options.minTelemetryCount ?? 0;
+
+    let isEligible = true;
+    let reason: ReproductionTriggerReason = ReproductionTriggerReason.REPRODUCTION_ELIGIBLE_FITNESS_AND_PRESSURE_MET;
+
+    if (!parentActive) {
+      isEligible = false;
+      reason = ReproductionTriggerReason.PARENT_INACTIVE;
+    } else if (!policyDecision.allowed) {
+      isEligible = false;
+      if (policyDecision.reason?.includes('ceiling')) {
+        reason = ReproductionTriggerReason.POPULATION_CEILING_REACHED;
+      } else if (policyDecision.reason?.includes('cooldown')) {
+        reason = ReproductionTriggerReason.REPRODUCTION_COOLDOWN_ACTIVE;
+      } else if (policyDecision.reason?.includes('memory')) {
+        reason = ReproductionTriggerReason.MEMORY_PRESSURE_REPRODUCTION_THRESHOLD;
+      } else if (policyDecision.reason?.includes('authorization') || policyDecision.reason?.includes('creator')) {
+        reason = ReproductionTriggerReason.UNAUTHORIZED;
+      } else {
+        reason = ReproductionTriggerReason.POLICY_DISALLOWED;
+      }
+    } else if (overallFitness < minFitnessThreshold) {
+      isEligible = false;
+      reason = ReproductionTriggerReason.INSUFFICIENT_FITNESS;
+    } else if (telemetryCount < minTelemetryCount) {
+      isEligible = false;
+      reason = ReproductionTriggerReason.INSUFFICIENT_TELEMETRY;
+    }
+
+    // Specialization recommendation
+    let recommendedSpecializationBias = options.specializationBias;
+    if (!recommendedSpecializationBias && governancePolicy.allowDifferentiation) {
+      if (fitnessState.components.computationPerformance > 0.8) {
+        recommendedSpecializationBias = 'COMPUTE_OPTIMIZED';
+      } else if (fitnessState.components.knowledgeContribution > 0.8) {
+        recommendedSpecializationBias = 'KNOWLEDGE_SYNTHESIZER';
+      } else if (fitnessState.components.reliability > 0.8) {
+        recommendedSpecializationBias = 'ROBUST_STABILIZER';
+      }
+    }
+
+    const evaluatedAt = options.timestamp || new Date(now).toISOString();
+    const hashSeed = {
+      parentCellId,
+      parentGenomeId,
+      lineageId,
+      generation,
+      isEligible,
+      reason,
+      overallFitness,
+      memoryPressure,
+      currentPopulation,
+      evaluatedAt
+    };
+    const deterministicHash = createHash('sha256').update(JSON.stringify(hashSeed)).digest('hex');
+    const warrantId = `warrant_${deterministicHash.substring(0, 24)}`;
+
+    return ReproductionWarrantSchema.parse({
+      warrantId,
+      parentCellId,
+      parentGenomeId,
+      lineageId,
+      generation,
+      ancestorCellIds,
+      isEligible,
+      reason,
+      evidence,
+      policyDecision,
+      recommendedSpecializationBias,
+      evaluatedAt,
+      deterministicHash
+    });
+  }
+
+  /**
+   * P09: Executes causal reproduction if warrant is eligible and governance permits.
+   */
+  public async triggerReproductionIfEligible(
+    options: ReproductionEligibilityOptions & Record<string, any> = {},
+    targetCell?: Cell
+  ): Promise<CausalReproductionResult> {
+    const activeCell = targetCell || this.cell;
+    if (!activeCell) {
+      throw new Error('EvolutionEngine: triggerReproductionIfEligible requires an active Cell context');
+    }
+
+    const warrant = this.evaluateReproductionEligibility(options, activeCell);
+    if (!warrant.isEligible) {
+      logger.warn(COMPONENT, `Reproduction not warranted for cell ${activeCell.nodeId}: ${warrant.reason}`, {
+        warrantId: warrant.warrantId,
+        policyReason: warrant.policyDecision.reason
+      });
+      return {
+        eligible: false,
+        warrant,
+        result: null,
+        child: null
+      };
+    }
+
+    logger.info(COMPONENT, `Causal reproduction triggered for cell ${activeCell.nodeId} under warrant ${warrant.warrantId}`);
+
+    const mitosisOptions = {
+      ...options,
+      specializationBias: warrant.recommendedSpecializationBias || options.specializationBias,
+      seed: options.reproductionSeed || warrant.warrantId,
+      authorizationProof: options.authorizationProof
+    };
+
+    const reproductionOutcome = await activeCell.reproduce(mitosisOptions);
+
+    // Save warrant to procedural memory for auditability
+    try {
+      if (activeCell.memory) {
+        await activeCell.memory.put({
+          id: `reproduction_warrant_${warrant.warrantId}`,
+          cellId: activeCell.nodeId,
+          category: MemoryCategory.PROCEDURAL,
+          type: 'REPRODUCTION_WARRANT',
+          content: warrant,
+          source: 'evolution_engine',
+          confidence: 1.0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          hash: computeDeterministicHash(warrant),
+          provenance: [activeCell.nodeId]
+        });
+      }
+    } catch {
+      // Ignore memory storage issues if transient
+    }
+
+    return {
+      eligible: true,
+      warrant,
+      result: reproductionOutcome.result,
+      child: reproductionOutcome.child
+    };
   }
 }
 
