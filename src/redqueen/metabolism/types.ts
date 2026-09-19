@@ -254,6 +254,27 @@ export enum MetabolismStatus {
 export const MetabolismStatusSchema = z.nativeEnum(MetabolismStatus);
 
 /**
+ * Causal Relational Links for an Experience
+ */
+export interface ExperienceCausalLinks {
+  readonly triggeringObservationId?: string;
+  readonly priorStateId?: string;
+  readonly resultingStateId?: string;
+  readonly actionComputationId?: string;
+  readonly evidenceIds?: readonly string[];
+  readonly cycleNumber?: number;
+}
+
+export const ExperienceCausalLinksSchema = z.object({
+  triggeringObservationId: z.string().optional(),
+  priorStateId: z.string().optional(),
+  resultingStateId: z.string().optional(),
+  actionComputationId: z.string().optional(),
+  evidenceIds: z.array(z.string()).optional(),
+  cycleNumber: z.number().int().nonnegative().optional()
+});
+
+/**
  * Lightweight Cell-Scoped Experience Record
  */
 export interface Experience {
@@ -271,6 +292,14 @@ export interface Experience {
   readonly confidence: number;
   readonly verificationStatus?: string;
   readonly lessonsDerived?: readonly string[];
+  // Causal relationship fields for organic transition
+  readonly observationId?: string;
+  readonly priorStateId?: string;
+  readonly resultingStateId?: string;
+  readonly actionComputationId?: string;
+  readonly evidenceIds?: readonly string[];
+  readonly cycleNumber?: number;
+  readonly causalLinks?: ExperienceCausalLinks;
 }
 
 export const ExperienceSchema = z.object({
@@ -287,7 +316,14 @@ export const ExperienceSchema = z.object({
   source: z.string().min(1),
   confidence: z.number().min(0).max(1),
   verificationStatus: z.string().optional(),
-  lessonsDerived: z.array(z.string()).optional()
+  lessonsDerived: z.array(z.string()).optional(),
+  observationId: z.string().optional(),
+  priorStateId: z.string().optional(),
+  resultingStateId: z.string().optional(),
+  actionComputationId: z.string().optional(),
+  evidenceIds: z.array(z.string()).optional(),
+  cycleNumber: z.number().int().nonnegative().optional(),
+  causalLinks: ExperienceCausalLinksSchema.optional()
 });
 
 /**

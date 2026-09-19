@@ -51,12 +51,20 @@ import { ReasoningEngine } from '../cognition/reasoning';
 
 import { VerificationEngine } from '../cognition/verification';
 import { Evidence } from '../cognition/evidence/types';
+import { Context } from '../cognition/epistemic/types';
 import { CollectiveCognitionEngine } from '../cognition/collective/engine';
-import { CognitiveDevelopmentEngine } from '../cognition/development/engine';
+import { CognitiveDevelopmentEngine, CognitiveDevelopmentResult } from '../cognition/development/engine';
 import { computeCanonicalHash } from './canonical';
 import { CollectiveComputationEngine } from '../cognition/computation/engine';
 import { DistributedComputationFabric } from '../cognition/computation/fabric';
 import { EvolutionEngine } from '../evolution';
+import {
+  OrganicExperienceTransitionEngine,
+  ExperienceTransitionOptions,
+  ExperienceTransitionResult,
+  ExperienceReplayTrace
+} from '../cognition/experience';
+import { Experience } from '../metabolism/types';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -196,6 +204,57 @@ export class Cell {
       // 6. Collective state update
       // Handled via cognitive graph persistence implicitly for now
     }
+  }
+
+  /**
+   * P05: Organic Observation → Experience Canonical Transition
+   * Transforms relevant empirical observations into causal episodic experiences.
+   */
+  public async processObservation(
+    rawObservation: any,
+    options?: ExperienceTransitionOptions
+  ): Promise<ExperienceTransitionResult> {
+    return OrganicExperienceTransitionEngine.transitionObservationToExperience(
+      rawObservation,
+      this,
+      options
+    );
+  }
+
+  /**
+   * Replays and validates an episodic experience's causal trace
+   */
+  public async replayExperience(experienceId: string): Promise<ExperienceReplayTrace> {
+    return OrganicExperienceTransitionEngine.replayExperience(experienceId, this);
+  }
+
+  /**
+   * Recovers all episodic experiences associated with this cell
+   */
+  public async recoverExperiences(): Promise<Experience[]> {
+    return OrganicExperienceTransitionEngine.recoverCellExperiences(this);
+  }
+
+  /**
+   * P06: Canonical Cognitive Development triggered by Experience
+   * Allows an episodic Experience to causally evaluate and update representations.
+   */
+  public async developFromExperience(
+    experience: Experience,
+    options?: {
+      context?: Context;
+      relatedConceptIds?: string[];
+      relatedRelationIds?: string[];
+      evidence?: Evidence[];
+    }
+  ): Promise<CognitiveDevelopmentResult> {
+    return this.cognitiveDevelopment.evaluateExperience(
+      experience,
+      options?.context,
+      options?.relatedConceptIds,
+      options?.relatedRelationIds,
+      options?.evidence
+    );
   }
 
   private readonly component = 'cell';
@@ -649,6 +708,7 @@ export class Cell {
       this.cognitiveState.syncWithGenome(this.genome.specialization ?? null);
       
       await this.cognitiveGraph.load();
+      await this.recoverExperiences();
       this.cognitiveState.syncLifecycleState(CellState.ACTIVE);
       if (this.memory.getStats) {
         this.cognitiveState.updateMemoryStats(this.memory.getStats());

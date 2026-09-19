@@ -64,12 +64,22 @@ export function resolveEvidencePolarity(
 ): EvidencePolarity {
   const targetId = 'conceptId' in target ? target.conceptId : target.relationId;
   
+  if (evidence.provenance?.contradictingRepresentationIds?.includes(targetId)) {
+    return EvidencePolarity.CONTRADICTS;
+  }
+
+  if (target.verificationStatus === RepresentationVerificationStatus.CONTRADICTED) {
+    return EvidencePolarity.CONTRADICTS;
+  }
+
   if (evidence.provenance?.supportingRepresentationIds?.includes(targetId)) {
     return EvidencePolarity.SUPPORTS;
   }
-  
-  if (evidence.provenance?.contradictingRepresentationIds?.includes(targetId)) {
-    return EvidencePolarity.CONTRADICTS;
+
+  // If evidence is explicitly referenced in the target's evidenceIds and not contradictory,
+  // it provides positive grounding support for the target representation.
+  if (target.evidenceIds && target.evidenceIds.includes(evidence.evidenceId)) {
+    return EvidencePolarity.SUPPORTS;
   }
   
   return EvidencePolarity.NEUTRAL;
@@ -439,6 +449,16 @@ export class WorldModelEngine {
       }
     }
 
+    if (input.evidences) {
+      for (const ev of input.evidences) {
+        evidenceIdsSet.add(ev.evidenceId);
+        provenanceSet.add(ev.sourceId);
+        if (ev.provenance?.derivedFrom) {
+          for (const d of ev.provenance.derivedFrom) provenanceSet.add(d);
+        }
+      }
+    }
+
     // 7. Determine Epistemic Status & Conflicts
     let hasConflict = false;
 
@@ -536,6 +556,24 @@ export class WorldModelEngine {
             const ev = graph?.getEvidence(evId);
             if (!ev) continue;
             const polarity = resolveEvidencePolarity(ev, r);
+            attributedEvidences.push({
+              evidence: ev,
+              polarity,
+              weight: calculateEffectiveEvidenceWeight(ev)
+            });
+          }
+        }
+
+        if (input.evidences) {
+          for (const ev of input.evidences) {
+            let polarity = EvidencePolarity.SUPPORTS;
+            if (ev.provenance?.contradictingRepresentationIds && ev.provenance.contradictingRepresentationIds.length > 0) {
+              polarity = EvidencePolarity.CONTRADICTS;
+            } else if (ev.confidence === 0) {
+              polarity = EvidencePolarity.CONTRADICTS;
+            } else if (ev.provenance?.supportingRepresentationIds && ev.provenance.supportingRepresentationIds.length > 0) {
+              polarity = EvidencePolarity.SUPPORTS;
+            }
             attributedEvidences.push({
               evidence: ev,
               polarity,
@@ -981,18 +1019,79 @@ export class WorldModelEngine {
     const updatedEvidenceIds = Array.from(new Set([...model.evidenceIds, computationalEvidence.evidenceId])).sort();
     const updatedProvenance = Array.from(new Set([...model.provenance, computationalEvidence.sourceId, ...(computationalEvidence.provenance.derivedFrom || [])])).sort();
 
-    // Re-resolve loaded concepts
+    // Identify target representation IDs
+    const targetIds = new Set<string>([
+      ...(computationalEvidence.provenance.supportingRepresentationIds || []),
+      ...(computationalEvidence.provenance.contradictingRepresentationIds || [])
+    ]);
+
+    // Re-resolve loaded concepts with updated epistemic verification if targeted
     const concepts: CognitiveConcept[] = [];
     for (const entId of model.entities) {
-      const c = graph?.getConcept(entId) || this.conceptCache.get(entId);
-      if (c) concepts.push(c);
+      let c = graph?.getConcept(entId) || this.conceptCache.get(entId);
+      if (c) {
+        if (targetIds.has(c.conceptId)) {
+          const isSupporting = (computationalEvidence.provenance.supportingRepresentationIds?.includes(c.conceptId) ?? false) || (computationalEvidence.confidence > 0 && !computationalEvidence.provenance.contradictingRepresentationIds?.includes(c.conceptId));
+          const isContradicting = (computationalEvidence.provenance.contradictingRepresentationIds?.includes(c.conceptId) ?? false) || computationalEvidence.confidence === 0;
+
+          let nextStatus = c.verificationStatus;
+          if (isContradicting) {
+            nextStatus = RepresentationVerificationStatus.CONTRADICTED;
+          } else if (isSupporting) {
+            if (computationalEvidence.confidence >= 0.8) {
+              nextStatus = RepresentationVerificationStatus.VERIFIED;
+            } else if (computationalEvidence.confidence > 0) {
+              nextStatus = RepresentationVerificationStatus.SUPPORTED;
+            }
+          }
+
+          const updatedC: CognitiveConcept = {
+            ...c,
+            verificationStatus: nextStatus,
+            evidenceIds: Array.from(new Set([...(c.evidenceIds || []), computationalEvidence.evidenceId])).sort(),
+            updatedAt: new Date().toISOString()
+          };
+          c = updatedC;
+          if (graph && 'addConcept' in (graph as unknown as Record<string, unknown>) && typeof (graph as unknown as { addConcept: unknown }).addConcept === 'function') {
+            (graph as unknown as { addConcept: (con: CognitiveConcept) => void }).addConcept(updatedC);
+          }
+        }
+        concepts.push(c);
+      }
     }
 
-    // Re-resolve relations
+    // Re-resolve relations with updated verification if targeted
     const relations: CognitiveRelation[] = [];
     for (const relId of [...model.causalRelations, ...model.dependencies, ...model.structuralRelations]) {
-      const r = graph?.getRelation(relId) || this.relationCache.get(relId);
-      if (r) relations.push(r);
+      let r = graph?.getRelation(relId) || this.relationCache.get(relId);
+      if (r) {
+        if (targetIds.has(r.relationId)) {
+          const isSupporting = (computationalEvidence.provenance.supportingRepresentationIds?.includes(r.relationId) ?? false) || (computationalEvidence.confidence > 0 && !computationalEvidence.provenance.contradictingRepresentationIds?.includes(r.relationId));
+          const isContradicting = (computationalEvidence.provenance.contradictingRepresentationIds?.includes(r.relationId) ?? false) || computationalEvidence.confidence === 0;
+
+          let nextStatus = r.verificationStatus;
+          if (isContradicting) {
+            nextStatus = RepresentationVerificationStatus.CONTRADICTED;
+          } else if (isSupporting) {
+            if (computationalEvidence.confidence >= 0.8) {
+              nextStatus = RepresentationVerificationStatus.VERIFIED;
+            } else if (computationalEvidence.confidence > 0) {
+              nextStatus = RepresentationVerificationStatus.SUPPORTED;
+            }
+          }
+
+          const updatedR: CognitiveRelation = {
+            ...r,
+            verificationStatus: nextStatus,
+            evidenceIds: Array.from(new Set([...(r.evidenceIds || []), computationalEvidence.evidenceId])).sort()
+          };
+          r = updatedR;
+          if (graph && 'addRelation' in (graph as unknown as Record<string, unknown>) && typeof (graph as unknown as { addRelation: unknown }).addRelation === 'function') {
+            (graph as unknown as { addRelation: (rel: CognitiveRelation) => void }).addRelation(updatedR);
+          }
+        }
+        relations.push(r);
+      }
     }
 
     // Re-compose world model with updated evidence
@@ -1003,6 +1102,7 @@ export class WorldModelEngine {
       context: model.context,
       concepts: concepts.length > 0 ? concepts : undefined,
       relations: relations.length > 0 ? relations : undefined,
+      evidences: [computationalEvidence],
       metadata: {
         ...model.metadata,
         integratedComputationalEvidenceId: computationalEvidence.evidenceId,

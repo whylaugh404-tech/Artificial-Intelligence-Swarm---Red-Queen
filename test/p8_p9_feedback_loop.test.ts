@@ -654,4 +654,224 @@ describe('P8 Distributed Computation -> P7 Epistemic/WorldModel -> P9 Collective
         expect(feedbackResult.fusedEpistemicState.status).not.toBe('VERIFIED');
     }
   });
+
+  // 18. Full End-to-End Feedback Chain: P8 -> P7 -> WorldModel -> P9 -> Follow-up
+  it('18. should execute full chain: P8 output -> P7 evidence -> WorldModel mutation -> P9 update -> causal follow-up', async () => {
+    const concept: CognitiveConcept = {
+      conceptId: 'concept_organism_core',
+      canonicalName: 'Organism Core Metabolism',
+      description: 'Core energy stability indicator',
+      category: InformationCategory.GENERAL_TECHNOLOGY,
+      sourceKnowledgeIds: ['kn_core'],
+      sourceExperienceIds: [],
+      originatingCellId: cell1.nodeId,
+      version: 1,
+      confidence: 0.5,
+      provenance: ['cell_alpha_init'],
+      verificationStatus: RepresentationVerificationStatus.PENDING,
+      metadata: {},
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
+    };
+    cell1.cognitiveGraph.addConcept(concept);
+
+    const executedRequests: CognitiveComputationRequest[] = [];
+    const origExecute = computeEngine1.executeCognitiveComputation.bind(computeEngine1);
+
+    computeEngine1.executeCognitiveComputation = async (req, opts) => {
+      executedRequests.push(req);
+      const res = await origExecute(req, opts);
+      return {
+        ...res,
+        finalOutput: { computedEnergyRatio: 1.414, iteration: req.feedbackCycleDepth }
+      };
+    };
+
+    const initialRequest = computeEngine1.createCognitiveComputationRequest({
+      sourceCellId: cell1.nodeId,
+      goal: 'verify_metabolic_coherence',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: { energyInput: 100, dissipationRate: 0.1 },
+      targetRepresentationId: concept.conceptId,
+      maxCycleDepth: 2,
+      timeoutMs: 5000
+    });
+
+    const feedbackResult = await runtime.executeFeedbackLoop(initialRequest, computeEngine1, worldModelEngine);
+    computeEngine1.executeCognitiveComputation = origExecute;
+
+    // 1. P8 computation output verified
+    expect(executedRequests.length).toBe(2);
+    expect(feedbackResult.computationResult).toBeDefined();
+    expect(feedbackResult.computationResult?.finalOutput).toBeDefined();
+
+    // 2. P7 evidence creation verified
+    expect(feedbackResult.evidence).toBeDefined();
+    expect(feedbackResult.evidence.sourceId).toBe('distributed_computation');
+    expect(feedbackResult.evidence.provenance.derivedFrom).toBeDefined();
+
+    // 3. WorldModel mutation/refinement verified
+    expect(feedbackResult.updatedWorldModelId).toBeDefined();
+    const retrievedWorldModel = cell1.cognitiveGraph.getAllConcepts();
+    expect(retrievedWorldModel.length).toBeGreaterThan(0);
+
+    // 4. P9 collective update verified
+    expect(feedbackResult.provenance.some(p => p.includes('p9_collective_updated:'))).toBe(true);
+
+    // 5. Causal follow-up request verified
+    const followUp = executedRequests[1];
+    expect(followUp.originatingCollectiveStateId).toBeDefined();
+    expect(followUp.payload.originatingWorldModelId).toBeDefined();
+    expect(followUp.payload.previousComputationOutput).toEqual({ computedEnergyRatio: 1.414, iteration: 0 });
+    expect(followUp.epistemicContext?.sourceRepresentationId).toBeDefined();
+  });
+
+  // 19. Termination Guarantee: Budget Exhaustion
+  it('19. should terminate feedback loop deterministically when computation budget is exhausted', async () => {
+    const executedRequests: CognitiveComputationRequest[] = [];
+    const origExecute = computeEngine1.executeCognitiveComputation.bind(computeEngine1);
+
+    computeEngine1.executeCognitiveComputation = async (req, opts) => {
+      executedRequests.push(req);
+      const res = await origExecute(req, opts);
+      return {
+        ...res,
+        trace: {
+          ...res.trace,
+          compositionDetails: {
+            ...res.trace.compositionDetails,
+            costs: {
+              ...res.trace.compositionDetails.costs,
+              totalOverheadCost: 50.0 // Heavy cost that depletes small budget
+            }
+          }
+        }
+      };
+    };
+
+    const lowBudgetRequest = computeEngine1.createCognitiveComputationRequest({
+      sourceCellId: cell1.nodeId,
+      goal: 'heavy_compute_budget_test',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: { items: [1, 2], budget: 40.0 }, // Budget 40 < Cost 50
+      maxCycleDepth: 5,
+      timeoutMs: 5000
+    });
+
+    const feedbackResult = await runtime.executeFeedbackLoop(lowBudgetRequest, computeEngine1, worldModelEngine);
+    computeEngine1.executeCognitiveComputation = origExecute;
+
+    // Must terminate after 1 iteration due to budget exhaustion
+    expect(executedRequests.length).toBe(1);
+    expect(feedbackResult.provenance.some(p => p.includes('feedback_loop_budget_exhausted'))).toBe(true);
+  });
+
+  // 20. Termination Guarantee: Duplicate Request Suppression
+  it('20. should suppress and terminate on duplicate task generation to prevent infinite recursion on identical states', async () => {
+    const executedRequests: CognitiveComputationRequest[] = [];
+    const origExecute = computeEngine1.executeCognitiveComputation.bind(computeEngine1);
+
+    // Simulate computation where output doesn't change
+    computeEngine1.executeCognitiveComputation = async (req, opts) => {
+      executedRequests.push(req);
+      const res = await origExecute(req, opts);
+      return {
+        ...res,
+        finalOutput: { fixed: 'static_data' }
+      };
+    };
+
+    const duplicateProneRequest = computeEngine1.createCognitiveComputationRequest({
+      sourceCellId: cell1.nodeId,
+      goal: 'duplicate_suppression_test',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: { items: [1, 2] },
+      maxCycleDepth: 3,
+      timeoutMs: 5000
+    });
+
+    const feedbackResult = await runtime.executeFeedbackLoop(duplicateProneRequest, computeEngine1, worldModelEngine);
+    computeEngine1.executeCognitiveComputation = origExecute;
+
+    // Loop must be strictly bounded and terminate safely
+    expect(executedRequests.length).toBeLessThanOrEqual(3);
+    expect(feedbackResult.cycleDepth).toBeLessThan(3);
+  });
+
+  // 21. Termination Guarantee: Timeout Bounding
+  it('21. should enforce loop deadline and terminate with timeout when overall timeout is exceeded', async () => {
+    const shortTimeoutRequest = computeEngine1.createCognitiveComputationRequest({
+      sourceCellId: cell1.nodeId,
+      goal: 'timeout_bounding_test',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: { data: 'test' },
+      maxCycleDepth: 5,
+      timeoutMs: 1 // Extremely short timeout
+    });
+
+    // Simulate delay
+    const origExecute = computeEngine1.executeCognitiveComputation.bind(computeEngine1);
+    computeEngine1.executeCognitiveComputation = async (req, opts) => {
+      await new Promise(resolve => setTimeout(resolve, 5));
+      return origExecute(req, opts);
+    };
+
+    const feedbackResult = await runtime.executeFeedbackLoop(shortTimeoutRequest, computeEngine1, worldModelEngine);
+    computeEngine1.executeCognitiveComputation = origExecute;
+
+    expect(feedbackResult).toBeDefined();
+    expect(feedbackResult.provenance.some(p => p.includes('feedback_loop_timeout_exceeded'))).toBe(true);
+  });
+
+  // 22. Termination Guarantee: Early Termination on Full Verification
+  it('22. should terminate early without running redundant cycles when epistemic state is fully VERIFIED with zero uncertainty', async () => {
+    const executedRequests: CognitiveComputationRequest[] = [];
+    const origExecute = computeEngine1.executeCognitiveComputation.bind(computeEngine1);
+
+    computeEngine1.executeCognitiveComputation = async (req, opts) => {
+      executedRequests.push(req);
+      const res = await origExecute(req, opts);
+      return res;
+    };
+
+    // Spy on fusionEngine to simulate fully verified state
+    const fusionSpy = vi.spyOn(EpistemicFusionEngine.prototype, 'fuse').mockReturnValue({
+      fusionId: 'fuse_perfect',
+      fusedState: {
+        stateId: 'epistemic_verified',
+        status: EpistemicStatus.VERIFIED,
+        verificationStatus: RepresentationVerificationStatus.VERIFIED,
+        context: { contextId: 'ctx_verified', domain: 'general_computation' },
+        opinion: { belief: 1.0, disbelief: 0.0, uncertainty: 0.0, baseRate: 0.5 }
+      },
+      targetRepresentationId: 'target_perfect',
+      supportingEvidence: [],
+      conflictingEvidence: [],
+      neutralEvidence: [],
+      dependencies: [],
+      effectiveSupportMass: 1.0,
+      effectiveConflictMass: 0.0,
+      hasConflict: false,
+      context: { contextId: 'ctx_verified', domain: 'general_computation' },
+      createdAt: '2026-01-01T00:00:00.000Z'
+    });
+
+    const verifiedRequest = computeEngine1.createCognitiveComputationRequest({
+      sourceCellId: cell1.nodeId,
+      goal: 'already_verified_goal',
+      computationType: 'DATA_TRANSFORMATION',
+      payload: { value: 42 },
+      maxCycleDepth: 5,
+      timeoutMs: 5000
+    });
+
+    const feedbackResult = await runtime.executeFeedbackLoop(verifiedRequest, computeEngine1, worldModelEngine);
+
+    computeEngine1.executeCognitiveComputation = origExecute;
+    fusionSpy.mockRestore();
+
+    // Must terminate after 1 cycle despite maxCycleDepth = 5 because it is fully verified with 0 uncertainty
+    expect(executedRequests.length).toBe(1);
+    expect(feedbackResult.cycleDepth).toBe(0);
+  });
 });

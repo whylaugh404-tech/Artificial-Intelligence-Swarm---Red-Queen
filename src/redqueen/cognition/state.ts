@@ -12,6 +12,7 @@ export const CognitiveStateSchema = z.object({
   activeGoals: z.array(z.string()),
   knowledgeReferences: z.array(z.string()),
   conceptReferences: z.array(z.string()).default([]),
+  experienceReferences: z.array(z.string()).default([]),
   knowledgeGaps: z.array(KnowledgeGapSchema).default([]),
   operationalConfidence: z.number().min(0).max(1),
   lastCognitiveUpdate: z.string().datetime(),
@@ -50,6 +51,7 @@ export class CognitiveStateManager {
       activeGoals: initialGoals.map(g => g.trim()).filter(Boolean),
       knowledgeReferences: [],
       conceptReferences: [],
+      experienceReferences: [],
       knowledgeGaps: [],
       operationalConfidence: typeof initialConfidence === 'number' && !Number.isNaN(initialConfidence) && Number.isFinite(initialConfidence)
         ? Math.max(0, Math.min(1, initialConfidence))
@@ -118,6 +120,18 @@ export class CognitiveStateManager {
     if (!trimmed || this.state.conceptReferences.includes(trimmed)) return;
     this.state.conceptReferences.push(trimmed);
     this.state.lastCognitiveUpdate = new Date().toISOString();
+  }
+
+  public addExperienceReference(ref: string): void {
+    if (!ref || typeof ref !== 'string') return;
+    const trimmed = ref.trim();
+    if (!trimmed || this.state.experienceReferences.includes(trimmed)) return;
+    this.state.experienceReferences.push(trimmed);
+    this.state.lastCognitiveUpdate = new Date().toISOString();
+  }
+
+  public getExperienceReferences(): readonly string[] {
+    return this.state.experienceReferences;
   }
 
   public recordKnowledgeGap(topic: string, category: InformationCategory, reason: string, priority: number): KnowledgeGap {

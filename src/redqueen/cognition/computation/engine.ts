@@ -231,9 +231,12 @@ export class CollectiveComputationEngine {
     timeoutMs?: number;
     taskId?: string;
     createdAt?: string;
+    originatingCellId?: string;
+    epistemicContext?: EpistemicComputationContext;
   }): ComputationTask {
     const requiredCapabilities = [...(params.requiredCapabilities || [])].sort();
     const timeoutMs = params.timeoutMs || 10000;
+    const originatingCellId = params.originatingCellId || this.localCell.nodeId;
 
     // Canonical representation for deterministic identity (excluding non-deterministic runtime timing)
     const canonicalSpecification = {
@@ -241,7 +244,7 @@ export class CollectiveComputationEngine {
       computationType: params.computationType.trim(),
       payload: params.payload,
       requiredCapabilities,
-      originatingCellId: this.localCell.nodeId
+      originatingCellId
     };
 
     const deterministicIdentity = computeDeterministicHash(canonicalSpecification);
@@ -254,10 +257,11 @@ export class CollectiveComputationEngine {
       computationType: params.computationType,
       payload: params.payload,
       requiredCapabilities,
-      originatingCellId: this.localCell.nodeId,
+      originatingCellId,
       timeoutMs,
       deterministicIdentity,
-      createdAt
+      createdAt,
+      epistemicContext: params.epistemicContext
     });
   }
 
@@ -336,9 +340,17 @@ export class CollectiveComputationEngine {
     const task = this.createTask({
       goal: request.goal,
       computationType: request.computationType,
-      payload: request.payload,
+      payload: {
+        ...request.payload,
+        requestId: request.requestId,
+        targetRepresentationId: request.targetRepresentationId,
+        feedbackCycleDepth: request.feedbackCycleDepth,
+        originatingCollectiveStateId: request.originatingCollectiveStateId
+      },
       requiredCapabilities: request.requiredCapabilities,
-      timeoutMs: request.timeoutMs
+      timeoutMs: request.timeoutMs,
+      originatingCellId: request.sourceCellId,
+      epistemicContext: request.epistemicContext
     });
 
     return await this.executeTask(task, options);
@@ -1427,6 +1439,12 @@ export class CollectiveComputationEngine {
     const consistencyScore = verificationTrace.length > 0 ? verifiedCount / verificationTrace.length : 0.0;
 
     const provenanceSet = new Set<string>([this.localCell.nodeId]);
+    if (task.originatingCellId) {
+      provenanceSet.add(task.originatingCellId);
+    }
+    if (task.epistemicContext?.provenance) {
+      task.epistemicContext.provenance.forEach(p => provenanceSet.add(p));
+    }
     Object.values(subtaskResults).forEach(res => {
       res.provenance.forEach(p => provenanceSet.add(p));
     });

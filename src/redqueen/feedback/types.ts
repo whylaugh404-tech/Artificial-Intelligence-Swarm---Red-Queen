@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ComputationResult, ComputationResultSchema, ComputationStatus, ComputationStatusSchema } from '../cognition/computation/types';
-import { InformationRecord, InformationRecordSchema, Experience, ExperienceSchema, MetabolismStatus, MetabolismStatusSchema } from '../metabolism/types';
+import { InformationRecord, InformationRecordSchema, InformationSourceType, InformationSourceTypeSchema, Experience, ExperienceSchema, MetabolismStatus, MetabolismStatusSchema } from '../metabolism/types';
 import { Evidence, EvidenceSchema } from '../cognition/evidence/types';
 import { EpistemicState, EpistemicStateSchema, EpistemicStatus, EpistemicStatusSchema, SubjectiveOpinion, SubjectiveOpinionSchema } from '../cognition/epistemic/types';
 import { FitnessComponents, FitnessComponentsSchema } from '../evolution/types';
@@ -83,12 +83,52 @@ export const DomainComputationResultSchema = z.object({
 export type DomainComputationResult = z.infer<typeof DomainComputationResultSchema>;
 
 // 2. Observation Domain Contract
+export enum ObservationType {
+  INTERNAL = 'INTERNAL',
+  EXTERNAL = 'EXTERNAL'
+}
+
+export const ObservationTypeSchema = z.nativeEnum(ObservationType);
+
+export const StructuredObservationSchema = z.object({
+  observationId: z.string().min(1).max(256),
+  informationId: z.string().min(1).max(256).optional(),
+  observationType: ObservationTypeSchema.default(ObservationType.EXTERNAL),
+  observedSubject: z.string().min(1).max(1024),
+  source: z.string().min(1).max(1024),
+  sourceType: InformationSourceTypeSchema.default(InformationSourceType.CELL_KNOWLEDGE),
+  sourceIdentifier: z.string().min(1).max(1024).optional(),
+  sourceUri: z.string().max(2048).optional(),
+  timestamp: z.string().datetime(),
+  acquiredAt: z.string().datetime().optional(),
+  observedState: z.any().optional(),
+  content: z.string().min(1),
+  contentType: z.string().min(1).max(128).default('application/json'),
+  language: z.string().min(2).max(16).default('en'),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/, 'Must be a 64-character lowercase hex SHA-256 hash'),
+  observerCellId: z.string().max(256).optional(),
+  originatingCellId: z.string().max(256).optional(),
+  metadata: z.record(z.string(), z.any()).default({})
+});
+
+export type StructuredObservation = z.infer<typeof StructuredObservationSchema>;
+
+export const ObservationPayloadSchema = z.union([
+  StructuredObservationSchema,
+  InformationRecordSchema
+]);
+
+export type ObservationPayload = z.infer<typeof ObservationPayloadSchema>;
+
 export const DomainObservationSchema = z.object({
   ...BaseContractFields,
   domainKind: z.literal(DomainKind.OBSERVATION),
+  observationType: ObservationTypeSchema.optional(),
+  observedSubject: z.string().min(1).optional(),
+  source: z.string().min(1).optional(),
   confidence: z.number().min(0).max(1).optional(),
   status: z.enum(['RECEIVED', 'NORMALIZED', 'FILTERED', 'STORED']),
-  payload: InformationRecordSchema
+  payload: ObservationPayloadSchema
 });
 
 export type DomainObservation = z.infer<typeof DomainObservationSchema>;

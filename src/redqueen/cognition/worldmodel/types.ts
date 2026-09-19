@@ -136,6 +136,9 @@ export interface WorldModelCompositionInput {
   // Relations (can be relationId strings or CognitiveRelation objects)
   relations?: Array<string | CognitiveRelation>;
   
+  // Evidences directly incorporated into model composition
+  evidences?: Array<Evidence>;
+
   // Additional composition constraints
   constraints?: CompositionConstraint[];
   

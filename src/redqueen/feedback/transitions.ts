@@ -20,15 +20,19 @@ import {
   DomainMitosisDecisionSchema,
   DomainTransitionEnvelope,
   DomainTransitionEnvelopeSchema,
-  CausalReference
+  CausalReference,
+  ObservationType,
+  StructuredObservation,
+  StructuredObservationSchema
 } from './types';
 import {
   SemanticBoundaryViolationError,
   InvalidDomainTransitionError
 } from './errors';
 import { EpistemicStatus, SubjectiveOpinion } from '../cognition/epistemic/types';
-import { MetabolismStatus } from '../metabolism/types';
+import { InformationCategory, InformationSourceType, MetabolismStatus, NoveltyClassification } from '../metabolism/types';
 import { FitnessComponents } from '../evolution/types';
+import { ComputationStatus } from '../cognition/computation/types';
 
 /**
  * RED QUEEN FEEDBACK DOMAIN TRANSITION ENGINE
@@ -152,6 +156,10 @@ export function transitionObservationToExperience(
     noveltyScore: number;
     confidence: number;
     lessonsDerived?: string[];
+    priorStateId?: string;
+    resultingStateId?: string;
+    actionComputationId?: string;
+    evidenceIds?: string[];
   }
 ): { experience: DomainExperience; envelope: DomainTransitionEnvelope } {
   // Validate boundary
@@ -172,6 +180,7 @@ export function transitionObservationToExperience(
     observationId: observation.deterministicId,
     transactionId: params.transactionId,
     cycleNumber: params.cycleNumber,
+    priorStateId: params.priorStateId,
     timestamp
   };
   const deterministicId = `exp_${computeCanonicalHash(experienceSeed).substring(0, 24)}`;
@@ -183,6 +192,23 @@ export function transitionObservationToExperience(
       relation: 'METABOLIZED_INTO_EXPERIENCE'
     }
   ];
+
+  if (params.actionComputationId) {
+    causalReferences.push({
+      antecedentDomain: DomainKind.COMPUTATION_RESULT,
+      antecedentId: params.actionComputationId,
+      relation: 'ACTION_COMPUTATION_CONTEXT'
+    });
+  }
+
+  const causalLinks = {
+    triggeringObservationId: observation.deterministicId,
+    priorStateId: params.priorStateId,
+    resultingStateId: params.resultingStateId,
+    actionComputationId: params.actionComputationId,
+    evidenceIds: params.evidenceIds,
+    cycleNumber: params.cycleNumber
+  };
 
   const experience: DomainExperience = DomainExperienceSchema.parse({
     contractVersion: 1,
@@ -206,15 +232,22 @@ export function transitionObservationToExperience(
       transactionId: params.transactionId,
       cellId: params.cellId,
       timestamp,
-      informationId: observation.payload.informationId,
+      informationId: (observation.payload as any).informationId || (observation.payload as any).observationId || observation.deterministicId,
       knowledgeIds: params.knowledgeIds,
       category: params.category,
       outcome: params.outcome,
       noveltyClassification: params.noveltyClassification,
       noveltyScore: params.noveltyScore,
-      source: observation.payload.sourceIdentifier,
+      source: (observation.payload as any).sourceIdentifier || (observation.payload as any).source || observation.source || 'observation_source',
       confidence: params.confidence,
-      lessonsDerived: params.lessonsDerived
+      lessonsDerived: params.lessonsDerived,
+      observationId: observation.deterministicId,
+      priorStateId: params.priorStateId,
+      resultingStateId: params.resultingStateId,
+      actionComputationId: params.actionComputationId,
+      evidenceIds: params.evidenceIds,
+      cycleNumber: params.cycleNumber,
+      causalLinks
     }
   });
 
@@ -857,3 +890,578 @@ export function transitionToMitosisDecision(
 
   return { mitosisDecision, envelope };
 }
+
+// ============================================================================
+// P8 RESULT → OBSERVATION → EXPERIENCE SEMANTIC GOVERNORS
+// ============================================================================
+
+/**
+ * Creates an internal introspective Observation recording the algorithmic execution of a ComputationResult.
+ * 
+ * Strict Architectural Guarantee:
+ * This records ONLY internal execution telemetries (status, latency, verification score).
+ * It CANNOT and DOES NOT make any claim or observation regarding the external world state.
+ */
+export function createInternalObservationFromComputation(
+  computation: DomainComputationResult,
+  params: {
+    cellId: string;
+    cycleNumber: number;
+    observedSubject?: string;
+    metadata?: Record<string, any>;
+  }
+): { observation: DomainObservation; envelope: DomainTransitionEnvelope } {
+  if (computation.domainKind !== DomainKind.COMPUTATION_RESULT) {
+    throw new SemanticBoundaryViolationError(
+      DomainKind.COMPUTATION_RESULT,
+      (computation as any).domainKind || 'UNKNOWN',
+      'Input must be a valid DomainComputationResult'
+    );
+  }
+
+  const timestamp = new Date().toISOString();
+  const subject = params.observedSubject || `internal:execution:${computation.deterministicId}`;
+  const seed = {
+    cellId: params.cellId,
+    computationId: computation.deterministicId,
+    subject,
+    cycleNumber: params.cycleNumber,
+    timestamp
+  };
+  const deterministicId = `obs_int_${computeCanonicalHash(seed).substring(0, 24)}`;
+
+  const causalReferences: CausalReference[] = [
+    {
+      antecedentDomain: DomainKind.COMPUTATION_RESULT,
+      antecedentId: computation.deterministicId,
+      relation: 'OBSERVED_INTERNAL_EXECUTION'
+    }
+  ];
+
+  const observedState = {
+    taskId: computation.payload.taskId,
+    status: computation.payload.status,
+    completedAt: computation.payload.completedAt,
+    executionDurationMs: (computation.payload as any).executionDurationMs ?? computation.payload.trace?.dispatches?.reduce((acc, d) => acc + (d.durationMs || 0), 0) ?? 0,
+    verificationStatus: computation.payload.verificationStatus,
+    deterministicHash: computation.payload.deterministicHash
+  };
+
+  const content = JSON.stringify(observedState);
+  const contentHash = computeCanonicalHash(observedState);
+
+  const observation: DomainObservation = DomainObservationSchema.parse({
+    contractVersion: 1,
+    domainKind: DomainKind.OBSERVATION,
+    deterministicId,
+    cellId: params.cellId,
+    cycleNumber: params.cycleNumber,
+    timestamp,
+    observationType: ObservationType.INTERNAL,
+    observedSubject: subject,
+    source: 'CELL_RUNTIME',
+    causalReferences,
+    provenance: [...computation.provenance, params.cellId, 'INTERNAL_INTROSPECTION'],
+    confidence: computation.payload.status === ComputationStatus.COMPLETED ? (computation.confidence ?? 1.0) : 0.0,
+    status: 'STORED',
+    persistenceSemantics: {
+      category: MemoryCategory.EPISODIC,
+      storageKey: `obs_${deterministicId}`,
+      immutable: true,
+      retentionPolicy: 'RETAIN_INDEFINITELY'
+    },
+    payload: {
+      observationId: deterministicId,
+      informationId: deterministicId,
+      observationType: ObservationType.INTERNAL,
+      observedSubject: subject,
+      source: 'CELL_RUNTIME',
+      sourceType: InformationSourceType.CELL_KNOWLEDGE,
+      sourceIdentifier: `cell_runtime_${params.cellId}`,
+      timestamp,
+      acquiredAt: timestamp,
+      observedState,
+      content,
+      contentType: 'application/json',
+      language: 'en',
+      contentHash,
+      observerCellId: params.cellId,
+      originatingCellId: params.cellId,
+      metadata: params.metadata || {}
+    }
+  });
+
+  const transitionSeed = {
+    sourceId: computation.deterministicId,
+    targetId: observation.deterministicId,
+    cellId: params.cellId,
+    cycleNumber: params.cycleNumber,
+    timestamp
+  };
+
+  const envelope: DomainTransitionEnvelope = DomainTransitionEnvelopeSchema.parse({
+    transitionId: `tx_comp_to_int_obs_${computeCanonicalHash(transitionSeed).substring(0, 20)}`,
+    sourceDomain: DomainKind.COMPUTATION_RESULT,
+    targetDomain: DomainKind.OBSERVATION,
+    sourceId: computation.deterministicId,
+    targetId: observation.deterministicId,
+    cellId: params.cellId,
+    cycleNumber: params.cycleNumber,
+    timestamp,
+    causalReferences,
+    provenance: observation.provenance,
+    confidence: observation.confidence,
+    status: 'COMMITTED',
+    persistenceSemantics: observation.persistenceSemantics,
+    deterministicHash: computeCanonicalHash(observation)
+  });
+
+  return { observation, envelope };
+}
+
+/**
+ * Creates a grounded external Observation representing empirical sensory data,
+ * environment probing, or external world verification.
+ * 
+ * Must have: observed subject, source, timestamp, observation type (EXTERNAL).
+ */
+export function createExternalObservation(params: {
+  cellId: string;
+  cycleNumber: number;
+  observedSubject: string;
+  source: string;
+  sourceType?: InformationSourceType;
+  timestamp?: string;
+  observedState: any;
+  content: string;
+  contentType?: string;
+  confidence?: number;
+  causalReferences?: CausalReference[];
+  provenance?: string[];
+  metadata?: Record<string, any>;
+}): DomainObservation {
+  const timestamp = params.timestamp || new Date().toISOString();
+  const seed = {
+    cellId: params.cellId,
+    observedSubject: params.observedSubject,
+    source: params.source,
+    cycleNumber: params.cycleNumber,
+    timestamp,
+    content: params.content
+  };
+  const deterministicId = `obs_ext_${computeCanonicalHash(seed).substring(0, 24)}`;
+  const contentHash = computeCanonicalHash(params.observedState !== undefined ? params.observedState : params.content);
+
+  const observation: DomainObservation = DomainObservationSchema.parse({
+    contractVersion: 1,
+    domainKind: DomainKind.OBSERVATION,
+    deterministicId,
+    cellId: params.cellId,
+    cycleNumber: params.cycleNumber,
+    timestamp,
+    observationType: ObservationType.EXTERNAL,
+    observedSubject: params.observedSubject,
+    source: params.source,
+    confidence: params.confidence ?? 1.0,
+    status: 'RECEIVED',
+    causalReferences: params.causalReferences || [],
+    provenance: params.provenance || [params.cellId, params.source, 'EMPIRICAL_SENSOR'],
+    persistenceSemantics: {
+      category: MemoryCategory.EPISODIC,
+      storageKey: `obs_${deterministicId}`,
+      immutable: true,
+      retentionPolicy: 'RETAIN_INDEFINITELY'
+    },
+    payload: {
+      observationId: deterministicId,
+      informationId: deterministicId,
+      observationType: ObservationType.EXTERNAL,
+      observedSubject: params.observedSubject,
+      source: params.source,
+      sourceType: params.sourceType || InformationSourceType.PUBLIC_WEB,
+      sourceIdentifier: params.source,
+      timestamp,
+      acquiredAt: timestamp,
+      observedState: params.observedState,
+      content: params.content,
+      contentType: params.contentType || 'application/json',
+      language: 'en',
+      contentHash,
+      observerCellId: params.cellId,
+      metadata: params.metadata || {}
+    }
+  });
+
+  return observation;
+}
+
+/**
+ * Evaluates the correlation and concordance between a ComputationResult and an empirical Observation.
+ * 
+ * Enforces the core Red Queen principle:
+ * Computation says: "Cell produced output X."
+ * Observation says: "Empirical world shows Y."
+ */
+export function correlateComputationWithObservation(
+  computation: DomainComputationResult,
+  observation: DomainObservation,
+  options?: {
+    expectedSubject?: string;
+    comparator?: (computedOutput: any, observedState: any) => boolean;
+  }
+): {
+  isRelevant: boolean;
+  concordance: 'CONCORDANT' | 'CONTRADICTORY' | 'IRRELEVANT';
+  discrepancyScore: number;
+  reason: string;
+} {
+  // Reject non-conforming domains
+  if (computation.domainKind !== DomainKind.COMPUTATION_RESULT) {
+    throw new SemanticBoundaryViolationError(
+      DomainKind.COMPUTATION_RESULT,
+      (computation as any).domainKind || 'UNKNOWN',
+      'First argument must be a DomainComputationResult'
+    );
+  }
+  if (observation.domainKind !== DomainKind.OBSERVATION) {
+    throw new SemanticBoundaryViolationError(
+      DomainKind.OBSERVATION,
+      (observation as any).domainKind || 'UNKNOWN',
+      'Second argument must be a DomainObservation'
+    );
+  }
+
+  // Check subject relevance
+  const expectedSubject = options?.expectedSubject;
+  const observationSubject = observation.observedSubject || (observation.payload as any).observedSubject;
+
+  if (expectedSubject && observationSubject && expectedSubject !== observationSubject) {
+    return {
+      isRelevant: false,
+      concordance: 'IRRELEVANT',
+      discrepancyScore: 1.0,
+      reason: `Observation subject '${observationSubject}' does not match expected subject '${expectedSubject}'`
+    };
+  }
+
+  const computedOutput = computation.payload.finalOutput;
+  const observedState = (observation.payload as any).observedState !== undefined
+    ? (observation.payload as any).observedState
+    : observation.payload.content;
+
+  // Custom comparator support
+  if (options?.comparator) {
+    const isMatch = options.comparator(computedOutput, observedState);
+    return {
+      isRelevant: true,
+      concordance: isMatch ? 'CONCORDANT' : 'CONTRADICTORY',
+      discrepancyScore: isMatch ? 0.0 : 1.0,
+      reason: isMatch
+        ? 'Custom comparator verified concordance between computation output and observation'
+        : 'Custom comparator revealed contradiction between computation output and observation'
+    };
+  }
+
+  // Deep canonical equality comparison
+  const hashComputed = computeCanonicalHash(computedOutput);
+  const hashObserved = computeCanonicalHash(observedState);
+
+  if (hashComputed === hashObserved) {
+    return {
+      isRelevant: true,
+      concordance: 'CONCORDANT',
+      discrepancyScore: 0.0,
+      reason: 'Canonical hash of computation output matches empirical observation state'
+    };
+  }
+
+  // Semantic/Partial check if both are objects
+  if (
+    typeof computedOutput === 'object' && computedOutput !== null &&
+    typeof observedState === 'object' && observedState !== null
+  ) {
+    const keys = Object.keys(computedOutput);
+    let matchedKeys = 0;
+    let totalCompared = 0;
+
+    for (const key of keys) {
+      if (key in observedState) {
+        totalCompared++;
+        if (JSON.stringify((computedOutput as any)[key]) === JSON.stringify((observedState as any)[key])) {
+          matchedKeys++;
+        }
+      }
+    }
+
+    if (totalCompared > 0) {
+      const matchRatio = matchedKeys / totalCompared;
+      const discrepancyScore = 1.0 - matchRatio;
+      const isConcordant = discrepancyScore <= 0.2; // 80%+ match
+      return {
+        isRelevant: true,
+        concordance: isConcordant ? 'CONCORDANT' : 'CONTRADICTORY',
+        discrepancyScore,
+        reason: isConcordant
+          ? `High concordance (${(matchRatio * 100).toFixed(1)}% agreement) between computed prediction and observation`
+          : `Significant discrepancy (${(discrepancyScore * 100).toFixed(1)}% disagreement) between computed prediction and observation`
+      };
+    }
+  }
+
+  return {
+    isRelevant: true,
+    concordance: 'CONTRADICTORY',
+    discrepancyScore: 1.0,
+    reason: `Computation output differs from empirical observation: computed '${hashComputed.substring(0, 12)}' vs observed '${hashObserved.substring(0, 12)}'`
+  };
+}
+
+/**
+ * Runtime Boundary Assertion:
+ * Enforces: "Jangan menyebut computation success sebagai world success."
+ * 
+ * Rejects any assertion of world success based solely on computation success
+ * without a validating empirical observation.
+ */
+export function assertComputationNotEquatedToWorldSuccess(
+  computation: DomainComputationResult,
+  observation?: DomainObservation,
+  contextDescription: string = 'WorldSuccessEvaluation'
+): void {
+  if (computation.payload.status === ComputationStatus.COMPLETED && !observation) {
+    throw new SemanticBoundaryViolationError(
+      'EMPIRICAL_WORLD_EVIDENCE',
+      DomainKind.COMPUTATION_RESULT,
+      `[${contextDescription}] Illegal claim of world success: P8 computation executed successfully, but no empirical observation confirms world change. Computation success ≠ world success.`
+    );
+  }
+
+  if (observation) {
+    const correlation = correlateComputationWithObservation(computation, observation);
+    if (correlation.concordance === 'CONTRADICTORY') {
+      throw new SemanticBoundaryViolationError(
+        'CONFIRMED_WORLD_STATE',
+        DomainKind.OBSERVATION,
+        `[${contextDescription}] World discrepancy: Computation succeeded internally, but empirical observation contradicts computed expectations (${correlation.reason}). Computation success ≠ world success.`
+      );
+    }
+  }
+}
+
+/**
+ * Transition: ComputationResult + Observation -> Experience
+ * 
+ * Evaluates whether a computation and an empirical observation combine into an episodic Experience:
+ * 
+ * Case 1: Computation failed -> Cannot produce world success experience.
+ * Case 2: P8 Success WITHOUT Observation -> Returns null experience / execution recorded only.
+ *         "ComputationResult tetap diperlakukan sebagai hasil eksekusi sampai ada observation yang relevan."
+ * Case 3: P8 + Valid Concordant Observation -> Produces Experience with CONFIRMED_BY_WORLD / REINFORCEMENT.
+ * Case 4: P8 + Conflicting Observation -> Produces Experience with CONTRADICTED_BY_WORLD / CONTRADICTION.
+ *         Demonstrates clearly that computation success ≠ world success.
+ */
+export function transitionComputationAndObservationToExperience(
+  computation: DomainComputationResult,
+  observation: DomainObservation | undefined,
+  params: {
+    cellId: string;
+    cycleNumber: number;
+    transactionId: string;
+    knowledgeIds?: string[];
+    category?: InformationCategory;
+    expectedSubject?: string;
+    comparator?: (computedOutput: any, observedState: any) => boolean;
+    priorStateId?: string;
+    resultingStateId?: string;
+  }
+): {
+  experience: DomainExperience | null;
+  envelope?: DomainTransitionEnvelope;
+  canProduceExperience: boolean;
+  concordance: 'CONCORDANT' | 'CONTRADICTORY' | 'AWAITING_OBSERVATION' | 'COMPUTATION_FAILED';
+  reason: string;
+} {
+  // Reject non-computation inputs
+  if (computation.domainKind !== DomainKind.COMPUTATION_RESULT) {
+    throw new SemanticBoundaryViolationError(
+      DomainKind.COMPUTATION_RESULT,
+      (computation as any).domainKind || 'UNKNOWN',
+      'Input must be a valid DomainComputationResult'
+    );
+  }
+
+  // Case 1: Computation Failed
+  if (computation.payload.status !== ComputationStatus.COMPLETED) {
+    return {
+      experience: null,
+      canProduceExperience: false,
+      concordance: 'COMPUTATION_FAILED',
+      reason: `Computation task '${computation.payload.taskId}' ended with status '${computation.payload.status}'. Failed computation cannot produce world experience.`
+    };
+  }
+
+  // Case 2: P8 Success WITHOUT Observation (or without relevant Observation)
+  if (!observation) {
+    return {
+      experience: null,
+      canProduceExperience: false,
+      concordance: 'AWAITING_OBSERVATION',
+      reason: 'Computation completed successfully, but remains strictly an execution result until a relevant empirical observation is received. Computation success ≠ world success.'
+    };
+  }
+
+  // Evaluate correlation with Observation
+  const correlation = correlateComputationWithObservation(computation, observation, {
+    expectedSubject: params.expectedSubject,
+    comparator: params.comparator
+  });
+
+  if (!correlation.isRelevant) {
+    return {
+      experience: null,
+      canProduceExperience: false,
+      concordance: 'AWAITING_OBSERVATION',
+      reason: `Observation is not relevant to this computation: ${correlation.reason}`
+    };
+  }
+
+  const timestamp = new Date().toISOString();
+  const seed = {
+    cellId: params.cellId,
+    computationId: computation.deterministicId,
+    observationId: observation.deterministicId,
+    concordance: correlation.concordance,
+    transactionId: params.transactionId,
+    cycleNumber: params.cycleNumber,
+    timestamp
+  };
+  const deterministicId = `exp_${computeCanonicalHash(seed).substring(0, 24)}`;
+
+  const causalReferences: CausalReference[] = [
+    {
+      antecedentDomain: DomainKind.COMPUTATION_RESULT,
+      antecedentId: computation.deterministicId,
+      relation: 'COMPUTATIONAL_PREDICTION_EVALUATED'
+    },
+    {
+      antecedentDomain: DomainKind.OBSERVATION,
+      antecedentId: observation.deterministicId,
+      relation: correlation.concordance === 'CONCORDANT'
+        ? 'EMPIRICAL_CONFIRMATION'
+        : 'EMPIRICAL_CONTRADICTION'
+    }
+  ];
+
+  const mergedProvenance = Array.from(
+    new Set([...computation.provenance, ...observation.provenance, params.cellId, 'METABOLISM_GROUNDING'])
+  );
+
+  const isConcordant = correlation.concordance === 'CONCORDANT';
+  const noveltyClassification = isConcordant
+    ? NoveltyClassification.REINFORCEMENT
+    : NoveltyClassification.CONTRADICTION;
+
+  const verificationStatus = isConcordant
+    ? 'CONFIRMED_BY_WORLD'
+    : 'CONTRADICTED_BY_WORLD';
+
+  const computationConfidence = computation.confidence ?? (computation.payload.verificationStatus?.verified ? 1.0 : 0.5);
+  const observationConfidence = observation.confidence ?? 1.0;
+  const baseConfidence = (computationConfidence + observationConfidence) / 2;
+  const experienceConfidence = isConcordant
+    ? Math.min(1.0, baseConfidence * (1.0 - correlation.discrepancyScore * 0.5))
+    : Math.max(0.1, (1.0 - correlation.discrepancyScore) * observationConfidence);
+
+  const lessonsDerived = isConcordant
+    ? ['computational_prediction_concordant_with_empirical_world']
+    : [
+        'world_state_diverged_from_computational_prediction',
+        'computational_model_rupture_detected',
+        'negative_epistemic_feedback_recorded'
+      ];
+
+  const experience: DomainExperience = DomainExperienceSchema.parse({
+    contractVersion: 1,
+    domainKind: DomainKind.EXPERIENCE,
+    deterministicId,
+    cellId: params.cellId,
+    cycleNumber: params.cycleNumber,
+    timestamp,
+    causalReferences,
+    provenance: mergedProvenance,
+    confidence: experienceConfidence,
+    status: MetabolismStatus.ACCEPTED,
+    persistenceSemantics: {
+      category: MemoryCategory.EPISODIC,
+      storageKey: `experience_${deterministicId}`,
+      immutable: true,
+      retentionPolicy: 'RETAIN_INDEFINITELY'
+    },
+    payload: {
+      experienceId: deterministicId,
+      transactionId: params.transactionId,
+      cellId: params.cellId,
+      timestamp,
+      informationId: (observation.payload as any).informationId || observation.deterministicId,
+      knowledgeIds: params.knowledgeIds || [],
+      category: params.category || InformationCategory.GENERAL_TECHNOLOGY,
+      outcome: MetabolismStatus.ACCEPTED,
+      noveltyClassification,
+      noveltyScore: isConcordant ? 0.2 : 0.9,
+      source: observation.source || (observation.payload as any).sourceIdentifier || 'empirical_observation',
+      confidence: experienceConfidence,
+      verificationStatus,
+      lessonsDerived,
+      observationId: observation.deterministicId,
+      priorStateId: params.priorStateId,
+      resultingStateId: params.resultingStateId,
+      actionComputationId: computation.deterministicId,
+      evidenceIds: [],
+      cycleNumber: params.cycleNumber,
+      causalLinks: {
+        triggeringObservationId: observation.deterministicId,
+        priorStateId: params.priorStateId,
+        resultingStateId: params.resultingStateId,
+        actionComputationId: computation.deterministicId,
+        evidenceIds: [],
+        cycleNumber: params.cycleNumber
+      }
+    }
+  });
+
+  const transitionSeed = {
+    sourceId: `${computation.deterministicId},${observation.deterministicId}`,
+    targetId: experience.deterministicId,
+    cellId: params.cellId,
+    cycleNumber: params.cycleNumber,
+    timestamp
+  };
+
+  const envelope: DomainTransitionEnvelope = DomainTransitionEnvelopeSchema.parse({
+    transitionId: `tx_comp_obs_to_exp_${computeCanonicalHash(transitionSeed).substring(0, 20)}`,
+    sourceDomain: DomainKind.OBSERVATION,
+    targetDomain: DomainKind.EXPERIENCE,
+    sourceId: observation.deterministicId,
+    targetId: experience.deterministicId,
+    cellId: params.cellId,
+    cycleNumber: params.cycleNumber,
+    timestamp,
+    causalReferences,
+    provenance: experience.provenance,
+    confidence: experienceConfidence,
+    status: 'COMMITTED',
+    persistenceSemantics: experience.persistenceSemantics,
+    deterministicHash: computeCanonicalHash(experience)
+  });
+
+  return {
+    experience,
+    envelope,
+    canProduceExperience: true,
+    concordance: correlation.concordance as 'CONCORDANT' | 'CONTRADICTORY',
+    reason: isConcordant
+      ? 'Empirical observation confirmed computation output. Experience recorded with positive reinforcement.'
+      : 'Empirical observation contradicted computation output. Experience recorded with contradiction/rupture.'
+  };
+}
+

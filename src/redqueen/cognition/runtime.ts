@@ -31,6 +31,11 @@ import {
   CollectiveCognitiveState,
   CollectiveCognitiveStateSchema
 } from './types';
+import {
+  OrganicExperienceTransitionEngine,
+  ExperienceTransitionOptions,
+  ExperienceTransitionResult
+} from './experience';
 import { logger } from '../core/logger';
 
 const COMPONENT = 'cognitive_runtime';
@@ -213,12 +218,29 @@ export class CognitiveRuntime {
     }
 
     let latestFeedbackResult: CognitiveComputationFeedbackResult | null = null;
-    let provenance: string[] = [];
+    const provenance: string[] = [];
+    let activeWorldModel: WorldModel | null = null;
+
+    const overallTimeoutMs = initialRequest.timeoutMs ?? 10000;
+    const loopDeadline = Date.now() + overallTimeoutMs;
+
+    let remainingBudget = typeof (initialRequest.payload?.budget) === 'number' 
+      ? (initialRequest.payload.budget as number) 
+      : (typeof (initialRequest.payload?.maxComputeBudget) === 'number' ? (initialRequest.payload.maxComputeBudget as number) : 100.0);
+
+    const seenRequestIdentities = new Set<string>();
+    const seenPayloadSignatures = new Set<string>();
 
     while (currentCycleDepth < maxCycleDepth) {
-      provenance = [
-        `p9_state_request:${currentRequest.requestId}`
-      ];
+      provenance.push(`p9_state_request:${currentRequest.requestId}`);
+      seenRequestIdentities.add(currentRequest.deterministicIdentity);
+      seenPayloadSignatures.add(computeDeterministicHash(currentRequest.payload));
+
+      // Check timeout before starting iteration
+      if (Date.now() >= loopDeadline) {
+        provenance.push(`feedback_loop_timeout_exceeded:${currentRequest.requestId}`);
+        break;
+      }
 
       // Step 2: P8 Distributed Execution
       let computationResult: ComputationResult | undefined = undefined;
@@ -230,9 +252,13 @@ export class CognitiveRuntime {
         });
         computationStatus = computationResult.status;
         provenance.push(`p8_computation_executed:${computationResult.taskId}`);
+
+        const iterationCost = computationResult.trace?.compositionDetails?.costs?.totalOverheadCost ?? 1.0;
+        remainingBudget -= Math.max(0.1, iterationCost);
       } catch {
         computationStatus = ComputationStatus.FAILED;
         provenance.push(`p8_computation_failed:${currentRequest.requestId}`);
+        remainingBudget -= 1.0;
       }
 
       // Fallback context for feedback loop
@@ -290,18 +316,21 @@ export class CognitiveRuntime {
       });
       provenance.push(`p7_epistemic_fused:${fusionResult.fusionId}`);
 
-      // Step 5: P7 World Model Integration
-      let currentWorldModel = worldModelEngine.compose({
-        originatingCellId: activeCell.nodeId,
-        context,
-        concepts: activeCell ? activeCell.cognitiveGraph.getAllConcepts() : []
-      });
+      // Step 5: P7 World Model Integration (Cumulative & Evolving)
+      if (!activeWorldModel) {
+        activeWorldModel = worldModelEngine.compose({
+          originatingCellId: activeCell.nodeId,
+          context,
+          concepts: activeCell ? activeCell.cognitiveGraph.getAllConcepts() : []
+        });
+      }
 
       const updatedWorldModel = worldModelEngine.integrateComputationalEvidence(
-        currentWorldModel,
+        activeWorldModel,
         adaptedEvidence,
         activeCell?.cognitiveGraph
       );
+      activeWorldModel = updatedWorldModel;
       provenance.push(`p7_world_model_updated:${updatedWorldModel.worldModelId}`);
 
       // Step 6: P9 Collective Cognition Update from Updated WorldModel
@@ -331,17 +360,32 @@ export class CognitiveRuntime {
         isBounded: false,
         deterministicIdentity,
         status: computationStatus,
-        provenance
+        provenance: [...provenance]
       };
 
       // Stop loop early if there's no reason to compute further (e.g. failure)
       if (computationStatus === ComputationStatus.FAILED || computationStatus === ComputationStatus.TIMEOUT || computationStatus === ComputationStatus.BLOCKED) {
         break;
       }
+
+      if (remainingBudget <= 0) {
+        provenance.push('feedback_loop_budget_exhausted');
+        break;
+      }
+
+      if (Date.now() >= loopDeadline) {
+        provenance.push(`feedback_loop_timeout_exceeded:${currentRequest.requestId}`);
+        break;
+      }
       
       currentCycleDepth++;
       
       if (currentCycleDepth < maxCycleDepth) {
+        if (Date.now() >= loopDeadline) {
+          provenance.push('feedback_loop_timeout_exceeded');
+          break;
+        }
+
         // Check if the updated epistemic/world-model/collective state actually has a new computational need.
         // If state is already completely VERIFIED with zero uncertainty and no unverified structures/beliefs, stop the loop normally.
         const isFullyVerified = 
@@ -384,12 +428,13 @@ export class CognitiveRuntime {
           ]
         };
 
-        // Prepare next payload incorporating prior state identity, world model, vector, and computation outputs
+        // Prepare next payload incorporating prior state identity, world model, vector, budget, and computation outputs
         const nextPayload: Record<string, unknown> = {
           ...currentRequest.payload,
           originatingWorldModelId: updatedWorldModel.worldModelId,
           collectiveStateId: collectiveState.deterministicIdentity,
           collectiveResultVector: collectiveState.resultVector,
+          budget: remainingBudget,
           cycleDepth: currentCycleDepth
         };
 
@@ -410,6 +455,13 @@ export class CognitiveRuntime {
         };
 
         const nextDeterministicIdentity = computeDeterministicHash(canonicalSpec);
+
+        // Duplicate suppression: do not repeat an identical computation task
+        if (seenRequestIdentities.has(nextDeterministicIdentity) || seenPayloadSignatures.has(computeDeterministicHash(nextPayload))) {
+          provenance.push('duplicate_suppression_triggered');
+          break;
+        }
+
         const nextRequestId = `${initialRequest.requestId}_iter${currentCycleDepth}`;
 
         currentRequest = deepFreeze({
@@ -437,8 +489,13 @@ export class CognitiveRuntime {
       throw new Error('Feedback loop exited without producing any result');
     }
 
-    CognitiveComputationFeedbackResultSchema.parse(latestFeedbackResult);
-    return deepFreeze(latestFeedbackResult);
+    const finalResult: CognitiveComputationFeedbackResult = {
+      ...latestFeedbackResult,
+      provenance: [...provenance]
+    };
+
+    CognitiveComputationFeedbackResultSchema.parse(finalResult);
+    return deepFreeze(finalResult);
   }
 
   public async process(request: CognitiveRequest): Promise<CognitiveResult> {
@@ -968,5 +1025,29 @@ export class CognitiveRuntime {
       }),
       status
     };
+  }
+
+  /**
+   * P05: Process an empirical observation into experience across the population or for a specific target cell
+   */
+  public async processObservation(
+    rawObservation: any,
+    targetCellId?: string,
+    options?: ExperienceTransitionOptions
+  ): Promise<ExperienceTransitionResult[]> {
+    const targets = targetCellId
+      ? this.population.filter(c => c.nodeId === targetCellId)
+      : this.population;
+
+    if (targets.length === 0) {
+      throw new Error(`No matching target cells found in CognitiveRuntime for cellId: ${targetCellId}`);
+    }
+
+    const results: ExperienceTransitionResult[] = [];
+    for (const cell of targets) {
+      const res = await cell.processObservation(rawObservation, options);
+      results.push(res);
+    }
+    return results;
   }
 }
