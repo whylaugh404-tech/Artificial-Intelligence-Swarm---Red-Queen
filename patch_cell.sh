@@ -1,1 +1,0 @@
-sed -i "s/this.collectiveComputation = new CollectiveComputationEngine(this);/this.collectiveComputation = new CollectiveComputationEngine(this);\n    const { DistributedComputationFabric } = require('.\/cognition\/computation\/fabric');\n    this.collectiveComputation.fabric = new DistributedComputationFabric(this, this.collectiveComputation);/g" src/redqueen/core/cell.ts

@@ -1,2 +1,0 @@
-sed -i 's/const { DistributedComputationFabric } = require("\.\.\/cognition\/computation\/fabric");//g' src/redqueen/core/cell.ts
-sed -i "s/import { CollectiveComputationEngine } from '..\/cognition\/computation\/engine';/import { CollectiveComputationEngine } from '..\/cognition\/computation\/engine';\nimport { DistributedComputationFabric } from '..\/cognition\/computation\/fabric';/g" src/redqueen/core/cell.ts

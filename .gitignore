@@ -8,3 +8,8 @@ coverage/
 !.env.example
 data/
 *.tmp
+:memory:
+*.tar.gz
+*.patch
+test_identity_integrity_storage.json
+.test_exchange_store*

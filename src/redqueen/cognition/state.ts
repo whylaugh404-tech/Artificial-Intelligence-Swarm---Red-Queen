@@ -68,7 +68,16 @@ export class CognitiveStateManager {
   }
 
   public getState(): Readonly<CognitiveState> {
-    return { ...this.state };
+    return {
+      ...this.state,
+      activeGoals: [...this.state.activeGoals],
+      knowledgeReferences: [...this.state.knowledgeReferences],
+      conceptReferences: [...this.state.conceptReferences],
+      experienceReferences: [...this.state.experienceReferences],
+      knowledgeGaps: this.state.knowledgeGaps.map(g => ({ ...g })),
+      memoryStats: { ...this.state.memoryStats },
+      metadata: { ...this.state.metadata }
+    };
   }
 
   public getSpecialization(): string | null {

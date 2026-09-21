@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { AIProvider } from './ai-provider';
-import { MemoryStore, MemoryEntry } from '../memory/store';
+import { MemoryStore, MemoryEntry, MemoryCategory } from '../memory/store';
 import { logger } from '../core/logger';
 import { randomUUID } from 'crypto';
+import { computeDeterministicHash } from '../core/canonical';
 
 export const AIReasoningSchema = z.object({
   goal: z.string(),
@@ -18,17 +19,55 @@ export const AIReasoningSchema = z.object({
 
 export type AIReasoning = z.infer<typeof AIReasoningSchema>;
 
-export class CognitionPipeline {
+/**
+ * Explicit contract for legacy cognition adapters.
+ * Ensures caller acknowledges legacy status and cannot accidentally bypass epistemic/evidence controls.
+ */
+export interface LegacyCognitionAdapter {
+  readonly isLegacy: boolean;
+  readonly cellId: string;
+  executeCycle(observation: string, options?: { allowLegacyUnsafeExecution?: boolean }): Promise<void>;
+}
+
+/**
+ * @deprecated LEGACY SUBSYSTEM / ADAPTER:
+ * CognitionPipeline represents the early, non-canonical LLM direct-prompting prototype.
+ *
+ * CANONICAL ARCHITECTURE:
+ * The single canonical production cognitive orchestrator is `CognitiveRuntime`.
+ * Production flow topology:
+ * Cell -> CognitiveRuntime -> cognition organs (Understanding / Reasoning / Collective) -> WorldModel -> Action/Feedback.
+ *
+ * This class is retained strictly as an isolated legacy adapter and MUST NOT be activated
+ * as a secondary autonomous brain in production. Accidental production execution is prevented
+ * unless explicitly allowed via `allowLegacyUnsafeExecution: true`.
+ */
+export class CognitionPipeline implements LegacyCognitionAdapter {
+  public readonly isLegacy = true;
   private readonly component = 'cognition_pipeline';
 
   constructor(
     private readonly ai: AIProvider,
     private readonly memory: MemoryStore,
-    private readonly cellId: string
+    public readonly cellId: string
   ) {}
 
-  async executeCycle(observation: string) {
-    logger.info(this.component, 'cycle_started', { observation });
+  /**
+   * Executes the legacy non-canonical cognition cycle.
+   * Blocked by default to prevent accidental production activation and bypass of epistemic controls.
+   */
+  async executeCycle(observation: string, options?: { allowLegacyUnsafeExecution?: boolean }): Promise<void> {
+    if (!options?.allowLegacyUnsafeExecution) {
+      logger.warn(this.component, 'legacy_execution_prevented', {
+        cellId: this.cellId,
+        reason: 'Direct invocation of legacy CognitionPipeline is blocked. Use CognitiveRuntime canonical orchestrator.'
+      });
+      throw new Error(
+        `LEGACY_PIPELINE_ACTIVATION_BLOCKED: CognitionPipeline.executeCycle() is an isolated legacy subsystem and cannot bypass epistemic controls. Use CognitiveRuntime as the canonical production cognitive orchestrator (or pass allowLegacyUnsafeExecution: true for legacy testing).`
+      );
+    }
+
+    logger.warn(this.component, 'legacy_cycle_started_unsafe_mode', { cellId: this.cellId, observation });
 
     // 1. OBSERVE & NORMALIZE (In a fuller implementation, normalizers clean the input)
     const normalizedObservation = observation.trim().toLowerCase();
@@ -96,14 +135,17 @@ Allowed action types are: 'query_dht', 'log', 'store_memory', 'noop'.`,
     }
 
     // 9. STORE
+    const content = { observation, plan, results };
     const entry: MemoryEntry = {
       id: randomUUID(),
-      content: { observation, plan, results },
+      cellId: this.cellId,
+      category: MemoryCategory.EPISODIC,
+      content,
       source: 'cognition_pipeline',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       confidence: plan.confidence,
-      hash: '', // would hash content here
+      hash: computeDeterministicHash(content),
       provenance: [this.cellId]
     };
     

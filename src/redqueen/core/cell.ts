@@ -6,6 +6,7 @@ import { CellState, Lifecycle } from './lifecycle';
 import { JsonFileMemoryStore, MemoryStore, MemoryCategory } from '../memory/store';
 import { OpenRouterAIProvider, AIProvider } from '../cognition/ai-provider';
 import { CognitionPipeline } from '../cognition/pipeline';
+import { CognitiveRuntime, CognitiveRequest, CognitiveResult } from '../cognition/runtime';
 import { logger } from './logger';
 import { ElectionManager } from '../swarm/election';
 import { RoutingTable, PeerInfo, compareDistance } from '../dht/routing';
@@ -110,7 +111,7 @@ export class Cell {
    * Directly process a dataset and create valid provenance-linked cognitive records.
    */
   public async ingestDataset(dataset: Record<string, unknown>[] | Record<string, unknown>): Promise<void> {
-    if (!this.cognition) {
+    if (!this.cognitiveRuntime && !this.cognition) {
       throw new Error("Cognition subsystem not initialized");
     }
 
@@ -216,7 +217,7 @@ export class Cell {
         premises: [
           {
             premiseId: `premise_${recordHash.substring(0, 16)}_${index}`,
-            statement: `Dataset record observed from ${sourceId}.`,
+            statement: 'Dataset record observed.',
             confidence: epistemicConfidence,
             evidenceIds: [storedEvidence.evidenceId],
             provenance: [this.nodeId, sourceId, ...(storedEvidence.provenance.derivedFrom || [])],
@@ -243,6 +244,15 @@ export class Cell {
       this,
       options
     );
+  }
+
+  /**
+   * CANONICAL COGNITIVE ORCHESTRATION ENTRY POINT
+   * Dispatches cognitive requests through the canonical CognitiveRuntime pipeline:
+   * Cell -> CognitiveRuntime -> cognition organs (Understanding/Reasoning/Collective) -> WorldModel -> Action/Feedback.
+   */
+  public async processCognitiveRequest(request: CognitiveRequest): Promise<CognitiveResult> {
+    return this.cognitiveRuntime.process(request);
   }
 
   /**
@@ -393,6 +403,25 @@ export class Cell {
   public readonly lifecycle: Lifecycle;
   public readonly memory: MemoryStore;
   public readonly aiProvider: AIProvider;
+
+  /**
+   * CANONICAL COGNITIVE ORCHESTRATOR
+   * Orchestrates canonical cognitive flow across this cell's cognitive organs.
+   * Topology: Cell -> CognitiveRuntime -> cognition organs (Understanding/Reasoning/Collective) -> WorldModel -> Action/Feedback.
+   */
+  public readonly cognitiveRuntime: CognitiveRuntime;
+
+  /**
+   * Convenience getter alias for canonical CognitiveRuntime.
+   */
+  public get runtime(): CognitiveRuntime {
+    return this.cognitiveRuntime;
+  }
+
+  /**
+   * @deprecated LEGACY SUBSYSTEM / ADAPTER:
+   * Isolated legacy prototype. The single canonical production cognitive orchestrator is `cell.cognitiveRuntime`.
+   */
   public readonly cognition: CognitionPipeline;
   public readonly routing: RoutingTable;
   public readonly election: ElectionManager;
@@ -526,6 +555,14 @@ export class Cell {
     this.cognitiveDevelopment = new CognitiveDevelopmentEngine(this);
     this.collectiveComputation = new CollectiveComputationEngine(this);
     this.evolution = new EvolutionEngine(this);
+
+    // Canonical Cognitive Orchestrator Initialization
+    // Target topology: Cell -> CognitiveRuntime -> cognition organs (Understanding/Reasoning/Collective) -> WorldModel -> Action/Feedback
+    this.cognitiveRuntime = new CognitiveRuntime([this], {
+      understandingEngine: this.understanding,
+      reasoningEngine: this.reasoning,
+      collectiveEngine: this.collectiveCognition
+    });
     
 
     // Initialize Information Metabolism Subsystem
@@ -802,6 +839,9 @@ export class Cell {
 
     await cell.memory.initialize();
     await cell.restoreOrPersistGenome();
+    await cell.cognitiveState.restore(cell.memory);
+    await cell.cognitiveGraph.load();
+    await cell.recoverExperiences();
     return cell;
   }
 
@@ -1140,6 +1180,9 @@ export class Cell {
 
     // 2. Swarm Certificate
     const auth = options?.authority || this.swarm.authority;
+    if (auth && !child.swarm.trustedIssuerPublicKey) {
+      child.swarm.trustedIssuerPublicKey = auth.publicKey;
+    }
     let cert = options?.certificate || child.swarm.getMyCertificate();
     if (!cert && auth) {
       const allowedCaps = ['discovery', 'routing', 'computation', 'memory'];
