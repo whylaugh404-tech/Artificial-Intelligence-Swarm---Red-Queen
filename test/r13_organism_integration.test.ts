@@ -79,7 +79,6 @@ describe('RED QUEEN — REPAIR PROMPT 13: Full Cell Organism Integration & Causa
       kp.privateKey,
       kp.publicKey,
       {
-        trustAnchor,
         issuerAuthority: membershipAuthority,
         trustedIssuerPublicKey: membershipAuthority.publicKey,
         authority: membershipAuthority,
@@ -226,9 +225,8 @@ describe('RED QUEEN — REPAIR PROMPT 13: Full Cell Organism Integration & Causa
 
       // [H] Organic Experience is created via canonical transition
       const transitionOutcome = await parentCell.processObservation(observationRecord, {
-        operationalConfidence: 0.98,
-        epistemicConfidence: 0.98,
-        activeGoals: ['VERIFY_PRESSURE_THRESHOLD']
+        expectedContradiction: true,
+        enableCognitiveDevelopment: true
       });
 
       const experience = transitionOutcome.experience;
@@ -327,7 +325,7 @@ describe('RED QUEEN — REPAIR PROMPT 13: Full Cell Organism Integration & Causa
       // [M] Child possesses new distinct Identity and valid Lineage
       expect(childCell.nodeId).not.toBe(parentCell.nodeId);
       expect(childCell.publicKey).not.toBe(parentCell.publicKey);
-      expect(childCell.lineageId).toBe(parentCell.lineageId);
+      expect(childCell.lineage.lineageId).toBe(parentCell.lineage.lineageId);
       expect(childCell.genome.generation).toBe(parentCell.genome.generation + 1);
 
       // [N] Child enters Population and DHT Routing Table
@@ -405,8 +403,8 @@ describe('RED QUEEN — REPAIR PROMPT 13: Full Cell Organism Integration & Causa
       const restartedCell = await Cell.loadFromStorage(
         cell.storagePath,
         'test_key_placeholder',
-        { trustAnchor, authority: membershipAuthority, port: 0 },
-        { storageSecret: STORAGE_SECRET }
+        { authority: membershipAuthority, port: 0 },
+        { storageSecret: STORAGE_SECRET, trustAnchor }
       );
       activeCells.push(restartedCell);
 
@@ -557,23 +555,15 @@ describe('RED QUEEN — REPAIR PROMPT 13: Full Cell Organism Integration & Causa
         type: 'constant_measurement'
       };
 
-      const outcome1 = await cell.processObservation(observation, {
-        operationalConfidence: 0.9,
-        epistemicConfidence: 0.9,
-        activeGoals: []
-      });
+      const outcome1 = await cell.processObservation(observation);
       expect(outcome1.experience).toBeDefined();
 
       // Second attempt with identical observation
-      const outcome2 = await cell.processObservation(observation, {
-        operationalConfidence: 0.9,
-        epistemicConfidence: 0.9,
-        activeGoals: []
-      });
+      const outcome2 = await cell.processObservation(observation);
 
       // Engine detects duplicate and returns existing experience rather than duplicating
       expect(outcome2.experience.experienceId).toBe(outcome1.experience.experienceId);
-      expect(outcome2.experience.deterministicHash).toBe(outcome1.experience.deterministicHash);
+      expect(outcome2.experience.informationId).toBe(outcome1.experience.informationId);
     });
 
     it('rejects unauthorized mitosis without valid cryptographic proof', async () => {
@@ -639,8 +629,8 @@ describe('RED QUEEN — REPAIR PROMPT 13: Full Cell Organism Integration & Causa
         Cell.loadFromStorage(
           corruptedStoragePath,
           'test_key',
-          { trustAnchor, authority: membershipAuthority, port: 0 },
-          { storageSecret: STORAGE_SECRET }
+          { authority: membershipAuthority, port: 0 },
+          { storageSecret: STORAGE_SECRET, trustAnchor }
         )
       ).rejects.toThrow(/Corrupted cell storage/);
     });

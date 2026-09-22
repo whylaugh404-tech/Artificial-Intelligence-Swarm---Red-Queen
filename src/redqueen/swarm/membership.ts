@@ -27,12 +27,14 @@ import { AllowlistAuthorizationPolicy } from './policy';
 export interface SwarmMembershipOptions {
   swarmId?: string;
   issuerAuthority?: MembershipAuthority;
+  authority?: MembershipAuthority;
   trustedIssuerPublicKey?: string;
   issuerPublicKey?: string; // Backward-compatible alias
   authorizationPolicy?: AuthorizationPolicy;
   capabilities?: SwarmCapability[];
   certificateTtlMs?: number;
   memoryStore?: MemoryStore;
+  port?: number;
 }
 
 /**

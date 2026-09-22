@@ -298,7 +298,11 @@ async function startServer() {
 
   app.get('/api/download', (req, res) => {
     const file = path.join(process.cwd(), 'red-queen.tar.gz');
-    res.download(file);
+    if (fs.existsSync(file)) {
+      res.download(file);
+    } else {
+      res.status(404).json({ error: 'Archive red-queen.tar.gz not found' });
+    }
   });
 
   // Guarantee all /api/* routes return JSON, never HTML fallback
