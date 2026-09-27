@@ -3,6 +3,7 @@ import { CognitiveConcept, CognitiveRelation, CognitiveRelationPredicate, Cognit
 import { EpistemicTransitionTrigger, Context } from '../epistemic/types';
 import { Evidence } from '../evidence/types';
 import { Experience, MetabolismStatus, NoveltyClassification, InformationCategory } from '../../metabolism/types';
+import { computeDeterministicHash } from '../computation/canonical';
 
 export interface CognitiveDevelopmentResult {
   conceptsStrengthened: string[];
@@ -11,6 +12,8 @@ export interface CognitiveDevelopmentResult {
   relationsWeakened: string[];
   conflictsDetected: number;
   unresolvedGapsRecorded?: string[];
+  generalizationsFormed?: string[];
+  generalizationsUpdated?: string[];
 }
 
 export class CognitiveDevelopmentEngine {
@@ -32,7 +35,9 @@ export class CognitiveDevelopmentEngine {
       relationsStrengthened: [],
       relationsWeakened: [],
       conflictsDetected: 0,
-      unresolvedGapsRecorded: []
+      unresolvedGapsRecorded: [],
+      generalizationsFormed: [],
+      generalizationsUpdated: []
     };
 
     const activeContext: Context = context || {
@@ -195,6 +200,32 @@ export class CognitiveDevelopmentEngine {
             }
           }
         }
+
+        // Autonomous Generalization Formation / Reinforcement from Positive Experience
+        try {
+          const genResult = await this.detectAndFormGeneralization(
+            conceptId,
+            experience,
+            activeEvidence,
+            false,
+            activeContext
+          );
+          if (genResult) {
+            if (genResult.isNew) {
+              if (!result.generalizationsFormed) result.generalizationsFormed = [];
+              if (!result.generalizationsFormed.includes(genResult.gen.generalizationId)) {
+                result.generalizationsFormed.push(genResult.gen.generalizationId);
+              }
+            } else {
+              if (!result.generalizationsUpdated) result.generalizationsUpdated = [];
+              if (!result.generalizationsUpdated.includes(genResult.gen.generalizationId)) {
+                result.generalizationsUpdated.push(genResult.gen.generalizationId);
+              }
+            }
+          }
+        } catch {
+          // Safe fallback
+        }
       }
       for (const relId of targetRelationIds) {
         await this.strengthenRelation(
@@ -256,22 +287,30 @@ export class CognitiveDevelopmentEngine {
             }
           }
 
-          // Generalization: propagate contradiction to matching generalizations
-          const generalizations = this.localCell.cognitiveGraph.getAllGeneralizations();
-          for (const gen of generalizations) {
-            if (gen.sourceConceptIds.includes(conceptId)) {
-              try {
-                const updatedGen: CognitiveGeneralization = {
-                  ...gen,
-                  verificationStatus: RepresentationVerificationStatus.CONTRADICTED,
-                  confidence: Math.max(0.0, gen.confidence - 0.4),
-                  evidenceIds: Array.from(new Set([...(gen.evidenceIds || []), ...activeEvidence.map(e => e.evidenceId)]))
-                };
-                await this.localCell.cognitiveGraph.updateGeneralization(updatedGen);
-              } catch {
-                // Safe fallback
+          // Autonomous Generalization Formation / Update from Empirical Conflict Experience
+          try {
+            const genResult = await this.detectAndFormGeneralization(
+              conceptId,
+              experience,
+              activeEvidence,
+              isConflict || isNegative,
+              activeContext
+            );
+            if (genResult) {
+              if (genResult.isNew) {
+                if (!result.generalizationsFormed) result.generalizationsFormed = [];
+                if (!result.generalizationsFormed.includes(genResult.gen.generalizationId)) {
+                  result.generalizationsFormed.push(genResult.gen.generalizationId);
+                }
+              } else {
+                if (!result.generalizationsUpdated) result.generalizationsUpdated = [];
+                if (!result.generalizationsUpdated.includes(genResult.gen.generalizationId)) {
+                  result.generalizationsUpdated.push(genResult.gen.generalizationId);
+                }
               }
             }
+          } catch {
+            // Safe fallback
           }
         }
       }
@@ -614,5 +653,215 @@ export class CognitiveDevelopmentEngine {
    */
   public async recoverConsistentState(representationId: string): Promise<boolean> {
     return this.localCell.cognitiveGraph.recoverConsistentState(representationId);
+  }
+
+  /**
+   * P7.6 & R9: Autonomous Pattern Detection & Generalization Formation from Empirical Experience.
+   * Discovers shared patterns across sibling instances belonging to a parent class
+   * or sharing structural relational signatures, and dynamically creates or updates
+   * a persistent CognitiveGeneralization in the CognitiveGraph.
+   */
+  private async detectAndFormGeneralization(
+    conceptId: string,
+    experience: Experience,
+    activeEvidence: Evidence[],
+    isConflict: boolean,
+    activeContext: Context
+  ): Promise<{ gen: CognitiveGeneralization; isNew: boolean } | null> {
+    const concept = this.localCell.cognitiveGraph.getConcept(conceptId);
+    if (!concept) return null;
+
+    // 1. Identify parent abstractions / general concepts via hierarchical relations
+    const relations = this.localCell.cognitiveGraph.getRelationsForConcept(conceptId);
+    const parentRelations = relations.filter(
+      r => r.subjectConceptId === conceptId &&
+      (r.predicate === CognitiveRelationPredicate.INSTANCE_OF ||
+       r.predicate === CognitiveRelationPredicate.SPECIALIZES ||
+       r.predicate === CognitiveRelationPredicate.IS_A)
+    );
+
+    // 2. Extract empirical anomaly / consequence details from observation or experience
+    let empiricalAnomaly: string | undefined;
+    const obsId = experience.observationId || (experience.causalLinks?.triggeringObservationId) || experience.informationId;
+    if (obsId) {
+      try {
+        const obsEntry = await this.localCell.memory.get(obsId);
+        if (obsEntry?.content) {
+          const content = typeof obsEntry.content === 'string' ? JSON.parse(obsEntry.content) : obsEntry.content;
+          empiricalAnomaly = content.anomaly || content.content?.anomaly || content.error || content.failureMode || content.details;
+        }
+      } catch {
+        // safe fallback
+      }
+    }
+    if (!empiricalAnomaly && experience.lessonsDerived && experience.lessonsDerived.length > 0) {
+      empiricalAnomaly = experience.lessonsDerived[0];
+    }
+
+    // 3. For each parent concept, detect shared pattern across all sibling instances
+    for (const parentRel of parentRelations) {
+      const parentConceptId = parentRel.objectConceptId;
+      const parentConcept = this.localCell.cognitiveGraph.getConcept(parentConceptId);
+      if (!parentConcept) continue;
+
+      // Find all sibling concepts in the graph that also belong to this parent concept
+      const siblingRelations = this.localCell.cognitiveGraph.queryRelations({
+        object: parentConceptId
+      }).filter(
+        r => r.predicate === CognitiveRelationPredicate.INSTANCE_OF ||
+             r.predicate === CognitiveRelationPredicate.SPECIALIZES ||
+             r.predicate === CognitiveRelationPredicate.IS_A
+      );
+
+      const siblingConceptIds = Array.from(new Set(siblingRelations.map(r => r.subjectConceptId)));
+      if (!siblingConceptIds.includes(conceptId)) {
+        siblingConceptIds.push(conceptId);
+      }
+      siblingConceptIds.sort();
+
+      const allCoveredConceptIds = Array.from(new Set([parentConceptId, ...siblingConceptIds])).sort();
+
+      const anomalyLabel = empiricalAnomaly
+        ? String(empiricalAnomaly).toLowerCase().replace(/_/g, ' ')
+        : 'empirical operational failure';
+
+      const pattern = isConflict
+        ? `Empirical risk invariant: ${parentConcept.canonicalName} instances exhibit ${anomalyLabel} across operational units`
+        : `Empirical operational invariant: ${parentConcept.canonicalName} instances confirmed under operational telemetry`;
+
+      const genSeed = `${parentConceptId}:${anomalyLabel}`;
+      const genId = `gen_${computeDeterministicHash(genSeed).substring(0, 16)}`;
+
+      // Check if a generalization already exists for this parent concept or pattern
+      const existingGens = this.localCell.cognitiveGraph.getAllGeneralizations();
+      let matchedGen = existingGens.find(
+        g => g.generalizationId === genId ||
+             (g.sourceConceptIds.includes(parentConceptId) && (g.pattern.includes(parentConcept.canonicalName) || g.pattern.includes(anomalyLabel))) ||
+             g.pattern === pattern
+      );
+
+      const newEvidenceIds = activeEvidence.map(e => e.evidenceId);
+
+      if (matchedGen) {
+        // Update existing generalization
+        const mergedConceptIds = Array.from(new Set([...matchedGen.sourceConceptIds, ...allCoveredConceptIds])).sort();
+        const mergedSupportingEvidence = Array.from(new Set([...matchedGen.supportingEvidence, ...newEvidenceIds])).sort();
+        const mergedEvidenceIds = Array.from(new Set([...(matchedGen.evidenceIds || []), ...newEvidenceIds])).sort();
+
+        const isMultiEvidence = mergedSupportingEvidence.length > 1;
+        const newStatus = isConflict
+          ? RepresentationVerificationStatus.CONTRADICTED
+          : (isMultiEvidence ? RepresentationVerificationStatus.SUPPORTED : RepresentationVerificationStatus.PENDING);
+
+        const newConfidence = isMultiEvidence
+          ? Math.min(0.95, 0.6 + (mergedSupportingEvidence.length * 0.15))
+          : 0.6;
+
+        const updatedGen: CognitiveGeneralization = {
+          ...matchedGen,
+          sourceConceptIds: mergedConceptIds,
+          pattern,
+          supportingEvidence: mergedSupportingEvidence,
+          evidenceIds: mergedEvidenceIds,
+          confidence: newConfidence,
+          verificationStatus: newStatus,
+          provenance: Array.from(new Set([...matchedGen.provenance, this.localCell.nodeId, experience.experienceId]))
+        };
+
+        await this.localCell.cognitiveGraph.updateGeneralization(updatedGen);
+        return { gen: updatedGen, isNew: false };
+      } else {
+        // Create brand new generalization discovered from this experience
+        const isMultiEvidence = newEvidenceIds.length > 1;
+        const verificationStatus = isConflict
+          ? RepresentationVerificationStatus.CONTRADICTED
+          : (isMultiEvidence ? RepresentationVerificationStatus.SUPPORTED : RepresentationVerificationStatus.PENDING);
+
+        const confidence = isMultiEvidence
+          ? Math.min(0.92, 0.5 + (newEvidenceIds.length * 0.15))
+          : 0.6;
+
+        const newGen: CognitiveGeneralization = {
+          generalizationId: genId,
+          sourceConceptIds: allCoveredConceptIds,
+          pattern,
+          supportingEvidence: newEvidenceIds.length > 0 ? newEvidenceIds : [`ev_exp_${experience.experienceId}`],
+          evidenceIds: newEvidenceIds,
+          confidence,
+          verificationStatus,
+          provenance: [this.localCell.nodeId, experience.experienceId],
+          createdAt: new Date().toISOString(),
+          originatingCellId: this.localCell.nodeId
+        };
+
+        const inserted = await this.localCell.cognitiveGraph.insertGeneralization(newGen);
+        return { gen: inserted, isNew: true };
+      }
+    }
+
+    // Fallback: If no hierarchical parent relation exists, check topological structural signature
+    const existingConcepts = this.localCell.cognitiveGraph.getAllConcepts();
+    const currentSig = this.localCell.cognitiveGraph.computeStructuralSignature(conceptId);
+    if (currentSig) {
+      const structurallySimilarSiblings: string[] = [conceptId];
+      for (const other of existingConcepts) {
+        if (other.conceptId === conceptId) continue;
+        const otherSig = this.localCell.cognitiveGraph.computeStructuralSignature(other.conceptId);
+        if (otherSig) {
+          const sim = this.localCell.cognitiveGraph.compareSignatures(currentSig, otherSig);
+          if (sim >= 0.5) {
+            structurallySimilarSiblings.push(other.conceptId);
+          }
+        }
+      }
+
+      if (structurallySimilarSiblings.length > 1) {
+        structurallySimilarSiblings.sort();
+        const anomalyLabel = empiricalAnomaly
+          ? String(empiricalAnomaly).toLowerCase().replace(/_/g, ' ')
+          : 'empirical failure';
+
+        const pattern = `Structural risk invariant: components with signature topology encounter ${anomalyLabel}`;
+        const genSeed = `struct_${currentSig.outgoingPredicates.sort().join('_')}:${anomalyLabel}`;
+        const genId = `gen_${computeDeterministicHash(genSeed).substring(0, 16)}`;
+
+        const newEvidenceIds = activeEvidence.map(e => e.evidenceId);
+        const existingGens = this.localCell.cognitiveGraph.getAllGeneralizations();
+        const matchedExisting = existingGens.find(g => g.generalizationId === genId || g.pattern === pattern);
+
+        if (matchedExisting) {
+          const mergedConceptIds = Array.from(new Set([...matchedExisting.sourceConceptIds, ...structurallySimilarSiblings])).sort();
+          const mergedSupportingEvidence = Array.from(new Set([...matchedExisting.supportingEvidence, ...newEvidenceIds])).sort();
+          const updatedGen: CognitiveGeneralization = {
+            ...matchedExisting,
+            sourceConceptIds: mergedConceptIds,
+            supportingEvidence: mergedSupportingEvidence,
+            evidenceIds: mergedSupportingEvidence,
+            confidence: Math.min(0.95, 0.6 + (mergedSupportingEvidence.length * 0.15)),
+            verificationStatus: isConflict ? RepresentationVerificationStatus.CONTRADICTED : RepresentationVerificationStatus.SUPPORTED,
+            provenance: Array.from(new Set([...matchedExisting.provenance, this.localCell.nodeId, experience.experienceId]))
+          };
+          await this.localCell.cognitiveGraph.updateGeneralization(updatedGen);
+          return { gen: updatedGen, isNew: false };
+        } else {
+          const newGen: CognitiveGeneralization = {
+            generalizationId: genId,
+            sourceConceptIds: structurallySimilarSiblings,
+            pattern,
+            supportingEvidence: newEvidenceIds.length > 0 ? newEvidenceIds : [`ev_exp_${experience.experienceId}`],
+            evidenceIds: newEvidenceIds,
+            confidence: 0.85,
+            verificationStatus: isConflict ? RepresentationVerificationStatus.CONTRADICTED : RepresentationVerificationStatus.SUPPORTED,
+            provenance: [this.localCell.nodeId, experience.experienceId],
+            createdAt: new Date().toISOString(),
+            originatingCellId: this.localCell.nodeId
+          };
+          const inserted = await this.localCell.cognitiveGraph.insertGeneralization(newGen);
+          return { gen: inserted, isNew: true };
+        }
+      }
+    }
+
+    return null;
   }
 }

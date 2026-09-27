@@ -870,6 +870,52 @@ export class CognitiveGraph {
     return validated;
   }
 
+  public findGeneralizationsByConcept(conceptId: string): CognitiveGeneralization[] {
+    const directMatches = new Set<CognitiveGeneralization>();
+    const parentConceptIds = new Set<string>();
+
+    const relations = this.getRelationsForConcept(conceptId);
+    for (const r of relations) {
+      if (
+        r.subjectConceptId === conceptId &&
+        (r.predicate === CognitiveRelationPredicate.INSTANCE_OF ||
+         r.predicate === CognitiveRelationPredicate.SPECIALIZES ||
+         r.predicate === CognitiveRelationPredicate.IS_A)
+      ) {
+        parentConceptIds.add(r.objectConceptId);
+      }
+    }
+
+    const conceptSig = this.computeStructuralSignature(conceptId);
+
+    for (const g of this.generalizations.values()) {
+      // 1. Direct inclusion
+      if (g.sourceConceptIds.includes(conceptId)) {
+        directMatches.add(g);
+        continue;
+      }
+
+      // 2. Hierarchical inclusion via parent relation
+      if (Array.from(parentConceptIds).some(pid => g.sourceConceptIds.includes(pid))) {
+        directMatches.add(g);
+        continue;
+      }
+
+      // 3. Topological structural similarity if candidate concept has relational structure
+      if (conceptSig && conceptSig.outDegree > 0) {
+        for (const srcId of g.sourceConceptIds) {
+          const srcSig = this.computeStructuralSignature(srcId);
+          if (srcSig && this.compareSignatures(conceptSig, srcSig) >= 0.7) {
+            directMatches.add(g);
+            break;
+          }
+        }
+      }
+    }
+
+    return Array.from(directMatches);
+  }
+
   public getAllAnalogies(): CognitiveAnalogy[] {
     return Array.from(this.analogies.values());
   }

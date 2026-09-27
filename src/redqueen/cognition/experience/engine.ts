@@ -142,8 +142,8 @@ export class OrganicExperienceTransitionEngine {
       source = rawObservation.source || (rawObservation.payload as any)?.sourceIdentifier || (rawObservation.payload as any)?.source;
       timestamp = rawObservation.timestamp || (rawObservation.payload as any)?.timestamp;
       confidence = rawObservation.confidence ?? 1.0;
-      content = rawObservation.payload ?? rawObservation;
-      observationId = rawObservation.deterministicId;
+      content = rawObservation.payload ?? rawObservation.content ?? rawObservation;
+      observationId = rawObservation.deterministicId || rawObservation.observationId;
     } else {
       observedSubject = rawObservation.observedSubject || rawObservation.subject || rawObservation.type;
       source = rawObservation.source || rawObservation.sourceId || rawObservation.sourceIdentifier;

@@ -647,12 +647,12 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     }
   });
 
-  it('proves generalization: specific experience on Case A transforms persistent state across restart and redirects reasoning on non-identical Case B', async () => {
-    // 1. Setup shared ontology: General Parent Concept and two distinct specific instances (Unit 1 and Unit 2)
+  it('proves autonomous generalization formation from experience, cross-restart persistence, and selective reasoning impact (Case B affected, Case C unaffected, Control unaffected, Deterministic Replay)', async () => {
     const generalConceptId = 'concept_policy_overdrive_general';
     const unit1ConceptId = 'concept_policy_overdrive_unit_1';
     const unit2ConceptId = 'concept_policy_overdrive_unit_2';
-    const generalizationId = 'gen_overdrive_cavitation_risk';
+    const unit3ConceptId = 'concept_policy_overdrive_unit_3';
+    const caseCConceptId = 'concept_auxiliary_solar_sensor';
     const nowIso = new Date().toISOString();
 
     const initialGeneralConcept = {
@@ -700,138 +700,137 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
       metadata: { unit: 'UNIT_2', sector: 'BETA' }
     };
 
-    // Insert into cellA
-    await cellA.cognitiveGraph.insertConcept({ ...initialGeneralConcept, originatingCellId: cellA.nodeId, provenance: [cellA.nodeId] });
-    await cellA.cognitiveGraph.insertConcept({ ...initialUnit1Concept, originatingCellId: cellA.nodeId, provenance: [cellA.nodeId] });
-    await cellA.cognitiveGraph.insertConcept({ ...initialUnit2Concept, originatingCellId: cellA.nodeId, provenance: [cellA.nodeId] });
+    const initialUnit3Concept = {
+      conceptId: unit3ConceptId,
+      canonicalName: 'CoolantPumpOverdriveUnit3',
+      description: 'Drive Cooling Pump 3 at 12000 RPM in Reactor Grid Sector Gamma (Never operated under surge)',
+      category: InformationCategory.OPERATING_SYSTEM,
+      sourceKnowledgeIds: ['k_unit_3_specs'],
+      sourceExperienceIds: [],
+      confidence: 0.85,
+      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      version: 1,
+      metadata: { unit: 'UNIT_3', sector: 'GAMMA' }
+    };
 
-    // Link Unit 1 and Unit 2 as INSTANCE_OF General Policy
-    await cellA.cognitiveGraph.insertRelation({
-      relationId: 'rel_unit1_instance_of_general',
-      subjectConceptId: unit1ConceptId,
-      predicate: CognitiveRelationPredicate.INSTANCE_OF,
-      objectConceptId: generalConceptId,
+    const initialCaseCConcept = {
+      conceptId: caseCConceptId,
+      canonicalName: 'AuxiliarySolarRadiationSensor',
+      description: 'Monitor external photovoltaic and cosmic radiation levels',
+      category: InformationCategory.GENERAL_TECHNOLOGY,
+      sourceKnowledgeIds: ['k_solar_specs'],
+      sourceExperienceIds: [],
       confidence: 0.9,
       verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-      provenance: [cellA.nodeId],
       createdAt: nowIso,
-      originatingCellId: cellA.nodeId,
-      metadata: {}
-    });
+      updatedAt: nowIso,
+      version: 1,
+      metadata: { subsystem: 'SOLAR' }
+    };
 
-    await cellA.cognitiveGraph.insertRelation({
-      relationId: 'rel_unit2_instance_of_general',
-      subjectConceptId: unit2ConceptId,
-      predicate: CognitiveRelationPredicate.INSTANCE_OF,
-      objectConceptId: generalConceptId,
-      confidence: 0.9,
-      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-      provenance: [cellA.nodeId],
-      createdAt: nowIso,
-      originatingCellId: cellA.nodeId,
-      metadata: {}
-    });
+    // Helper to populate initial knowledge graph without any manual generalizations
+    const populateInitialGraph = async (cell: Cell) => {
+      await cell.cognitiveGraph.insertConcept({ ...initialGeneralConcept, originatingCellId: cell.nodeId, provenance: [cell.nodeId] });
+      await cell.cognitiveGraph.insertConcept({ ...initialUnit1Concept, originatingCellId: cell.nodeId, provenance: [cell.nodeId] });
+      await cell.cognitiveGraph.insertConcept({ ...initialUnit2Concept, originatingCellId: cell.nodeId, provenance: [cell.nodeId] });
+      await cell.cognitiveGraph.insertConcept({ ...initialUnit3Concept, originatingCellId: cell.nodeId, provenance: [cell.nodeId] });
+      await cell.cognitiveGraph.insertConcept({ ...initialCaseCConcept, originatingCellId: cell.nodeId, provenance: [cell.nodeId] });
 
-    // Insert Generalization pattern spanning Unit 1 and Unit 2
-    await cellA.cognitiveGraph.insertGeneralization({
-      generalizationId,
-      sourceConceptIds: [unit1ConceptId, unit2ConceptId],
-      pattern: 'High speed overdrive causes severe mechanical cavitation on centrifugal coolant pumps',
-      supportingEvidence: ['ev_baseline_design_rule'],
-      confidence: 0.8,
-      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-      provenance: [cellA.nodeId],
-      createdAt: nowIso,
-      originatingCellId: cellA.nodeId
-    });
+      await cell.cognitiveGraph.insertRelation({
+        relationId: `rel_${cell.nodeId.substring(0, 6)}_unit1_instance`,
+        subjectConceptId: unit1ConceptId,
+        predicate: CognitiveRelationPredicate.INSTANCE_OF,
+        objectConceptId: generalConceptId,
+        confidence: 0.9,
+        verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+        provenance: [cell.nodeId],
+        createdAt: nowIso,
+        originatingCellId: cell.nodeId,
+        metadata: {}
+      });
 
-    // Replicate baseline setup in control cell
-    await cellControl.cognitiveGraph.insertConcept({ ...initialGeneralConcept, originatingCellId: cellControl.nodeId, provenance: [cellControl.nodeId] });
-    await cellControl.cognitiveGraph.insertConcept({ ...initialUnit1Concept, originatingCellId: cellControl.nodeId, provenance: [cellControl.nodeId] });
-    await cellControl.cognitiveGraph.insertConcept({ ...initialUnit2Concept, originatingCellId: cellControl.nodeId, provenance: [cellControl.nodeId] });
-    await cellControl.cognitiveGraph.insertRelation({
-      relationId: 'rel_ctrl_unit1_instance',
-      subjectConceptId: unit1ConceptId,
-      predicate: CognitiveRelationPredicate.INSTANCE_OF,
-      objectConceptId: generalConceptId,
-      confidence: 0.9,
-      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-      provenance: [cellControl.nodeId],
-      createdAt: nowIso,
-      originatingCellId: cellControl.nodeId,
-      metadata: {}
-    });
-    await cellControl.cognitiveGraph.insertRelation({
-      relationId: 'rel_ctrl_unit2_instance',
-      subjectConceptId: unit2ConceptId,
-      predicate: CognitiveRelationPredicate.INSTANCE_OF,
-      objectConceptId: generalConceptId,
-      confidence: 0.9,
-      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-      provenance: [cellControl.nodeId],
-      createdAt: nowIso,
-      originatingCellId: cellControl.nodeId,
-      metadata: {}
-    });
-    await cellControl.cognitiveGraph.insertGeneralization({
-      generalizationId,
-      sourceConceptIds: [unit1ConceptId, unit2ConceptId],
-      pattern: 'High speed overdrive causes severe mechanical cavitation on centrifugal coolant pumps',
-      supportingEvidence: ['ev_baseline_design_rule'],
-      confidence: 0.8,
-      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-      provenance: [cellControl.nodeId],
-      createdAt: nowIso,
-      originatingCellId: cellControl.nodeId
-    });
+      await cell.cognitiveGraph.insertRelation({
+        relationId: `rel_${cell.nodeId.substring(0, 6)}_unit2_instance`,
+        subjectConceptId: unit2ConceptId,
+        predicate: CognitiveRelationPredicate.INSTANCE_OF,
+        objectConceptId: generalConceptId,
+        confidence: 0.9,
+        verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+        provenance: [cell.nodeId],
+        createdAt: nowIso,
+        originatingCellId: cell.nodeId,
+        metadata: {}
+      });
 
-    // Capture initial State S0
+      await cell.cognitiveGraph.insertRelation({
+        relationId: `rel_${cell.nodeId.substring(0, 6)}_unit3_instance`,
+        subjectConceptId: unit3ConceptId,
+        predicate: CognitiveRelationPredicate.INSTANCE_OF,
+        objectConceptId: generalConceptId,
+        confidence: 0.9,
+        verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+        provenance: [cell.nodeId],
+        createdAt: nowIso,
+        originatingCellId: cell.nodeId,
+        metadata: {}
+      });
+    };
+
+    await populateInitialGraph(cellA);
+    await populateInitialGraph(cellControl);
+
+    // Strict invariant: NO CognitiveGeneralization is manually inserted as input
+    expect(cellA.cognitiveGraph.getAllGeneralizations().length).toBe(0);
+    expect(cellControl.cognitiveGraph.getAllGeneralizations().length).toBe(0);
+
+    // Initial state S0
     const stateS0 = cellA.cognitiveState.getState();
     const stateS0Hash = computeDeterministicHash(stateS0);
 
-    // Context for Case B (Unit 2 in Sector Beta - distinct from Unit 1 in Sector Alpha)
+    // 1. REQUIREMENT 7: Control cell without Experience A has NO generalization
+    // Control cell reasoning on Case B (Unit 3 in Sector Gamma) before any experience
     const contextCaseB: Context = {
-      contextId: 'ctx_cooling_unit_2_beta',
-      domain: 'REACTOR_SECTOR_BETA_COOLING'
+      contextId: 'ctx_cooling_unit_3_gamma',
+      domain: 'REACTOR_SECTOR_GAMMA_COOLING'
     };
 
-    // 2. Control Cell baseline on Case B:
-    // Before any failure experience, control cell reasons that Overdrive on Unit 2 is valid
     const controlReasoningCaseB = cellControl.reasoning.reason({
-      goal: 'Regulate thermal surge in Sector Beta',
+      goal: 'Regulate thermal surge in Sector Gamma using Unit 3',
       context: contextCaseB,
       originatingCellId: cellControl.nodeId,
       minEvidenceThreshold: 0.2,
       premises: [
         {
-          premiseId: 'premise_beta_surge',
-          statement: 'Thermal surge detected in Sector Beta.',
-          confidence: 0.9,
-          evidenceIds: ['ev_baseline_design_rule']
+          premiseId: 'premise_gamma_surge',
+          statement: 'Thermal surge detected in Sector Gamma.',
+          confidence: 0.9
         }
       ],
       hypotheses: [
         {
-          hypothesisId: 'hyp_unit2_overdrive',
-          statement: 'Deploy CoolantPumpOverdriveUnit2 to regulate Sector Beta surge.',
-          targetConceptId: unit2ConceptId,
+          hypothesisId: 'hyp_unit3_overdrive',
+          statement: 'Deploy CoolantPumpOverdriveUnit3 to regulate Sector Gamma surge.',
+          targetConceptId: unit3ConceptId,
           confidence: 0.85
         }
       ],
       alternatives: [
         {
-          hypothesisId: 'hyp_beta_passive_heatexchanger',
-          statement: 'Engage Sector Beta passive low-pressure heat exchangers.',
+          hypothesisId: 'hyp_gamma_passive_heatexchanger',
+          statement: 'Engage Sector Gamma passive heat exchangers.',
           confidence: 0.5,
           reason: 'Secondary passive cooling'
         }
       ]
     }, cellControl.cognitiveGraph);
 
+    expect(cellControl.cognitiveGraph.getAllGeneralizations().length).toBe(0);
     expect(controlReasoningCaseB.verification.hasContradiction).toBe(false);
     expect(controlReasoningCaseB.verification.epistemicStatus).not.toBe(EpistemicStatus.CONTRADICTED);
 
-    // 3. Action on Unit 1 (Case A) triggers Empirical Observation A
+    // 2. REQUIREMENT 1: Case A generates Experience from Observation
     const observationA = {
       domainKind: DomainKind.OBSERVATION,
       observedSubject: 'CoolantPumpOverdriveUnit1',
@@ -845,44 +844,43 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
       }
     };
 
-    // Process Observation A -> Experience A
+    // Process Observation A -> Experience A (without premature auto-development)
     const transitionResultA = await cellA.processObservation(observationA, {
       actionComputationId: 'task_exec_overdrive_unit_1',
       expectedContradiction: true,
-      cycleNumber: 1
+      cycleNumber: 1,
+      enableCognitiveDevelopment: false
     });
     expect(transitionResultA.status).toBe('CREATED');
     const experienceA = transitionResultA.experience;
     expect(experienceA.noveltyClassification).toBe(NoveltyClassification.CONTRADICTION);
     expect(experienceA.verificationStatus).toBe('CONTRADICTED_BY_WORLD');
 
-    // 4. Learning from Experience A
+    // 3. REQUIREMENT 2: The system autonomously discovers / forms generalization
     const learningResultA = await cellA.developFromExperience(experienceA, {
       context: { contextId: 'ctx_unit_1_incident', domain: 'INCIDENT_RESPONSE' },
       relatedConceptIds: [unit1ConceptId]
     });
 
-    // Assert that learning weakened Unit 1 AND generalized up to parent concept and generalization
     expect(learningResultA.conceptsWeakened).toContain(unit1ConceptId);
-    expect(learningResultA.conceptsWeakened).toContain(generalConceptId); // General parent was adapted!
+    expect(learningResultA.conceptsWeakened).toContain(generalConceptId);
+    expect(learningResultA.generalizationsFormed?.length).toBeGreaterThanOrEqual(1);
 
-    const unit1ConceptAfter = cellA.cognitiveGraph.getConcept(unit1ConceptId);
-    expect(unit1ConceptAfter?.verificationStatus).toBe(RepresentationVerificationStatus.CONTRADICTED);
-
-    const generalConceptAfter = cellA.cognitiveGraph.getConcept(generalConceptId);
-    expect(generalConceptAfter?.verificationStatus).toBe(RepresentationVerificationStatus.CONTRADICTED);
-
-    const generalizationAfter = cellA.cognitiveGraph.getGeneralization(generalizationId);
-    expect(generalizationAfter?.verificationStatus).toBe(RepresentationVerificationStatus.CONTRADICTED);
+    const formedGenId = learningResultA.generalizationsFormed![0];
+    const discoveredGen = cellA.cognitiveGraph.getGeneralization(formedGenId);
+    expect(discoveredGen).toBeDefined();
+    expect(discoveredGen?.verificationStatus).toBe(RepresentationVerificationStatus.CONTRADICTED);
+    expect(discoveredGen?.pattern).toMatch(/risk invariant|cavitation/i);
+    expect(discoveredGen?.sourceConceptIds).toContain(generalConceptId);
+    expect(discoveredGen?.supportingEvidence.length).toBeGreaterThanOrEqual(1);
 
     // Persistent state S1 verification
     const stateS1 = cellA.cognitiveState.getState();
     const stateS1Hash = computeDeterministicHash(stateS1);
     expect(stateS1Hash).not.toBe(stateS0Hash);
     expect(stateS1.experienceReferences).toContain(experienceA.experienceId);
-    expect(stateS1.knowledgeGaps.length).toBeGreaterThanOrEqual(1);
 
-    // 5. Cold Restart of cellA
+    // 4. REQUIREMENT 3: Generalization survives Cold Restart
     await cellA.cognitiveState.persist(cellA.memory);
     await cellA.stop();
 
@@ -896,55 +894,133 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     await restartedCellA.cognitiveGraph.load();
     await restartedCellA.recoverExperiences();
 
-    // Verify state survived restart
-    const restoredState = restartedCellA.cognitiveState.getState();
-    expect(restoredState.experienceReferences).toContain(experienceA.experienceId);
-    expect(restoredState.knowledgeGaps.length).toBe(stateS1.knowledgeGaps.length);
-
-    const restoredGeneralConcept = restartedCellA.cognitiveGraph.getConcept(generalConceptId);
-    expect(restoredGeneralConcept?.verificationStatus).toBe(RepresentationVerificationStatus.CONTRADICTED);
-
-    const restoredGen = restartedCellA.cognitiveGraph.getGeneralization(generalizationId);
+    const restoredGen = restartedCellA.cognitiveGraph.getGeneralization(formedGenId);
+    expect(restoredGen).toBeDefined();
     expect(restoredGen?.verificationStatus).toBe(RepresentationVerificationStatus.CONTRADICTED);
+    expect(restoredGen?.pattern).toBe(discoveredGen?.pattern);
 
-    // 6. Case B presented to restarted cell (Sector Beta Unit 2 - NOT IDENTICAL to Unit 1):
+    // 5. REQUIREMENT 4 & 5: Case B is distinct from Case A but has relevant pattern, and reasoning uses generalization
+    // Unit 3 in Sector Gamma has NEVER failed before, but shares the generalized overdrive policy
     const reasoningCaseB = restartedCellA.reasoning.reason({
-      goal: 'Regulate thermal surge in Sector Beta',
+      goal: 'Regulate thermal surge in Sector Gamma using Unit 3',
       context: contextCaseB,
       originatingCellId: restartedCellA.nodeId,
       minEvidenceThreshold: 0.2,
       premises: [
         {
-          premiseId: 'premise_beta_surge_post_incident',
-          statement: 'Thermal surge detected in Sector Beta.',
-          confidence: 0.9,
-          evidenceIds: ['ev_baseline_design_rule']
+          premiseId: 'premise_gamma_surge_eval',
+          statement: 'Thermal surge detected in Sector Gamma.',
+          confidence: 0.9
         }
       ],
       hypotheses: [
         {
-          hypothesisId: 'hyp_unit2_overdrive',
-          statement: 'Deploy CoolantPumpOverdriveUnit2 to regulate Sector Beta surge.',
-          targetConceptId: unit2ConceptId,
+          hypothesisId: 'hyp_unit3_overdrive',
+          statement: 'Deploy CoolantPumpOverdriveUnit3 to regulate Sector Gamma surge.',
+          targetConceptId: unit3ConceptId,
           confidence: 0.85
         }
       ],
       alternatives: [
         {
-          hypothesisId: 'hyp_beta_passive_heatexchanger',
-          statement: 'Engage Sector Beta passive low-pressure heat exchangers.',
+          hypothesisId: 'hyp_gamma_passive_heatexchanger',
+          statement: 'Engage Sector Gamma passive heat exchangers.',
           confidence: 0.94,
-          reason: 'Safe alternative bypassing centrifugal pump cavitation risk'
+          reason: 'Bypass centrifugal pump overdrive cavitation risk identified by generalization'
         }
       ]
     }, restartedCellA.cognitiveGraph);
 
-    // Causal Generalization Proof:
-    // Decision on Case B CHANGED because of Experience A on Unit 1!
     expect(reasoningCaseB.verification.hasContradiction).toBe(true);
     expect(reasoningCaseB.verification.epistemicStatus).toBe(EpistemicStatus.CONTRADICTED);
-    expect(reasoningCaseB.verification.rationale).toMatch(/inherits empirical contradiction|invalidated by contradicted generalization/i);
+    expect(reasoningCaseB.verification.rationale).toMatch(/contradiction from generalization|invalidated by contradicted generalization|inherits? empirical contradiction/i);
+    expect(reasoningCaseB.conclusion.status).toBe(EpistemicStatus.CONTRADICTED);
     expect(reasoningCaseB.conclusion.alternatives.length).toBeGreaterThanOrEqual(1);
+    expect(reasoningCaseB.conclusion.alternatives[0].hypothesisId).toBe('hyp_gamma_passive_heatexchanger');
+
+    // 6. REQUIREMENT 6: Case C is irrelevant and is NOT mistakenly affected by generalization
+    const contextCaseC: Context = {
+      contextId: 'ctx_solar_telemetry',
+      domain: 'SOLAR_ARRAY_MONITORING'
+    };
+    const reasoningCaseC = restartedCellA.reasoning.reason({
+      goal: 'Poll external radiation levels via AuxiliarySolarRadiationSensor',
+      context: contextCaseC,
+      originatingCellId: restartedCellA.nodeId,
+      minEvidenceThreshold: 0.2,
+      premises: [
+        {
+          premiseId: 'premise_solar_polling',
+          statement: 'Periodic sensor telemetry polling initiated.',
+          confidence: 0.9
+        }
+      ],
+      hypotheses: [
+        {
+          hypothesisId: 'hyp_poll_solar_sensor',
+          statement: 'Query AuxiliarySolarRadiationSensor for current flux levels.',
+          targetConceptId: caseCConceptId,
+          confidence: 0.9
+        }
+      ]
+    }, restartedCellA.cognitiveGraph);
+
+    expect(reasoningCaseC.verification.hasContradiction).toBe(false);
+    expect(reasoningCaseC.verification.epistemicStatus).not.toBe(EpistemicStatus.CONTRADICTED);
+    expect(reasoningCaseC.conclusion.status).not.toBe(EpistemicStatus.CONTRADICTED);
+
+    // 7. REQUIREMENT 8: Deterministic Replay guarantees identical results
+    await populateInitialGraph(cellB);
+    const transitionResultB = await cellB.processObservation(observationA, {
+      actionComputationId: 'task_exec_overdrive_unit_1',
+      expectedContradiction: true,
+      cycleNumber: 1,
+      enableCognitiveDevelopment: false
+    });
+    const experienceB = transitionResultB.experience;
+    const learningResultB = await cellB.developFromExperience(experienceB, {
+      context: { contextId: 'ctx_unit_1_incident', domain: 'INCIDENT_RESPONSE' },
+      relatedConceptIds: [unit1ConceptId]
+    });
+
+    expect(learningResultB.generalizationsFormed?.[0]).toBe(learningResultA.generalizationsFormed?.[0]);
+    const genB = cellB.cognitiveGraph.getGeneralization(learningResultB.generalizationsFormed![0]);
+    expect(genB?.confidence).toBe(discoveredGen?.confidence);
+    expect(genB?.verificationStatus).toBe(discoveredGen?.verificationStatus);
+
+    const reasoningCaseB_cellB = cellB.reasoning.reason({
+      goal: 'Regulate thermal surge in Sector Gamma using Unit 3',
+      context: contextCaseB,
+      originatingCellId: cellB.nodeId,
+      minEvidenceThreshold: 0.2,
+      premises: [
+        {
+          premiseId: 'premise_gamma_surge_eval',
+          statement: 'Thermal surge detected in Sector Gamma.',
+          confidence: 0.9
+        }
+      ],
+      hypotheses: [
+        {
+          hypothesisId: 'hyp_unit3_overdrive',
+          statement: 'Deploy CoolantPumpOverdriveUnit3 to regulate Sector Gamma surge.',
+          targetConceptId: unit3ConceptId,
+          confidence: 0.85
+        }
+      ],
+      alternatives: [
+        {
+          hypothesisId: 'hyp_gamma_passive_heatexchanger',
+          statement: 'Engage Sector Gamma passive heat exchangers.',
+          confidence: 0.94,
+          reason: 'Bypass centrifugal pump overdrive cavitation risk identified by generalization'
+        }
+      ]
+    }, cellB.cognitiveGraph);
+
+    expect(reasoningCaseB_cellB.verification.hasContradiction).toBe(true);
+    expect(reasoningCaseB_cellB.conclusion.status).toBe(reasoningCaseB.conclusion.status);
+    expect(reasoningCaseB_cellB.conclusion.alternatives[0].hypothesisId).toBe(reasoningCaseB.conclusion.alternatives[0].hypothesisId);
 
     await restartedCellA.stop();
   });

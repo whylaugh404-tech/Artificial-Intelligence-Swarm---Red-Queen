@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import * as fs from 'fs/promises';
 import { Cell } from '../src/redqueen/core/cell';
 import { identityCrypto } from '../src/redqueen/crypto/identity';
@@ -7,6 +7,12 @@ describe('Cell Identity Integrity', () => {
   const TEST_STORAGE = 'test_identity_integrity_storage.json';
   
   beforeEach(async () => {
+    try {
+      await fs.unlink(TEST_STORAGE);
+    } catch (e) {}
+  });
+
+  afterAll(async () => {
     try {
       await fs.unlink(TEST_STORAGE);
     } catch (e) {}

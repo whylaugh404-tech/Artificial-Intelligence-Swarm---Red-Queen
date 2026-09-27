@@ -448,6 +448,24 @@ export class ReasoningEngine {
           }
         }
       }
+
+      // Check generalizations relevant to target concept (direct, hierarchical, or structural)
+      const relevantGens = graph.findGeneralizationsByConcept(targetHypothesis.targetConceptId);
+      for (const gen of relevantGens) {
+        if (gen.verificationStatus === RepresentationVerificationStatus.CONTRADICTED) {
+          const evIds = Array.from(new Set([...(gen.evidenceIds || []), ...gen.supportingEvidence]));
+          for (const evId of evIds) {
+            const ev = graph.getEvidence(evId);
+            if (ev && !loadedCounterEvidences.some(c => c.evidenceId === evId)) {
+              loadedCounterEvidences.push({
+                evidenceId: evId,
+                reason: `Inherited empirical contradiction from generalization ${gen.generalizationId}: ${gen.pattern}`,
+                weight: calculateEffectiveEvidenceWeight(ev)
+              });
+            }
+          }
+        }
+      }
     }
 
     // Alternative hypotheses parsing
@@ -512,14 +530,12 @@ export class ReasoningEngine {
 
     // Check if target concept is invalidated by a contradicted CognitiveGeneralization
     if (!hasContradiction && graph && targetHypothesis.targetConceptId) {
-      const allGeneralizations = graph.getAllGeneralizations();
-      for (const gen of allGeneralizations) {
-        if (gen.sourceConceptIds.includes(targetHypothesis.targetConceptId)) {
-          if (gen.verificationStatus === RepresentationVerificationStatus.CONTRADICTED) {
-            hasContradiction = true;
-            contradictionReason = `Target concept ${targetHypothesis.targetConceptId} is invalidated by contradicted generalization ${gen.generalizationId}: ${gen.pattern}`;
-            break;
-          }
+      const relevantGens = graph.findGeneralizationsByConcept(targetHypothesis.targetConceptId);
+      for (const gen of relevantGens) {
+        if (gen.verificationStatus === RepresentationVerificationStatus.CONTRADICTED) {
+          hasContradiction = true;
+          contradictionReason = `Target concept ${targetHypothesis.targetConceptId} is invalidated by contradicted generalization ${gen.generalizationId}: ${gen.pattern}`;
+          break;
         }
       }
     }
