@@ -859,6 +859,17 @@ export class CognitiveGraph {
     return Array.from(this.generalizations.values());
   }
 
+  public getGeneralization(generalizationId: string): CognitiveGeneralization | undefined {
+    return this.generalizations.get(generalizationId);
+  }
+
+  public async updateGeneralization(generalization: CognitiveGeneralization): Promise<CognitiveGeneralization> {
+    const validated = CognitiveGeneralizationSchema.parse(generalization);
+    this.generalizations.set(validated.generalizationId, validated);
+    await this.persistEntry(validated.generalizationId, 'COGNITIVE_GENERALIZATION', validated, validated.confidence, validated.provenance);
+    return validated;
+  }
+
   public getAllAnalogies(): CognitiveAnalogy[] {
     return Array.from(this.analogies.values());
   }

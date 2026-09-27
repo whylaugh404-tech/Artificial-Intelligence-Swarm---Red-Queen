@@ -1,5 +1,5 @@
 import { Cell } from '../../core/cell';
-import { CognitiveConcept, CognitiveRelation, RepresentationVerificationStatus } from '../representation/types';
+import { CognitiveConcept, CognitiveRelation, CognitiveRelationPredicate, CognitiveGeneralization, RepresentationVerificationStatus } from '../representation/types';
 import { EpistemicTransitionTrigger, Context } from '../epistemic/types';
 import { Evidence } from '../evidence/types';
 import { Experience, MetabolismStatus, NoveltyClassification, InformationCategory } from '../../metabolism/types';
@@ -168,6 +168,33 @@ export class CognitiveDevelopmentEngine {
           experience.experienceId
         );
         result.conceptsStrengthened.push(conceptId);
+
+        // Generalization: propagate positive reinforcement to parent concepts
+        const relations = this.localCell.cognitiveGraph.getRelationsForConcept(conceptId);
+        for (const rel of relations) {
+          if (
+            rel.subjectConceptId === conceptId &&
+            (rel.predicate === CognitiveRelationPredicate.INSTANCE_OF ||
+             rel.predicate === CognitiveRelationPredicate.SPECIALIZES ||
+             rel.predicate === CognitiveRelationPredicate.IS_A)
+          ) {
+            const parentConceptId = rel.objectConceptId;
+            if (!targetConceptIds.includes(parentConceptId) && !result.conceptsStrengthened.includes(parentConceptId)) {
+              try {
+                await this.strengthenBelief(
+                  parentConceptId,
+                  activeContext,
+                  activeEvidence,
+                  `Inherited positive reinforcement from instance ${conceptId} in experience ${experience.experienceId}`,
+                  experience.experienceId
+                );
+                result.conceptsStrengthened.push(parentConceptId);
+              } catch {
+                // Safe fallback if parent concept cannot be strengthened
+              }
+            }
+          }
+        }
       }
       for (const relId of targetRelationIds) {
         await this.strengthenRelation(
@@ -196,6 +223,56 @@ export class CognitiveDevelopmentEngine {
           isConflict
         ) {
           result.conflictsDetected++;
+        }
+
+        if (isConflict) {
+          // Generalization: propagate conflict to parent concepts in the hierarchy
+          const relations = this.localCell.cognitiveGraph.getRelationsForConcept(conceptId);
+          for (const rel of relations) {
+            if (
+              rel.subjectConceptId === conceptId &&
+              (rel.predicate === CognitiveRelationPredicate.INSTANCE_OF ||
+               rel.predicate === CognitiveRelationPredicate.SPECIALIZES ||
+               rel.predicate === CognitiveRelationPredicate.IS_A)
+            ) {
+              const parentConceptId = rel.objectConceptId;
+              if (!targetConceptIds.includes(parentConceptId) && !result.conceptsWeakened.includes(parentConceptId)) {
+                try {
+                  const parentWeakened = await this.weakenBelief(
+                    parentConceptId,
+                    activeContext,
+                    activeEvidence,
+                    `Inherited empirical conflict from instance ${conceptId} in experience ${experience.experienceId}`,
+                    experience.experienceId
+                  );
+                  result.conceptsWeakened.push(parentConceptId);
+                  if (parentWeakened.verificationStatus === RepresentationVerificationStatus.CONTRADICTED) {
+                    result.conflictsDetected++;
+                  }
+                } catch {
+                  // Safe fallback if parent concept cannot be weakened
+                }
+              }
+            }
+          }
+
+          // Generalization: propagate contradiction to matching generalizations
+          const generalizations = this.localCell.cognitiveGraph.getAllGeneralizations();
+          for (const gen of generalizations) {
+            if (gen.sourceConceptIds.includes(conceptId)) {
+              try {
+                const updatedGen: CognitiveGeneralization = {
+                  ...gen,
+                  verificationStatus: RepresentationVerificationStatus.CONTRADICTED,
+                  confidence: Math.max(0.0, gen.confidence - 0.4),
+                  evidenceIds: Array.from(new Set([...(gen.evidenceIds || []), ...activeEvidence.map(e => e.evidenceId)]))
+                };
+                await this.localCell.cognitiveGraph.updateGeneralization(updatedGen);
+              } catch {
+                // Safe fallback
+              }
+            }
+          }
         }
       }
       for (const relId of targetRelationIds) {

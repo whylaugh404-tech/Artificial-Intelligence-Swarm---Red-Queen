@@ -418,6 +418,38 @@ export class ReasoningEngine {
       }
     }
 
+    const targetHypothesis = loadedHypotheses[0];
+
+    // Gather counter-evidences recorded in graph for target concept or its generalizations/parents
+    if (graph && targetHypothesis?.targetConceptId) {
+      const allGraphEvidences = graph.getAllEvidences();
+      const relatedIdsToCheck = new Set<string>([targetHypothesis.targetConceptId]);
+      const relations = graph.getRelationsForConcept(targetHypothesis.targetConceptId);
+      for (const r of relations) {
+        if (
+          r.subjectConceptId === targetHypothesis.targetConceptId &&
+          (r.predicate === CognitiveRelationPredicate.INSTANCE_OF ||
+           r.predicate === CognitiveRelationPredicate.SPECIALIZES ||
+           r.predicate === CognitiveRelationPredicate.IS_A)
+        ) {
+          relatedIdsToCheck.add(r.objectConceptId);
+        }
+      }
+
+      for (const ev of allGraphEvidences) {
+        const contradictingReps = ev.provenance?.contradictingRepresentationIds || [];
+        if (contradictingReps.some(id => relatedIdsToCheck.has(id))) {
+          if (!loadedCounterEvidences.some(c => c.evidenceId === ev.evidenceId)) {
+            loadedCounterEvidences.push({
+              evidenceId: ev.evidenceId,
+              reason: `Empirical contradiction recorded in graph against ${contradictingReps.filter(id => relatedIdsToCheck.has(id)).join(', ')}`,
+              weight: calculateEffectiveEvidenceWeight(ev)
+            });
+          }
+        }
+      }
+    }
+
     // Alternative hypotheses parsing
     const loadedAlternatives: AlternativeHypothesis[] = [];
     if (input.alternatives) {
@@ -439,7 +471,6 @@ export class ReasoningEngine {
     // 4. PHASE 5: VERIFICATION & EPISTEMIC STATUS EVALUATION
     // -------------------------------------------------------------
     const minThreshold = input.minEvidenceThreshold !== undefined ? input.minEvidenceThreshold : 0.5;
-    const targetHypothesis = loadedHypotheses[0];
 
     // Check for contradiction
     let hasContradiction = false;
@@ -448,6 +479,49 @@ export class ReasoningEngine {
     if (loadedCounterEvidences.length > 0) {
       hasContradiction = true;
       contradictionReason = `Contradicted by ${loadedCounterEvidences.length} counter-evidence record(s): ${loadedCounterEvidences.map(c => c.reason).join('; ')}`;
+    }
+
+    // Check if target concept itself is marked as CONTRADICTED in CognitiveGraph
+    if (!hasContradiction && graph && targetHypothesis.targetConceptId) {
+      const targetConcept = graph.getConcept(targetHypothesis.targetConceptId);
+      if (targetConcept && targetConcept.verificationStatus === RepresentationVerificationStatus.CONTRADICTED) {
+        hasContradiction = true;
+        contradictionReason = `Target concept ${targetHypothesis.targetConceptId} (${targetConcept.canonicalName}) is marked as CONTRADICTED in CognitiveGraph`;
+      }
+    }
+
+    // Check if target concept inherits empirical contradiction from parent concept
+    if (!hasContradiction && graph && targetHypothesis.targetConceptId) {
+      const relations = graph.getRelationsForConcept(targetHypothesis.targetConceptId);
+      for (const r of relations) {
+        if (
+          r.subjectConceptId === targetHypothesis.targetConceptId &&
+          (r.predicate === CognitiveRelationPredicate.INSTANCE_OF ||
+           r.predicate === CognitiveRelationPredicate.SPECIALIZES ||
+           r.predicate === CognitiveRelationPredicate.IS_A)
+        ) {
+          const parentConcept = graph.getConcept(r.objectConceptId);
+          if (parentConcept && parentConcept.verificationStatus === RepresentationVerificationStatus.CONTRADICTED) {
+            hasContradiction = true;
+            contradictionReason = `Target concept ${targetHypothesis.targetConceptId} inherits empirical contradiction from generalized parent ${parentConcept.conceptId} (${parentConcept.canonicalName})`;
+            break;
+          }
+        }
+      }
+    }
+
+    // Check if target concept is invalidated by a contradicted CognitiveGeneralization
+    if (!hasContradiction && graph && targetHypothesis.targetConceptId) {
+      const allGeneralizations = graph.getAllGeneralizations();
+      for (const gen of allGeneralizations) {
+        if (gen.sourceConceptIds.includes(targetHypothesis.targetConceptId)) {
+          if (gen.verificationStatus === RepresentationVerificationStatus.CONTRADICTED) {
+            hasContradiction = true;
+            contradictionReason = `Target concept ${targetHypothesis.targetConceptId} is invalidated by contradicted generalization ${gen.generalizationId}: ${gen.pattern}`;
+            break;
+          }
+        }
+      }
     }
 
     // Check if premises contain contradicted items
