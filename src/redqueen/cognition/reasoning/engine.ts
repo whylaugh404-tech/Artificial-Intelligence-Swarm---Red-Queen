@@ -452,7 +452,7 @@ export class ReasoningEngine {
       // Check generalizations relevant to target concept (direct, hierarchical, or structural)
       const relevantGens = graph.findGeneralizationsByConcept(targetHypothesis.targetConceptId);
       for (const gen of relevantGens) {
-        if (gen.verificationStatus === RepresentationVerificationStatus.CONTRADICTED) {
+        if (gen.verificationStatus === RepresentationVerificationStatus.CONTRADICTED && (gen.supportingEvidence?.length || 0) >= 2) {
           const evIds = Array.from(new Set([...(gen.evidenceIds || []), ...gen.supportingEvidence]));
           for (const evId of evIds) {
             const ev = graph.getEvidence(evId);
@@ -509,6 +509,7 @@ export class ReasoningEngine {
     }
 
     // Check if target concept inherits empirical contradiction from parent concept
+    // Enforce that parent contradiction inheritance requires a valid generalization or multiple direct evidences
     if (!hasContradiction && graph && targetHypothesis.targetConceptId) {
       const relations = graph.getRelationsForConcept(targetHypothesis.targetConceptId);
       for (const r of relations) {
@@ -520,9 +521,14 @@ export class ReasoningEngine {
         ) {
           const parentConcept = graph.getConcept(r.objectConceptId);
           if (parentConcept && parentConcept.verificationStatus === RepresentationVerificationStatus.CONTRADICTED) {
-            hasContradiction = true;
-            contradictionReason = `Target concept ${targetHypothesis.targetConceptId} inherits empirical contradiction from generalized parent ${parentConcept.conceptId} (${parentConcept.canonicalName})`;
-            break;
+            const parentGens = graph.findGeneralizationsByConcept(parentConcept.conceptId);
+            const hasValidParentGen = parentGens.some(g => g.verificationStatus === RepresentationVerificationStatus.CONTRADICTED && (g.supportingEvidence?.length || 0) >= 2);
+            const parentEvidences = graph.getAllEvidences().filter(ev => ev.provenance?.contradictingRepresentationIds?.includes(parentConcept.conceptId));
+            if (hasValidParentGen || parentEvidences.length >= 2) {
+              hasContradiction = true;
+              contradictionReason = `Target concept ${targetHypothesis.targetConceptId} inherits empirical contradiction from generalized parent ${parentConcept.conceptId} (${parentConcept.canonicalName})`;
+              break;
+            }
           }
         }
       }
@@ -532,7 +538,7 @@ export class ReasoningEngine {
     if (!hasContradiction && graph && targetHypothesis.targetConceptId) {
       const relevantGens = graph.findGeneralizationsByConcept(targetHypothesis.targetConceptId);
       for (const gen of relevantGens) {
-        if (gen.verificationStatus === RepresentationVerificationStatus.CONTRADICTED) {
+        if (gen.verificationStatus === RepresentationVerificationStatus.CONTRADICTED && (gen.supportingEvidence?.length || 0) >= 2) {
           hasContradiction = true;
           contradictionReason = `Target concept ${targetHypothesis.targetConceptId} is invalidated by contradicted generalization ${gen.generalizationId}: ${gen.pattern}`;
           break;

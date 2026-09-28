@@ -830,7 +830,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(controlReasoningCaseB.verification.hasContradiction).toBe(false);
     expect(controlReasoningCaseB.verification.epistemicStatus).not.toBe(EpistemicStatus.CONTRADICTED);
 
-    // 2. REQUIREMENT 1: Case A generates Experience from Observation
+    // 2. REQUIREMENT 1 & 2: Experience A alone -> NO generalization formed
     const observationA = {
       domainKind: DomainKind.OBSERVATION,
       observedSubject: 'CoolantPumpOverdriveUnit1',
@@ -844,7 +844,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
       }
     };
 
-    // Process Observation A -> Experience A (without premature auto-development)
+    // Process Observation A -> Experience A
     const transitionResultA = await cellA.processObservation(observationA, {
       actionComputationId: 'task_exec_overdrive_unit_1',
       expectedContradiction: true,
@@ -856,31 +856,128 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(experienceA.noveltyClassification).toBe(NoveltyClassification.CONTRADICTION);
     expect(experienceA.verificationStatus).toBe('CONTRADICTED_BY_WORLD');
 
-    // 3. REQUIREMENT 2: The system autonomously discovers / forms generalization
+    // Develop from Experience A alone
     const learningResultA = await cellA.developFromExperience(experienceA, {
       context: { contextId: 'ctx_unit_1_incident', domain: 'INCIDENT_RESPONSE' },
       relatedConceptIds: [unit1ConceptId]
     });
 
+    // R9 WAJIB 1: Experience A alone must NOT form a generalization!
     expect(learningResultA.conceptsWeakened).toContain(unit1ConceptId);
-    expect(learningResultA.conceptsWeakened).toContain(generalConceptId);
-    expect(learningResultA.generalizationsFormed?.length).toBeGreaterThanOrEqual(1);
+    expect(learningResultA.generalizationsFormed?.length || 0).toBe(0);
+    expect(cellA.cognitiveGraph.getAllGeneralizations().length).toBe(0);
 
-    const formedGenId = learningResultA.generalizationsFormed![0];
+    // Parent concept must not be marked CONTRADICTED from a single isolated child experience
+    const parentConceptAfterA = cellA.cognitiveGraph.getConcept(generalConceptId);
+    expect(parentConceptAfterA?.verificationStatus).not.toBe(RepresentationVerificationStatus.CONTRADICTED);
+
+    // Unit 3 (unaffected new instance) reasoning before Experience B: NO contradiction anticipated yet
+    const reasoningUnit3BeforeB = cellA.reasoning.reason({
+      goal: 'Regulate thermal surge in Sector Gamma using Unit 3',
+      context: contextCaseB,
+      originatingCellId: cellA.nodeId,
+      minEvidenceThreshold: 0.2,
+      premises: [
+        {
+          premiseId: 'premise_gamma_surge_eval_pre',
+          statement: 'Thermal surge detected in Sector Gamma.',
+          confidence: 0.9
+        }
+      ],
+      hypotheses: [
+        {
+          hypothesisId: 'hyp_unit3_overdrive',
+          statement: 'Deploy CoolantPumpOverdriveUnit3 to regulate Sector Gamma surge.',
+          targetConceptId: unit3ConceptId,
+          confidence: 0.85
+        }
+      ]
+    }, cellA.cognitiveGraph);
+    expect(reasoningUnit3BeforeB.verification.hasContradiction).toBe(false);
+    expect(reasoningUnit3BeforeB.verification.epistemicStatus).not.toBe(EpistemicStatus.CONTRADICTED);
+
+    // 3. R9 WAJIB 2: Experience B (Unit 2) with compatible pattern -> Generalization CREATED!
+    const observationB = {
+      domainKind: DomainKind.OBSERVATION,
+      observedSubject: 'CoolantPumpOverdriveUnit2',
+      source: 'sensor_telemetry_unit_2_monitoring',
+      confidence: 0.98,
+      content: {
+        status: 'CONTRADICTED',
+        contradicts: true,
+        anomaly: 'IMPELLER_CAVITATION_RUPTURE',
+        details: 'Unit 2 suffered mechanical cavitation destruction under 12000 RPM overdrive in Sector Beta'
+      }
+    };
+
+    const transitionResultB = await cellA.processObservation(observationB, {
+      actionComputationId: 'task_exec_overdrive_unit_2',
+      expectedContradiction: true,
+      cycleNumber: 2,
+      enableCognitiveDevelopment: false
+    });
+    expect(transitionResultB.status).toBe('CREATED');
+    const experienceB = transitionResultB.experience;
+    expect(experienceB.noveltyClassification).toBe(NoveltyClassification.CONTRADICTION);
+
+    const learningResultB = await cellA.developFromExperience(experienceB, {
+      context: { contextId: 'ctx_unit_2_incident', domain: 'INCIDENT_RESPONSE' },
+      relatedConceptIds: [unit2ConceptId]
+    });
+
+    expect(learningResultB.conceptsWeakened).toContain(unit2ConceptId);
+    expect(learningResultB.generalizationsFormed?.length).toBeGreaterThanOrEqual(1);
+
+    const formedGenId = learningResultB.generalizationsFormed![0];
     const discoveredGen = cellA.cognitiveGraph.getGeneralization(formedGenId);
     expect(discoveredGen).toBeDefined();
     expect(discoveredGen?.verificationStatus).toBe(RepresentationVerificationStatus.CONTRADICTED);
     expect(discoveredGen?.pattern).toMatch(/risk invariant|cavitation/i);
     expect(discoveredGen?.sourceConceptIds).toContain(generalConceptId);
-    expect(discoveredGen?.supportingEvidence.length).toBeGreaterThanOrEqual(1);
+    expect(discoveredGen?.confidence).toBeGreaterThanOrEqual(0.75);
+
+    // R9 WAJIB 8: Assert provenance points to >= 2 independent Experiences / evidence records
+    expect(discoveredGen?.supportingEvidence.length).toBeGreaterThanOrEqual(2);
+    expect(discoveredGen?.evidenceIds?.length).toBeGreaterThanOrEqual(2);
+    expect(discoveredGen?.provenance).toContain(experienceA.experienceId);
+    expect(discoveredGen?.provenance).toContain(experienceB.experienceId);
+    expect(discoveredGen?.provenance.length).toBeGreaterThanOrEqual(2);
+
+    // 4. R9 WAJIB 5: Irrelevant Experience C does NOT mistakenly expand or alter the generalization
+    const observationC = {
+      domainKind: DomainKind.OBSERVATION,
+      observedSubject: 'AuxiliarySolarRadiationSensor',
+      source: 'sensor_telemetry_solar_monitoring',
+      confidence: 0.95,
+      content: {
+        status: 'COMPLETED',
+        radiationFlux: 1361.0,
+        details: 'Standard solar irradiance telemetry, fully nominal'
+      }
+    };
+    const transitionResultC = await cellA.processObservation(observationC, {
+      actionComputationId: 'task_poll_solar_sensor',
+      cycleNumber: 3,
+      enableCognitiveDevelopment: false
+    });
+    const experienceC = transitionResultC.experience;
+    await cellA.developFromExperience(experienceC, {
+      context: { contextId: 'ctx_solar_polling', domain: 'SOLAR_ARRAY_MONITORING' },
+      relatedConceptIds: [caseCConceptId]
+    });
+
+    const genAfterC = cellA.cognitiveGraph.getGeneralization(formedGenId);
+    expect(genAfterC?.sourceConceptIds).not.toContain(caseCConceptId);
+    expect(genAfterC?.provenance).not.toContain(experienceC.experienceId);
 
     // Persistent state S1 verification
     const stateS1 = cellA.cognitiveState.getState();
     const stateS1Hash = computeDeterministicHash(stateS1);
     expect(stateS1Hash).not.toBe(stateS0Hash);
     expect(stateS1.experienceReferences).toContain(experienceA.experienceId);
+    expect(stateS1.experienceReferences).toContain(experienceB.experienceId);
 
-    // 4. REQUIREMENT 3: Generalization survives Cold Restart
+    // 5. R9 WAJIB 3: Generalization survives Cold Restart
     await cellA.cognitiveState.persist(cellA.memory);
     await cellA.stop();
 
@@ -898,9 +995,11 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(restoredGen).toBeDefined();
     expect(restoredGen?.verificationStatus).toBe(RepresentationVerificationStatus.CONTRADICTED);
     expect(restoredGen?.pattern).toBe(discoveredGen?.pattern);
+    expect(restoredGen?.supportingEvidence.length).toBeGreaterThanOrEqual(2);
+    expect(restoredGen?.provenance).toContain(experienceA.experienceId);
+    expect(restoredGen?.provenance).toContain(experienceB.experienceId);
 
-    // 5. REQUIREMENT 4 & 5: Case B is distinct from Case A but has relevant pattern, and reasoning uses generalization
-    // Unit 3 in Sector Gamma has NEVER failed before, but shares the generalized overdrive policy
+    // 6. R9 WAJIB 4: Case B (Unit 3) is a new instance that never failed, but reasoning anticipates cavitation risk via generalization
     const reasoningCaseB = restartedCellA.reasoning.reason({
       goal: 'Regulate thermal surge in Sector Gamma using Unit 3',
       context: contextCaseB,
@@ -938,7 +1037,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(reasoningCaseB.conclusion.alternatives.length).toBeGreaterThanOrEqual(1);
     expect(reasoningCaseB.conclusion.alternatives[0].hypothesisId).toBe('hyp_gamma_passive_heatexchanger');
 
-    // 6. REQUIREMENT 6: Case C is irrelevant and is NOT mistakenly affected by generalization
+    // 7. Case C is irrelevant and is NOT mistakenly affected by generalization
     const contextCaseC: Context = {
       contextId: 'ctx_solar_telemetry',
       domain: 'SOLAR_ARRAY_MONITORING'
@@ -969,24 +1068,42 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(reasoningCaseC.verification.epistemicStatus).not.toBe(EpistemicStatus.CONTRADICTED);
     expect(reasoningCaseC.conclusion.status).not.toBe(EpistemicStatus.CONTRADICTED);
 
-    // 7. REQUIREMENT 8: Deterministic Replay guarantees identical results
+    // 8. R9 WAJIB 7: Deterministic Replay guarantees identical results
     await populateInitialGraph(cellB);
-    const transitionResultB = await cellB.processObservation(observationA, {
+
+    // Replay Experience A on cellB -> NO generalization
+    const replayTransA = await cellB.processObservation(observationA, {
       actionComputationId: 'task_exec_overdrive_unit_1',
       expectedContradiction: true,
       cycleNumber: 1,
       enableCognitiveDevelopment: false
     });
-    const experienceB = transitionResultB.experience;
-    const learningResultB = await cellB.developFromExperience(experienceB, {
+    const replayExpA = replayTransA.experience;
+    const replayLearnA = await cellB.developFromExperience(replayExpA, {
       context: { contextId: 'ctx_unit_1_incident', domain: 'INCIDENT_RESPONSE' },
       relatedConceptIds: [unit1ConceptId]
     });
+    expect(replayLearnA.generalizationsFormed?.length || 0).toBe(0);
+    expect(cellB.cognitiveGraph.getAllGeneralizations().length).toBe(0);
 
-    expect(learningResultB.generalizationsFormed?.[0]).toBe(learningResultA.generalizationsFormed?.[0]);
-    const genB = cellB.cognitiveGraph.getGeneralization(learningResultB.generalizationsFormed![0]);
+    // Replay Experience B on cellB -> Generalization CREATED
+    const replayTransB = await cellB.processObservation(observationB, {
+      actionComputationId: 'task_exec_overdrive_unit_2',
+      expectedContradiction: true,
+      cycleNumber: 2,
+      enableCognitiveDevelopment: false
+    });
+    const replayExpB = replayTransB.experience;
+    const replayLearnB = await cellB.developFromExperience(replayExpB, {
+      context: { contextId: 'ctx_unit_2_incident', domain: 'INCIDENT_RESPONSE' },
+      relatedConceptIds: [unit2ConceptId]
+    });
+
+    expect(replayLearnB.generalizationsFormed?.[0]).toBe(formedGenId);
+    const genB = cellB.cognitiveGraph.getGeneralization(formedGenId);
     expect(genB?.confidence).toBe(discoveredGen?.confidence);
     expect(genB?.verificationStatus).toBe(discoveredGen?.verificationStatus);
+    expect(genB?.supportingEvidence.length).toBe(discoveredGen?.supportingEvidence.length);
 
     const reasoningCaseB_cellB = cellB.reasoning.reason({
       goal: 'Regulate thermal surge in Sector Gamma using Unit 3',

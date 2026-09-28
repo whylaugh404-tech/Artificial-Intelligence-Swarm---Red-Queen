@@ -298,9 +298,12 @@ export class CognitiveGraph {
    */
   public async insertGeneralization(candidate: CognitiveGeneralization): Promise<CognitiveGeneralization> {
     let toValidate = { ...candidate };
-    if (toValidate.supportingEvidence.length <= 1 && toValidate.verificationStatus === RepresentationVerificationStatus.VERIFIED) {
-      // Must be candidate/pending if only supported by 1 evidence
-      toValidate.verificationStatus = RepresentationVerificationStatus.PENDING;
+    if (toValidate.supportingEvidence.length < 2) {
+      // Invariant: Single evidence cannot constitute a verified or supported generalization
+      if (toValidate.verificationStatus === RepresentationVerificationStatus.VERIFIED ||
+          toValidate.verificationStatus === RepresentationVerificationStatus.SUPPORTED) {
+        toValidate.verificationStatus = RepresentationVerificationStatus.PENDING;
+      }
     }
 
     const validated = CognitiveGeneralizationSchema.parse(toValidate);
