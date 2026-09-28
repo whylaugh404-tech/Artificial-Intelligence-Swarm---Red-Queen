@@ -486,8 +486,8 @@ export class ReasoningEngine {
             hypothesisId,
             statement: alt.statement,
             status: alt.status || EpistemicStatus.HYPOTHESIS,
-            confidence: alt.confidence,
-            reason: alt.reason
+            confidence: alt.confidence !== undefined ? alt.confidence : 0.5,
+            reason: alt.reason || 'Candidate alternative hypothesis'
           })
         );
       }
@@ -506,13 +506,34 @@ export class ReasoningEngine {
     const attributedEvidences: AttributedEvidence[] = [];
     let validEvidencesCount = 0;
 
+    const sanitizeEvidenceForFusion = (evidence: Evidence): Evidence => {
+      if (!evidence.provenance?.derivedFrom || evidence.provenance.derivedFrom.length === 0) {
+        return evidence;
+      }
+      // Filter out storage provenance / cell IDs that are not evidence/observation derivation ancestors
+      const realAncestors = evidence.provenance.derivedFrom.filter(
+        id => id.startsWith('ev_') || id.startsWith('obs_') || id.startsWith('info_') || id.startsWith('exp_') || id.startsWith('kn_')
+      );
+      if (realAncestors.length === evidence.provenance.derivedFrom.length) {
+        return evidence;
+      }
+      return {
+        ...evidence,
+        provenance: {
+          ...evidence.provenance,
+          derivedFrom: realAncestors
+        }
+      };
+    };
+
     const counterEvidenceIds = new Set(loadedCounterEvidences.map(c => c.evidenceId));
     for (const evId of supportingEvidenceArray) {
       if (counterEvidenceIds.has(evId)) continue; // skip if it's a counter evidence
       const ev = this.evidenceCache.get(evId) || graph?.getEvidence(evId);
       if (ev) {
         this.evidenceCache.set(evId, ev);
-        attributedEvidences.push({ evidence: ev, polarity: EvidencePolarity.SUPPORTS, weight: calculateEffectiveEvidenceWeight(ev) });
+        const sanitized = sanitizeEvidenceForFusion(ev);
+        attributedEvidences.push({ evidence: sanitized, polarity: EvidencePolarity.SUPPORTS, weight: calculateEffectiveEvidenceWeight(sanitized) });
         if (ev.provenance?.sourceId) provenanceSet.add(ev.provenance.sourceId);
         validEvidencesCount++;
       }
@@ -522,7 +543,8 @@ export class ReasoningEngine {
       const ev = this.evidenceCache.get(counterEv.evidenceId) || graph?.getEvidence(counterEv.evidenceId);
       if (ev) {
         this.evidenceCache.set(counterEv.evidenceId, ev);
-        attributedEvidences.push({ evidence: ev, polarity: EvidencePolarity.CONTRADICTS, weight: counterEv.weight });
+        const sanitized = sanitizeEvidenceForFusion(ev);
+        attributedEvidences.push({ evidence: sanitized, polarity: EvidencePolarity.CONTRADICTS, weight: counterEv.weight });
         if (ev.provenance?.sourceId) provenanceSet.add(ev.provenance.sourceId);
         validEvidencesCount++;
       }
@@ -558,40 +580,17 @@ export class ReasoningEngine {
       }
     }
 
-    // Check if target concept itself is marked as CONTRADICTED in CognitiveGraph
+    // Check if target concept itself is marked as CONTRADICTED in CognitiveGraph with valid grounded evidence
     if (!hasContradiction && graph && targetHypothesis?.targetConceptId) {
       const targetConcept = graph.getConcept(targetHypothesis.targetConceptId);
       if (targetConcept && targetConcept.verificationStatus === RepresentationVerificationStatus.CONTRADICTED) {
-        hasContradiction = true;
-        contradictionReason = `Target concept ${targetHypothesis.targetConceptId} (${targetConcept.canonicalName}) is marked as CONTRADICTED in CognitiveGraph`;
-      }
-    }
-
-    // Check if target concept inherits empirical contradiction from parent concept
-    // Enforce that parent contradiction inheritance requires a valid generalization or multiple direct evidences
-    if (!hasContradiction && graph && targetHypothesis?.targetConceptId) {
-      const relations = graph.getRelationsForConcept(targetHypothesis.targetConceptId);
-      for (const r of relations) {
-        if (
-          r.subjectConceptId === targetHypothesis.targetConceptId &&
-          (r.predicate === CognitiveRelationPredicate.INSTANCE_OF ||
-           r.predicate === CognitiveRelationPredicate.SPECIALIZES ||
-           r.predicate === CognitiveRelationPredicate.IS_A)
-        ) {
-          const parentConcept = graph.getConcept(r.objectConceptId);
-          if (parentConcept && parentConcept.verificationStatus === RepresentationVerificationStatus.CONTRADICTED) {
-            const parentGens = graph.findGeneralizationsByConcept(parentConcept.conceptId);
-            const hasValidParentGen = parentGens.some(g => {
-              const vg = graph.validateGeneralizationInvariant(g);
-              return vg.verificationStatus === RepresentationVerificationStatus.CONTRADICTED && (vg.supportingEvidence?.length || 0) >= 2;
-            });
-            const parentEvidences = graph.getAllEvidences().filter(ev => ev.provenance?.contradictingRepresentationIds?.includes(parentConcept.conceptId));
-            if (hasValidParentGen || parentEvidences.length >= 2) {
-              hasContradiction = true;
-              contradictionReason = `Target concept ${targetHypothesis.targetConceptId} inherits empirical contradiction from generalized parent ${parentConcept.conceptId} (${parentConcept.canonicalName})`;
-              break;
-            }
-          }
+        const conceptEvidences = graph.getAllEvidences().filter(ev =>
+          ev.provenance?.contradictingRepresentationIds?.includes(targetConcept.conceptId) &&
+          (ev.sourceId || ev.provenance?.sourceId)
+        );
+        if (conceptEvidences.length > 0) {
+          hasContradiction = true;
+          contradictionReason = `Target concept ${targetHypothesis.targetConceptId} (${targetConcept.canonicalName}) is marked as CONTRADICTED in CognitiveGraph with ${conceptEvidences.length} valid evidence record(s)`;
         }
       }
     }
@@ -652,7 +651,8 @@ export class ReasoningEngine {
       }
       if (targetHypothesis) {
         targetHypothesis.status = EpistemicStatus.CONTRADICTED;
-        const priorH = targetHypothesis.confidence ?? 0.85;
+        const targetConcept = graph && targetHypothesis.targetConceptId ? graph.getConcept(targetHypothesis.targetConceptId) : undefined;
+        const priorH = targetConcept?.confidence ?? targetHypothesis.confidence ?? 0.85;
         const d = fusionOpinion ? fusionOpinion.disbelief : 0.75;
         targetHypothesis.confidence = Number(Math.max(0.05, Math.min(1.0, priorH * (1.0 - d))).toFixed(4));
         targetHypothesis.rationale = contradictionReason;
@@ -686,9 +686,9 @@ export class ReasoningEngine {
       uncertainty = { ...fusionOpinion };
       if (targetHypothesis) {
         targetHypothesis.status = finalEpistemicStatus;
-        if (targetHypothesis.confidence === undefined) {
-          targetHypothesis.confidence = Number(fusionOpinion.belief.toFixed(4));
-        }
+        const targetConcept = graph && targetHypothesis.targetConceptId ? graph.getConcept(targetHypothesis.targetConceptId) : undefined;
+        const priorH = targetConcept?.confidence ?? targetHypothesis.confidence ?? 0.5;
+        targetHypothesis.confidence = Number(Math.max(priorH, fusionOpinion.belief).toFixed(4));
       }
     }
 
@@ -698,23 +698,38 @@ export class ReasoningEngine {
     let selectedAlternative: AlternativeHypothesis | undefined;
     const evaluatedAlternatives: AlternativeHypothesis[] = [];
 
+    // Contextual grounding from premises
+    const premiseBaseConfidence = loadedPremises.length > 0
+      ? (loadedPremises.reduce((sum, p) => sum + (p.confidence !== undefined ? p.confidence : 0.85), 0) / loadedPremises.length)
+      : 0.85;
+
     for (const alt of loadedAlternatives) {
-      let altConfidence = alt.confidence;
-      let altStatus = alt.status;
-      let altReason = alt.reason;
+      let altConfidence: number;
+      let altStatus: EpistemicStatus;
+      let altReason: string;
 
       if (hasContradiction) {
-        // Epistemic mass reallocation: disbelief refuting primary hypothesis shifts credibility to viable alternative
+        // Epistemic reallocation driven entirely by contradiction in graph state
         const totalMass = effectiveConflictMass + effectiveSupportMass;
         const conflictRatio = totalMass > 0 ? effectiveConflictMass / (totalMass + 0.5) : 0.7;
-        const reallocatedBoost = conflictRatio * (1.0 - alt.confidence);
-        altConfidence = Number(Math.min(0.95, alt.confidence + reallocatedBoost).toFixed(4));
-        if (altConfidence >= 0.70) {
-          altStatus = EpistemicStatus.BELIEVED;
-        } else if (altConfidence >= minThreshold) {
-          altStatus = EpistemicStatus.HYPOTHESIS;
-        }
-        altReason = `${alt.reason} (Promoted endogenously as alternative; primary hypothesis refuted with conflict ratio ${conflictRatio.toFixed(2)})`;
+        const disbelief = fusionOpinion ? fusionOpinion.disbelief : 0.75;
+
+        // Baseline prior is uncommitted baseline (0.50), NEVER caller's alt.confidence.
+        // Disbelief and conflict mass in the refuted primary hypothesis shift belief mass to alternative.
+        const reallocatedBoost = conflictRatio * (1.0 - 0.50);
+        const internalConfidence = 0.50 + reallocatedBoost * (0.8 + 0.2 * disbelief);
+
+        altConfidence = Number(Math.min(0.95, Math.max(0.10, internalConfidence)).toFixed(4));
+        altStatus = altConfidence >= 0.70 ? EpistemicStatus.BELIEVED : EpistemicStatus.HYPOTHESIS;
+
+        // Reason generated by reasoning engine from graph state, NEVER from caller-supplied alt.reason
+        altReason = `Promoted endogenously based on graph state: primary hypothesis contradicted with conflict ratio ${conflictRatio.toFixed(2)} and disbelief ${disbelief.toFixed(2)}`;
+      } else {
+        // When primary hypothesis is not contradicted, alternative remains at unevidenced baseline prior
+        const fusedBelief = fusionOpinion ? fusionOpinion.belief : 0.5;
+        altConfidence = Number(Math.max(0.05, Math.min(0.50, 0.50 * (1.0 - fusedBelief * 0.5))).toFixed(4));
+        altStatus = EpistemicStatus.HYPOTHESIS;
+        altReason = 'Secondary alternative retained without active contradiction';
       }
 
       evaluatedAlternatives.push({
@@ -726,8 +741,14 @@ export class ReasoningEngine {
       });
     }
 
-    // Rank alternatives by confidence descending (highest confidence first)
-    evaluatedAlternatives.sort((a, b) => b.confidence - a.confidence);
+    // Rank alternatives strictly by confidence descending, then by canonical hypothesisId ascending.
+    // NEVER uses alt.reason to determine choice!
+    evaluatedAlternatives.sort((a, b) => {
+      if (b.confidence !== a.confidence) {
+        return b.confidence - a.confidence;
+      }
+      return a.hypothesisId.localeCompare(b.hypothesisId);
+    });
 
     if (hasContradiction && evaluatedAlternatives.length > 0) {
       selectedAlternative = evaluatedAlternatives[0];

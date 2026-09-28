@@ -448,8 +448,8 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
         {
           hypothesisId: 'hyp_auxiliary_heatexchanger',
           statement: 'Engage auxiliary low-pressure heat exchangers.',
-          confidence: 0.92,
-          reason: 'Averts cavitation risk through secondary low-pressure loop'
+          confidence: 0.4,
+          reason: 'Secondary cooling loop without pump strain'
         }
       ]
     }, restartedCell.cognitiveGraph);
@@ -829,6 +829,10 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(cellControl.cognitiveGraph.getAllGeneralizations().length).toBe(0);
     expect(controlReasoningCaseB.verification.hasContradiction).toBe(false);
     expect(controlReasoningCaseB.verification.epistemicStatus).not.toBe(EpistemicStatus.CONTRADICTED);
+    expect(controlReasoningCaseB.conclusion.status).not.toBe(EpistemicStatus.CONTRADICTED);
+    expect(controlReasoningCaseB.conclusion.selectedAlternative).toBeUndefined();
+    expect(controlReasoningCaseB.conclusion.alternatives[0].status).not.toBe(EpistemicStatus.BELIEVED);
+    expect(controlReasoningCaseB.conclusion.alternatives[0].confidence).toBeLessThan(0.60);
 
     // 2. REQUIREMENT 1 & 2: Experience A alone -> NO generalization formed
     const observationA = {
@@ -1147,15 +1151,20 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
         {
           hypothesisId: 'hyp_gamma_passive_heatexchanger',
           statement: 'Engage Sector Gamma passive heat exchangers.',
-          confidence: 0.94,
-          reason: 'Bypass centrifugal pump overdrive cavitation risk identified by generalization'
+          confidence: 0.5,
+          reason: 'Secondary passive cooling'
         }
       ]
     }, cellB.cognitiveGraph);
 
     expect(reasoningCaseB_cellB.verification.hasContradiction).toBe(true);
+    expect(reasoningCaseB_cellB.verification.epistemicStatus).toBe(reasoningCaseB.verification.epistemicStatus);
     expect(reasoningCaseB_cellB.conclusion.status).toBe(reasoningCaseB.conclusion.status);
     expect(reasoningCaseB_cellB.conclusion.alternatives[0].hypothesisId).toBe(reasoningCaseB.conclusion.alternatives[0].hypothesisId);
+    expect(reasoningCaseB_cellB.conclusion.alternatives[0].confidence).toBe(reasoningCaseB.conclusion.alternatives[0].confidence);
+    expect(reasoningCaseB_cellB.conclusion.alternatives[0].status).toBe(reasoningCaseB.conclusion.alternatives[0].status);
+    expect(reasoningCaseB_cellB.conclusion.selectedAlternative?.hypothesisId).toBe(reasoningCaseB.conclusion.selectedAlternative?.hypothesisId);
+    expect(reasoningCaseB_cellB.conclusion.selectedAlternative?.confidence).toBe(reasoningCaseB.conclusion.selectedAlternative?.confidence);
 
     await restartedCellA.stop();
   });
