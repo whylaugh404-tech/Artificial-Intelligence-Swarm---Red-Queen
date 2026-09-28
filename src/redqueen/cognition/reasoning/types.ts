@@ -5,6 +5,7 @@ import {
   CognitiveRelation,
   CognitiveRelationPredicate,
   CognitiveRelationSchema,
+  CognitiveGeneralization,
   RepresentationVerificationStatus,
   RepresentationVerificationStatusSchema
 } from '../representation/types';
@@ -91,7 +92,8 @@ export const CounterEvidenceItemSchema = z.object({
   evidenceId: z.string().min(1),
   reason: z.string().min(1),
   weight: z.number().min(0).max(1).default(1.0),
-  sourceId: z.string().optional()
+  sourceId: z.string().optional(),
+  generalizationId: z.string().optional()
 });
 export type CounterEvidenceItem = z.infer<typeof CounterEvidenceItemSchema>;
 
@@ -128,6 +130,7 @@ export const ReasoningConclusionSchema = z.object({
   assumptions: z.array(z.string().min(1)).default([]),
   uncertainty: SubjectiveOpinionSchema,
   alternatives: z.array(AlternativeHypothesisSchema).default([]),
+  selectedAlternative: AlternativeHypothesisSchema.optional(),
   provenance: z.array(z.string().min(1)).min(1),
   originatingCellId: z.string().min(1),
   createdAt: z.string().datetime()
@@ -167,8 +170,10 @@ export interface ReasoningTrace {
     | 'CONCEPT'
     | 'RELATION'
     | 'UNDERSTANDING'
-    | 'WORLD_MODEL';
+    | 'WORLD_MODEL'
+    | 'GENERALIZATION';
   readonly representation?: CognitiveConcept | CognitiveRelation;
+  readonly generalization?: CognitiveGeneralization;
   readonly understanding?: CognitiveUnderstanding;
   readonly worldModel?: WorldModel;
   readonly evidence?: Evidence;

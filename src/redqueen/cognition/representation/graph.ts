@@ -293,19 +293,139 @@ export class CognitiveGraph {
   }
 
   /**
-   * Inserts a generalization pattern into the cognitive graph.
-   * Enforces that generalizations with <= 1 evidence must be candidate/hypothesis (PENDING).
+   * Evaluates the global Generalization Invariant across provenance, evidence, and concepts.
+   * VALID GENERALIZATION requires:
+   * >= 2 independent Experiences
+   * AND >= 2 independent Evidence
+   * AND >= 2 independent supporting Concepts
+   *
+   * Specifically, there must exist at least two distinct grounded sources:
+   * (E1 -> Experience A -> Concept X) and (E2 -> Experience B -> Concept Y)
+   * where E1 !== E2, A !== B, and X !== Y.
+   *
+   * If invariant is not met or supportingEvidence.length < 2:
+   * Status cannot be VERIFIED, SUPPORTED, or CONTRADICTED, and is downgraded to PENDING.
    */
-  public async insertGeneralization(candidate: CognitiveGeneralization): Promise<CognitiveGeneralization> {
-    let toValidate = { ...candidate };
+  public validateGeneralizationInvariant(candidate: CognitiveGeneralization): CognitiveGeneralization {
+    const toValidate = { ...candidate };
+
+    toValidate.supportingEvidence = Array.from(new Set(toValidate.supportingEvidence || [])).filter(Boolean).sort();
+    toValidate.evidenceIds = Array.from(new Set([...(toValidate.evidenceIds || []), ...toValidate.supportingEvidence])).filter(Boolean).sort();
+    toValidate.provenance = Array.from(new Set(toValidate.provenance || [])).filter(Boolean).sort();
+    toValidate.sourceConceptIds = Array.from(new Set(toValidate.sourceConceptIds || [])).filter(Boolean).sort();
+
     if (toValidate.supportingEvidence.length < 2) {
-      // Invariant: Single evidence cannot constitute a verified or supported generalization
-      if (toValidate.verificationStatus === RepresentationVerificationStatus.VERIFIED ||
-          toValidate.verificationStatus === RepresentationVerificationStatus.SUPPORTED) {
+      if (
+        toValidate.verificationStatus === RepresentationVerificationStatus.VERIFIED ||
+        toValidate.verificationStatus === RepresentationVerificationStatus.SUPPORTED ||
+        toValidate.verificationStatus === RepresentationVerificationStatus.CONTRADICTED
+      ) {
         toValidate.verificationStatus = RepresentationVerificationStatus.PENDING;
+        toValidate.confidence = Math.min(toValidate.confidence, 0.45);
+      }
+      return toValidate;
+    }
+
+    interface GroundedSource {
+      evidenceId: string;
+      experienceId: string;
+      conceptId: string;
+    }
+
+    const groundedSources: GroundedSource[] = [];
+
+    const findExpIdFromEv = (ev: Evidence): string | undefined => {
+      if (ev.provenance?.derivedFrom) {
+        const fromDerived = ev.provenance.derivedFrom.find(id => id.startsWith('exp_') || id.includes('experience'));
+        if (fromDerived) return fromDerived;
+      }
+      if (ev.sourceId && (ev.sourceId.startsWith('exp_') || ev.sourceId.includes('experience'))) {
+        return ev.sourceId;
+      }
+      if (ev.provenance?.observationId) {
+        return ev.provenance.observationId;
+      }
+      return undefined;
+    };
+
+    const findConceptIdFromEv = (ev: Evidence, sourceConcepts: string[]): string | undefined => {
+      const candidates = [
+        ...(ev.provenance?.contradictingRepresentationIds || []),
+        ...(ev.provenance?.supportingRepresentationIds || [])
+      ];
+      const match = candidates.find(id => sourceConcepts.includes(id));
+      if (match) return match;
+      return candidates[0];
+    };
+
+    // 1. Parse structured provenance entries if any: e.g. "prov_map:evId->expId->conceptId"
+    for (const p of toValidate.provenance) {
+      if (p.startsWith('prov_map:')) {
+        const parts = p.substring('prov_map:'.length).split('->');
+        if (parts.length >= 3 && parts[0] && parts[1] && parts[2]) {
+          if (!groundedSources.some(g => g.evidenceId === parts[0])) {
+            groundedSources.push({ evidenceId: parts[0], experienceId: parts[1], conceptId: parts[2] });
+          }
+        }
       }
     }
 
+    // 2. Query in-memory evidences to ground any remaining supportingEvidence
+    for (const evId of toValidate.supportingEvidence) {
+      if (groundedSources.some(g => g.evidenceId === evId)) continue;
+      const ev = this.evidences.get(evId);
+      if (ev) {
+        const expId = findExpIdFromEv(ev);
+        const conceptId = findConceptIdFromEv(ev, toValidate.sourceConceptIds);
+        if (expId && conceptId) {
+          groundedSources.push({ evidenceId: evId, experienceId: expId, conceptId });
+          toValidate.provenance.push(`prov_map:${evId}->${expId}->${conceptId}`);
+        }
+      }
+    }
+
+    toValidate.provenance = Array.from(new Set(toValidate.provenance)).sort();
+
+    // 3. Invariant evaluation:
+    // Requires at least 2 distinct grounded sources:
+    // E1 !== E2 AND A !== B AND X !== Y
+    let satisfiesInvariant = false;
+    for (let i = 0; i < groundedSources.length; i++) {
+      for (let j = i + 1; j < groundedSources.length; j++) {
+        const s1 = groundedSources[i];
+        const s2 = groundedSources[j];
+        if (
+          s1.evidenceId !== s2.evidenceId &&
+          s1.experienceId !== s2.experienceId &&
+          s1.conceptId !== s2.conceptId
+        ) {
+          satisfiesInvariant = true;
+          break;
+        }
+      }
+      if (satisfiesInvariant) break;
+    }
+
+    if (!satisfiesInvariant) {
+      if (
+        toValidate.verificationStatus === RepresentationVerificationStatus.VERIFIED ||
+        toValidate.verificationStatus === RepresentationVerificationStatus.SUPPORTED ||
+        toValidate.verificationStatus === RepresentationVerificationStatus.CONTRADICTED
+      ) {
+        toValidate.verificationStatus = RepresentationVerificationStatus.PENDING;
+        toValidate.confidence = Math.min(toValidate.confidence, 0.45);
+      }
+    }
+
+    return toValidate;
+  }
+
+  /**
+   * Inserts a generalization pattern into the cognitive graph.
+   * Enforces global Generalization Invariant (>= 2 independent experiences, evidences, and concepts).
+   */
+  public async insertGeneralization(candidate: CognitiveGeneralization): Promise<CognitiveGeneralization> {
+    const toValidate = this.validateGeneralizationInvariant(candidate);
     const validated = CognitiveGeneralizationSchema.parse(toValidate);
     this.generalizations.set(validated.generalizationId, validated);
     await this.persistEntry(validated.generalizationId, 'COGNITIVE_GENERALIZATION', validated, validated.confidence, validated.provenance);
@@ -867,7 +987,8 @@ export class CognitiveGraph {
   }
 
   public async updateGeneralization(generalization: CognitiveGeneralization): Promise<CognitiveGeneralization> {
-    const validated = CognitiveGeneralizationSchema.parse(generalization);
+    const toValidate = this.validateGeneralizationInvariant(generalization);
+    const validated = CognitiveGeneralizationSchema.parse(toValidate);
     this.generalizations.set(validated.generalizationId, validated);
     await this.persistEntry(validated.generalizationId, 'COGNITIVE_GENERALIZATION', validated, validated.confidence, validated.provenance);
     return validated;
@@ -1181,7 +1302,9 @@ export class CognitiveGraph {
       generalization.epistemicStateId = stateId;
       generalization.verificationStatus = verificationStatus;
       if (confidence !== undefined) generalization.confidence = confidence;
-      await this.persistEntry(generalization.generalizationId, 'COGNITIVE_GENERALIZATION', generalization, generalization.confidence, generalization.provenance);
+      const validated = this.validateGeneralizationInvariant(generalization);
+      this.generalizations.set(validated.generalizationId, validated);
+      await this.persistEntry(validated.generalizationId, 'COGNITIVE_GENERALIZATION', validated, validated.confidence, validated.provenance);
       return;
     }
 
@@ -1380,8 +1503,22 @@ export class CognitiveGraph {
         category: MemoryCategory.SEMANTIC
       });
 
-      // Sort entries so COGNITIVE_EVIDENCE is restored before EVIDENCE_DEPENDENCY
-      const priority = (type?: string) => (type === 'EVIDENCE_DEPENDENCY' ? 2 : 1);
+      // Sort entries so COGNITIVE_EVIDENCE and COGNITIVE_CONCEPT are restored before COGNITIVE_GENERALIZATION, and before EVIDENCE_DEPENDENCY
+      const priority = (type?: string) => {
+        switch (type) {
+          case 'COGNITIVE_EVIDENCE': return 1;
+          case 'COGNITIVE_CONCEPT': return 2;
+          case 'COGNITIVE_RELATION': return 3;
+          case 'COGNITIVE_GENERALIZATION': return 4;
+          case 'COGNITIVE_ABSTRACTION': return 5;
+          case 'COGNITIVE_ANALOGY': return 6;
+          case 'COGNITIVE_UNDERSTANDING': return 7;
+          case 'EVIDENCE_DEPENDENCY': return 8;
+          case 'EPISTEMIC_STATE': return 9;
+          case 'COGNITIVE_STATE_TRANSITION': return 10;
+          default: return 99;
+        }
+      };
       const sortedEntries = [...entries].sort((a, b) => priority(a.type) - priority(b.type));
 
       for (const entry of sortedEntries) {
@@ -1435,7 +1572,8 @@ export class CognitiveGraph {
               if (entry.provenance && entry.provenance.length > 0) {
                 gen.provenance = Array.from(new Set([...gen.provenance, ...entry.provenance]));
               }
-              this.generalizations.set(gen.generalizationId, gen);
+              const validated = this.validateGeneralizationInvariant(gen);
+              this.generalizations.set(validated.generalizationId, validated);
             }
             break;
           }
@@ -1532,18 +1670,29 @@ export class CognitiveGraph {
     confidence: number,
     provenance: string[]
   ): Promise<void> {
+    let finalContent = content;
+    let finalConfidence = confidence;
+    let finalProvenance = provenance;
+
+    if (type === 'COGNITIVE_GENERALIZATION') {
+      const validated = this.validateGeneralizationInvariant(content as CognitiveGeneralization);
+      finalContent = validated;
+      finalConfidence = validated.confidence;
+      finalProvenance = validated.provenance;
+    }
+
     const memoryEntry: MemoryEntry = {
       id,
       cellId: this.cellId,
       category: MemoryCategory.SEMANTIC,
       type,
-      content,
+      content: finalContent,
       source: 'cognitive_graph',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      confidence,
+      confidence: finalConfidence,
       hash: '',
-      provenance,
+      provenance: finalProvenance,
       version: 1
     };
 

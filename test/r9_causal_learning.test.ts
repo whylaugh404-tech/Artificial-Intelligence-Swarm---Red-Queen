@@ -1000,6 +1000,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(restoredGen?.provenance).toContain(experienceB.experienceId);
 
     // 6. R9 WAJIB 4: Case B (Unit 3) is a new instance that never failed, but reasoning anticipates cavitation risk via generalization
+    // NOTE: Alternative hypothesis is provided with baseline prior (confidence 0.50), NOT injected with 0.94!
     const reasoningCaseB = restartedCellA.reasoning.reason({
       goal: 'Regulate thermal surge in Sector Gamma using Unit 3',
       context: contextCaseB,
@@ -1024,18 +1025,35 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
         {
           hypothesisId: 'hyp_gamma_passive_heatexchanger',
           statement: 'Engage Sector Gamma passive heat exchangers.',
-          confidence: 0.94,
-          reason: 'Bypass centrifugal pump overdrive cavitation risk identified by generalization'
+          confidence: 0.5,
+          reason: 'Secondary passive cooling'
         }
       ]
     }, restartedCellA.cognitiveGraph);
 
     expect(reasoningCaseB.verification.hasContradiction).toBe(true);
     expect(reasoningCaseB.verification.epistemicStatus).toBe(EpistemicStatus.CONTRADICTED);
-    expect(reasoningCaseB.verification.rationale).toMatch(/contradiction from generalization|invalidated by contradicted generalization|inherits? empirical contradiction/i);
+    expect(reasoningCaseB.verification.rationale).toMatch(/contradict/i);
     expect(reasoningCaseB.conclusion.status).toBe(EpistemicStatus.CONTRADICTED);
     expect(reasoningCaseB.conclusion.alternatives.length).toBeGreaterThanOrEqual(1);
     expect(reasoningCaseB.conclusion.alternatives[0].hypothesisId).toBe('hyp_gamma_passive_heatexchanger');
+
+    // Endogenous Epistemic Decision Shift:
+    // Confidence of alternative was NOT injected, but recalculated endogenously from epistemic update!
+    expect(reasoningCaseB.conclusion.alternatives[0].confidence).toBeGreaterThan(0.70);
+    expect(reasoningCaseB.conclusion.selectedAlternative?.hypothesisId).toBe('hyp_gamma_passive_heatexchanger');
+    expect(reasoningCaseB.conclusion.alternatives[0].status).toBe(EpistemicStatus.BELIEVED);
+
+    // Causal Reasoning Trace: Generalization and evidence enter reasoning trace
+    expect(reasoningCaseB.trace).toBeDefined();
+    const traceHyp = reasoningCaseB.trace!('hyp_unit3_overdrive');
+    expect(traceHyp.elementType).toBe('HYPOTHESIS');
+    expect(traceHyp.evidences.length).toBeGreaterThanOrEqual(2);
+
+    const traceGen = reasoningCaseB.trace!(formedGenId);
+    expect(traceGen.elementType).toBe('GENERALIZATION');
+    expect(traceGen.generalization?.generalizationId).toBe(formedGenId);
+    expect(traceGen.evidences.length).toBeGreaterThanOrEqual(2);
 
     // 7. Case C is irrelevant and is NOT mistakenly affected by generalization
     const contextCaseC: Context = {

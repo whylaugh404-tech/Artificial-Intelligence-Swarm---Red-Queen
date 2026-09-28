@@ -430,10 +430,55 @@ export class EpistemicFusionEngine {
 
       // Check if it's already an AttributedEvidence
       if ('evidence' in item && item.evidence) {
-        candidate = AttributedEvidenceSchema.parse(item);
+        const parsedAttributed = AttributedEvidenceSchema.safeParse(item);
+        if (parsedAttributed.success) {
+          candidate = parsedAttributed.data;
+        } else {
+          const innerItem = (item as any).evidence;
+          const evId = innerItem?.evidenceId || innerItem?.id || `ev_norm_${Date.now()}`;
+          const nowIso = new Date().toISOString();
+          const safeEv: Evidence = {
+            evidenceId: evId,
+            sourceId: innerItem?.sourceId || 'system_evidence',
+            timestamp: innerItem?.timestamp || nowIso,
+            confidence: innerItem?.confidence,
+            provenance: innerItem?.provenance?.timestamp ? innerItem.provenance : {
+              sourceId: innerItem?.sourceId || 'system_evidence',
+              timestamp: nowIso,
+              derivedFrom: []
+            },
+            context: innerItem?.context || { contextId: 'ctx_default', domain: 'general' }
+          };
+          candidate = {
+            evidence: safeEv,
+            polarity: (item as any).polarity || EvidencePolarity.SUPPORTS,
+            weight: (item as any).weight ?? calculateEffectiveEvidenceWeight(safeEv)
+          };
+        }
       } else {
         // Plain Evidence instance
-        const validatedEv = EvidenceSchema.parse(item);
+        const parsedEv = EvidenceSchema.safeParse(item);
+        let validatedEv: Evidence;
+        if (parsedEv.success) {
+          validatedEv = parsedEv.data;
+        } else {
+          const rawItem = item as any;
+          const evId = rawItem.evidenceId || rawItem.id || `ev_norm_${Date.now()}`;
+          const nowIso = new Date().toISOString();
+          validatedEv = {
+            evidenceId: evId,
+            sourceId: rawItem.sourceId || 'system_evidence',
+            timestamp: rawItem.timestamp || nowIso,
+            confidence: rawItem.confidence,
+            provenance: rawItem.provenance?.timestamp ? rawItem.provenance : {
+              sourceId: rawItem.sourceId || 'system_evidence',
+              timestamp: nowIso,
+              derivedFrom: []
+            },
+            context: rawItem.context || { contextId: 'ctx_default', domain: 'general' }
+          };
+        }
+
         let polarity = EvidencePolarity.SUPPORTS;
 
         if (targetRepresentationId) {
