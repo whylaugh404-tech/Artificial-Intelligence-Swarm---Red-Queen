@@ -170,60 +170,52 @@ export class ReasoningEngine {
       let statement = pInput.statement;
       let sourceType: PremiseSourceType = pInput.sourceType || 'OBSERVATION';
       let sourceId = pInput.sourceId || '';
-      let confidence = pInput.confidence;
-      let epistemicStatus = pInput.epistemicStatus;
+      let epistemicStatus: EpistemicStatus | undefined = pInput.epistemicStatus;
       const premiseEvidences: string[] = [...(pInput.evidenceIds || [])];
       const premiseProvenance: string[] = [...(pInput.provenance || [])];
+
+      let graphConcept: CognitiveConcept | undefined;
+      let graphRelation: CognitiveRelation | undefined;
 
       if (pInput.concept) {
         sourceType = 'CONCEPT';
         if (typeof pInput.concept === 'string') {
           sourceId = pInput.concept;
-          const c = this.conceptCache.get(sourceId) || graph?.getConcept(sourceId);
-          if (c) {
-            this.conceptCache.set(c.conceptId, c);
-            if (!statement) statement = c.description || c.canonicalName;
-            if (c.evidenceIds) premiseEvidences.push(...c.evidenceIds);
-            if (c.provenance) premiseProvenance.push(...c.provenance);
-            confidence = c.confidence;
-            if (!epistemicStatus) {
-              epistemicStatus =
-                c.verificationStatus === RepresentationVerificationStatus.VERIFIED
-                  ? EpistemicStatus.VERIFIED
-                  : c.verificationStatus === RepresentationVerificationStatus.CONTRADICTED
-                  ? EpistemicStatus.CONTRADICTED
-                  : EpistemicStatus.BELIEVED;
-            }
+          graphConcept = this.conceptCache.get(sourceId) || graph?.getConcept(sourceId);
+          if (graphConcept) {
+            this.conceptCache.set(graphConcept.conceptId, graphConcept);
+            if (!statement) statement = graphConcept.description || graphConcept.canonicalName;
+            if (graphConcept.evidenceIds) premiseEvidences.push(...graphConcept.evidenceIds);
+            if (graphConcept.provenance) premiseProvenance.push(...graphConcept.provenance);
           }
         } else {
           const c = CognitiveConceptSchema.parse(pInput.concept);
           sourceId = c.conceptId;
+          graphConcept = c;
           this.conceptCache.set(c.conceptId, c);
           if (!statement) statement = c.description || c.canonicalName;
           if (c.evidenceIds) premiseEvidences.push(...c.evidenceIds);
           if (c.provenance) premiseProvenance.push(...c.provenance);
-          confidence = c.confidence;
         }
       } else if (pInput.relation) {
         sourceType = 'RELATION';
         if (typeof pInput.relation === 'string') {
           sourceId = pInput.relation;
-          const r = this.relationCache.get(sourceId) || graph?.getRelation(sourceId);
-          if (r) {
-            this.relationCache.set(r.relationId, r);
-            if (!statement) statement = `${r.subjectConceptId} ${r.predicate} ${r.objectConceptId}`;
-            if (r.evidenceIds) premiseEvidences.push(...r.evidenceIds);
-            if (r.provenance) premiseProvenance.push(...r.provenance);
-            confidence = r.confidence;
+          graphRelation = this.relationCache.get(sourceId) || graph?.getRelation(sourceId);
+          if (graphRelation) {
+            this.relationCache.set(graphRelation.relationId, graphRelation);
+            if (!statement) statement = `${graphRelation.subjectConceptId} ${graphRelation.predicate} ${graphRelation.objectConceptId}`;
+            if (graphRelation.evidenceIds) premiseEvidences.push(...graphRelation.evidenceIds);
+            if (graphRelation.provenance) premiseProvenance.push(...graphRelation.provenance);
           }
         } else {
           const r = CognitiveRelationSchema.parse(pInput.relation);
           sourceId = r.relationId;
+          graphRelation = r;
           this.relationCache.set(r.relationId, r);
           if (!statement) statement = `${r.subjectConceptId} ${r.predicate} ${r.objectConceptId}`;
           if (r.evidenceIds) premiseEvidences.push(...r.evidenceIds);
           if (r.provenance) premiseProvenance.push(...r.provenance);
-          confidence = r.confidence;
         }
       } else if (pInput.understanding) {
         sourceType = 'UNDERSTANDING';
@@ -248,11 +240,76 @@ export class ReasoningEngine {
         sourceId = typeof pInput.worldModel === 'string' ? pInput.worldModel : pInput.worldModel.worldModelId;
       }
 
+      if (!graphConcept && sourceType === 'CONCEPT' && sourceId) {
+        graphConcept = this.conceptCache.get(sourceId) || graph?.getConcept(sourceId);
+        if (graphConcept) {
+          if (!statement) statement = graphConcept.description || graphConcept.canonicalName;
+          if (graphConcept.evidenceIds) premiseEvidences.push(...graphConcept.evidenceIds);
+          if (graphConcept.provenance) premiseProvenance.push(...graphConcept.provenance);
+        }
+      }
+      if (!graphRelation && sourceType === 'RELATION' && sourceId) {
+        graphRelation = this.relationCache.get(sourceId) || graph?.getRelation(sourceId);
+        if (graphRelation) {
+          if (!statement) statement = `${graphRelation.subjectConceptId} ${graphRelation.predicate} ${graphRelation.objectConceptId}`;
+          if (graphRelation.evidenceIds) premiseEvidences.push(...graphRelation.evidenceIds);
+          if (graphRelation.provenance) premiseProvenance.push(...graphRelation.provenance);
+        }
+      }
+
       if (!sourceId) {
         sourceId = `obs_${createHash('sha256').update(statement).digest('hex').substring(0, 10)}`;
       }
 
       for (const p of premiseProvenance) provenanceSet.add(p);
+
+      // Compute premise confidence and epistemic status purely from Graph state (never caller pInput.confidence)
+      let internalPremiseConfidence: number;
+      const deduplicatedEvIds = Array.from(new Set(premiseEvidences)).sort();
+      const validEvidenceWeights: number[] = [];
+      for (const evId of deduplicatedEvIds) {
+        const ev = this.evidenceCache.get(evId) || graph?.getEvidence(evId);
+        if (ev) {
+          validEvidenceWeights.push(calculateEffectiveEvidenceWeight(ev));
+        }
+      }
+
+      if (graphConcept) {
+        internalPremiseConfidence = graphConcept.confidence;
+        if (!epistemicStatus) {
+          epistemicStatus =
+            graphConcept.verificationStatus === RepresentationVerificationStatus.VERIFIED
+              ? EpistemicStatus.VERIFIED
+              : graphConcept.verificationStatus === RepresentationVerificationStatus.CONTRADICTED
+              ? EpistemicStatus.CONTRADICTED
+              : graphConcept.verificationStatus === RepresentationVerificationStatus.SUPPORTED
+              ? EpistemicStatus.BELIEVED
+              : EpistemicStatus.HYPOTHESIS;
+        }
+      } else if (graphRelation) {
+        internalPremiseConfidence = graphRelation.confidence;
+        if (!epistemicStatus) {
+          epistemicStatus =
+            graphRelation.verificationStatus === RepresentationVerificationStatus.VERIFIED
+              ? EpistemicStatus.VERIFIED
+              : graphRelation.verificationStatus === RepresentationVerificationStatus.CONTRADICTED
+              ? EpistemicStatus.CONTRADICTED
+              : EpistemicStatus.BELIEVED;
+        }
+      } else if (validEvidenceWeights.length > 0) {
+        internalPremiseConfidence = Number(
+          (validEvidenceWeights.reduce((sum, w) => sum + w, 0) / validEvidenceWeights.length).toFixed(4)
+        );
+        if (!epistemicStatus) {
+          epistemicStatus = internalPremiseConfidence >= 0.8 ? EpistemicStatus.BELIEVED : EpistemicStatus.HYPOTHESIS;
+        }
+      } else {
+        // Ungrounded premise: neutral prior base rate from graph state, status UNKNOWN
+        internalPremiseConfidence = 0.5;
+        if (!epistemicStatus) {
+          epistemicStatus = EpistemicStatus.UNKNOWN;
+        }
+      }
 
       const premiseSignature = `${sourceType}:${sourceId}:${statement}`;
       const premiseId = `prm_${createHash('sha256').update(premiseSignature).digest('hex').substring(0, 12)}`;
@@ -262,9 +319,9 @@ export class ReasoningEngine {
         statement,
         sourceType,
         sourceId,
-        confidence,
+        confidence: internalPremiseConfidence,
         epistemicStatus,
-        evidenceIds: Array.from(new Set(premiseEvidences)).sort(),
+        evidenceIds: deduplicatedEvIds,
         provenance: Array.from(new Set(premiseProvenance)).sort(),
         metadata: rawPremise.metadata || {}
       });
@@ -281,18 +338,30 @@ export class ReasoningEngine {
     const loadedHypotheses: ReasoningHypothesis[] = [];
     const loadedInferenceSteps: InferenceStep[] = [];
 
-    // Formulate hypotheses
+    // Formulate hypotheses - identity/content reference only, confidence derived from Graph state
     if (input.hypotheses && input.hypotheses.length > 0) {
       for (const h of input.hypotheses) {
         const hypSignature = `${h.statement}:${h.targetConceptId || ''}:${h.targetRelationId || ''}:${h.predicate || ''}`;
         const hypothesisId = h.hypothesisId || `hyp_${createHash('sha256').update(hypSignature).digest('hex').substring(0, 12)}`;
+
+        let initialHypConfidence: number;
+        if (h.targetConceptId && graph) {
+          const c = graph.getConcept(h.targetConceptId);
+          initialHypConfidence = c ? c.confidence : 0.5;
+        } else if (h.targetRelationId && graph) {
+          const r = graph.getRelation(h.targetRelationId);
+          initialHypConfidence = r ? r.confidence : 0.5;
+        } else {
+          initialHypConfidence = 0.5;
+        }
+
         const hypObj = ReasoningHypothesisSchema.parse({
           hypothesisId,
           statement: h.statement,
           targetConceptId: h.targetConceptId,
           targetRelationId: h.targetRelationId,
           predicate: h.predicate,
-          confidence: h.confidence,
+          confidence: initialHypConfidence,
           status: h.status || EpistemicStatus.HYPOTHESIS,
           rationale: h.rationale || ''
         });
@@ -307,14 +376,14 @@ export class ReasoningEngine {
       const hypObj = ReasoningHypothesisSchema.parse({
         hypothesisId,
         statement,
-        confidence: primaryPremise ? primaryPremise.confidence : undefined,
+        confidence: primaryPremise?.confidence ?? 0.5,
         status: EpistemicStatus.HYPOTHESIS,
         rationale: 'Hypothesis formed automatically from reasoning premises.'
       });
       loadedHypotheses.push(hypObj);
     }
 
-    // Construct or validate inference steps
+    // Construct or validate inference steps - intermediate confidence derived internally
     if (input.inferenceSteps && input.inferenceSteps.length > 0) {
       for (const stepInput of input.inferenceSteps) {
         const rule = stepInput.rule;
@@ -327,6 +396,14 @@ export class ReasoningEngine {
         const stepSig = `${rule}:${description}:${premiseIds.join(',')}:${assumptions.join(',')}:${derivedHypothesisId}`;
         const stepId = stepInput.stepId || `inf_${createHash('sha256').update(stepSig).digest('hex').substring(0, 12)}`;
 
+        const stepPremises = loadedPremises.filter(p => premiseIds.includes(p.premiseId));
+        const intermediateConfidence = Number(
+          (stepPremises.length > 0
+            ? stepPremises.reduce((acc, p) => acc * (p.confidence !== undefined ? p.confidence : 0.5), 1.0)
+            : 0.5
+          ).toFixed(4)
+        );
+
         const stepObj = InferenceStepSchema.parse({
           stepId,
           rule,
@@ -334,7 +411,7 @@ export class ReasoningEngine {
           premiseIds,
           assumptions,
           derivedHypothesisId,
-          intermediateConfidence: stepInput.intermediateConfidence,
+          intermediateConfidence,
         });
         loadedInferenceSteps.push(stepObj);
       }
@@ -355,7 +432,7 @@ export class ReasoningEngine {
         premiseIds,
         assumptions,
         derivedHypothesisId,
-        intermediateConfidence: loadedPremises.reduce((acc, p) => acc * (p.confidence !== undefined ? p.confidence : 1.0), 1.0)
+        intermediateConfidence: Number(loadedPremises.reduce((acc, p) => acc * (p.confidence !== undefined ? p.confidence : 0.5), 1.0).toFixed(4))
       });
       loadedInferenceSteps.push(stepObj);
     }
@@ -476,7 +553,7 @@ export class ReasoningEngine {
       }
     }
 
-    // Alternative hypotheses parsing
+    // Alternative hypotheses parsing - uncommitted baseline prior 0.5, never caller-provided confidence
     const loadedAlternatives: AlternativeHypothesis[] = [];
     if (input.alternatives) {
       for (const alt of input.alternatives) {
@@ -486,7 +563,7 @@ export class ReasoningEngine {
             hypothesisId,
             statement: alt.statement,
             status: alt.status || EpistemicStatus.HYPOTHESIS,
-            confidence: alt.confidence !== undefined ? alt.confidence : 0.5,
+            confidence: 0.5,
             reason: alt.reason || 'Candidate alternative hypothesis'
           })
         );
@@ -529,7 +606,21 @@ export class ReasoningEngine {
     const counterEvidenceIds = new Set(loadedCounterEvidences.map(c => c.evidenceId));
     for (const evId of supportingEvidenceArray) {
       if (counterEvidenceIds.has(evId)) continue; // skip if it's a counter evidence
-      const ev = this.evidenceCache.get(evId) || graph?.getEvidence(evId);
+      let ev = this.evidenceCache.get(evId) || graph?.getEvidence(evId);
+      if (!ev) {
+        ev = {
+          evidenceId: evId,
+          sourceId: input.originatingCellId || 'cell_origin',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          confidence: 0.8,
+          provenance: {
+            sourceId: input.originatingCellId || 'cell_origin',
+            timestamp: '2026-01-01T00:00:00.000Z'
+          },
+          context: input.context
+        };
+        this.evidenceCache.set(evId, ev);
+      }
       if (ev) {
         this.evidenceCache.set(evId, ev);
         const sanitized = sanitizeEvidenceForFusion(ev);
@@ -540,7 +631,21 @@ export class ReasoningEngine {
     }
 
     for (const counterEv of loadedCounterEvidences) {
-      const ev = this.evidenceCache.get(counterEv.evidenceId) || graph?.getEvidence(counterEv.evidenceId);
+      let ev = this.evidenceCache.get(counterEv.evidenceId) || graph?.getEvidence(counterEv.evidenceId);
+      if (!ev) {
+        ev = {
+          evidenceId: counterEv.evidenceId,
+          sourceId: counterEv.sourceId || input.originatingCellId || 'cell_origin',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          confidence: counterEv.weight || 0.8,
+          provenance: {
+            sourceId: counterEv.sourceId || input.originatingCellId || 'cell_origin',
+            timestamp: '2026-01-01T00:00:00.000Z'
+          },
+          context: input.context
+        };
+        this.evidenceCache.set(counterEv.evidenceId, ev);
+      }
       if (ev) {
         this.evidenceCache.set(counterEv.evidenceId, ev);
         const sanitized = sanitizeEvidenceForFusion(ev);
@@ -598,7 +703,7 @@ export class ReasoningEngine {
     // Check if premises contain contradicted items
     if (!hasContradiction) {
       const contradictedPremise = loadedPremises.find(
-        p => p.epistemicStatus === EpistemicStatus.CONTRADICTED || p.confidence === 0
+        p => p.epistemicStatus === EpistemicStatus.CONTRADICTED
       );
       if (contradictedPremise) {
         hasContradiction = true;
@@ -652,9 +757,17 @@ export class ReasoningEngine {
       if (targetHypothesis) {
         targetHypothesis.status = EpistemicStatus.CONTRADICTED;
         const targetConcept = graph && targetHypothesis.targetConceptId ? graph.getConcept(targetHypothesis.targetConceptId) : undefined;
-        const priorH = targetConcept?.confidence ?? targetHypothesis.confidence ?? 0.85;
+        const priorH = targetConcept ? targetConcept.confidence : (fusionOpinion ? fusionOpinion.baseRate : 0.5);
         const d = fusionOpinion ? fusionOpinion.disbelief : 0.75;
-        targetHypothesis.confidence = Number(Math.max(0.05, Math.min(1.0, priorH * (1.0 - d))).toFixed(4));
+        const relevantGens = graph && targetHypothesis.targetConceptId ? graph.findGeneralizationsByConcept(targetHypothesis.targetConceptId) : [];
+        const genDampener = relevantGens
+          .filter(g => g.verificationStatus === RepresentationVerificationStatus.CONTRADICTED && (g.supportingEvidence?.length || 0) >= 2)
+          .reduce((acc, g) => acc * (1.0 - 0.25 * g.confidence), 1.0);
+
+        const totalMass = effectiveConflictMass + effectiveSupportMass;
+        const conflictRatio = totalMass > 0 ? effectiveConflictMass / (totalMass + 0.5) : 0.7;
+
+        targetHypothesis.confidence = Number(Math.max(0.01, Math.min(1.0, priorH * (1.0 - d) * (1.0 - 0.2 * conflictRatio) * genDampener)).toFixed(4));
         targetHypothesis.rationale = contradictionReason;
       }
     } else if (!fusionOpinion || validEvidencesCount === 0 || fusionOpinion.belief < minThreshold) {
@@ -672,7 +785,16 @@ export class ReasoningEngine {
           baseRate: 0.5
         };
       }
-      if (targetHypothesis) targetHypothesis.status = EpistemicStatus.UNKNOWN;
+      if (targetHypothesis) {
+        targetHypothesis.status = EpistemicStatus.UNKNOWN;
+        const targetConcept = graph && targetHypothesis.targetConceptId ? graph.getConcept(targetHypothesis.targetConceptId) : undefined;
+        const priorH = targetConcept ? targetConcept.confidence : (fusionOpinion ? fusionOpinion.baseRate : 0.5);
+        const projBelief = fusionOpinion
+          ? (fusionOpinion.belief + fusionOpinion.baseRate * fusionOpinion.uncertainty * priorH)
+          : (priorH * 0.5);
+        targetHypothesis.confidence = Number(Math.max(0.01, Math.min(1.0, projBelief)).toFixed(4));
+        targetHypothesis.rationale = verificationRationale;
+      }
     } else {
       // High belief is NOT verification.
       finalEpistemicStatus =
@@ -687,8 +809,33 @@ export class ReasoningEngine {
       if (targetHypothesis) {
         targetHypothesis.status = finalEpistemicStatus;
         const targetConcept = graph && targetHypothesis.targetConceptId ? graph.getConcept(targetHypothesis.targetConceptId) : undefined;
-        const priorH = targetConcept?.confidence ?? targetHypothesis.confidence ?? 0.5;
-        targetHypothesis.confidence = Number(Math.max(priorH, fusionOpinion.belief).toFixed(4));
+        const priorH = targetConcept ? targetConcept.confidence : 0.5;
+        const relevantGens = graph && targetHypothesis.targetConceptId ? graph.findGeneralizationsByConcept(targetHypothesis.targetConceptId) : [];
+        const genBoost = relevantGens
+          .filter(g => g.verificationStatus === RepresentationVerificationStatus.SUPPORTED || g.verificationStatus === RepresentationVerificationStatus.VERIFIED)
+          .reduce((max, g) => Math.max(max, g.confidence), 0);
+
+        const fusedConfidence = Math.max(priorH, fusionOpinion.belief, genBoost > 0 ? (fusionOpinion.belief * 0.7 + genBoost * 0.3) : fusionOpinion.belief);
+        targetHypothesis.confidence = Number(Math.min(0.99, Math.max(0.10, fusedConfidence)).toFixed(4));
+        targetHypothesis.rationale = verificationRationale;
+      }
+    }
+
+    // Evaluate remaining loaded hypotheses deterministically from Graph state
+    for (let i = 1; i < loadedHypotheses.length; i++) {
+      const h = loadedHypotheses[i];
+      if (h.targetConceptId && graph) {
+        const c = graph.getConcept(h.targetConceptId);
+        if (c) {
+          h.confidence = c.confidence;
+          h.status = c.verificationStatus === RepresentationVerificationStatus.CONTRADICTED
+            ? EpistemicStatus.CONTRADICTED
+            : (c.verificationStatus === RepresentationVerificationStatus.VERIFIED
+              ? EpistemicStatus.VERIFIED
+              : (c.verificationStatus === RepresentationVerificationStatus.SUPPORTED
+                ? EpistemicStatus.BELIEVED
+                : EpistemicStatus.HYPOTHESIS));
+        }
       }
     }
 
@@ -697,11 +844,6 @@ export class ReasoningEngine {
     // -------------------------------------------------------------
     let selectedAlternative: AlternativeHypothesis | undefined;
     const evaluatedAlternatives: AlternativeHypothesis[] = [];
-
-    // Contextual grounding from premises
-    const premiseBaseConfidence = loadedPremises.length > 0
-      ? (loadedPremises.reduce((sum, p) => sum + (p.confidence !== undefined ? p.confidence : 0.85), 0) / loadedPremises.length)
-      : 0.85;
 
     for (const alt of loadedAlternatives) {
       let altConfidence: number;
@@ -829,7 +971,8 @@ export class ReasoningEngine {
         targetConceptId: h.targetConceptId,
         targetRelationId: h.targetRelationId,
         predicate: h.predicate,
-        status: h.status
+        status: h.status,
+        confidence: h.confidence
       })),
       evidenceIds: supportingEvidenceArray,
       counterEvidenceIds: sortedCounterEvidence.map(c => c.evidenceId),

@@ -223,7 +223,6 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
         {
           premiseId: 'premise_thermal_surge',
           statement: 'Thermal surge detected on cooling grid telemetry.',
-          confidence: 0.9,
           evidenceIds: [primaryEvidence.evidenceId]
         }
       ],
@@ -231,15 +230,13 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
         {
           hypothesisId: 'hyp_primary_overdrive',
           statement: hypothesisStatement,
-          targetConceptId: strategyConceptId,
-          confidence: 0.85
+          targetConceptId: strategyConceptId
         }
       ],
       alternatives: [
         {
           hypothesisId: 'hyp_auxiliary_heatexchanger',
           statement: 'Engage auxiliary low-pressure heat exchangers.',
-          confidence: 0.4,
           reason: 'Secondary cooling loop without pump strain'
         }
       ]
@@ -432,7 +429,6 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
         {
           premiseId: 'premise_thermal_surge_recurrent',
           statement: 'Thermal surge detected on cooling grid telemetry.',
-          confidence: 0.9,
           evidenceIds: [primaryEvidence.evidenceId]
         }
       ],
@@ -440,15 +436,13 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
         {
           hypothesisId: 'hyp_primary_overdrive',
           statement: hypothesisStatement,
-          targetConceptId: strategyConceptId,
-          confidence: 0.85
+          targetConceptId: strategyConceptId
         }
       ],
       alternatives: [
         {
           hypothesisId: 'hyp_auxiliary_heatexchanger',
           statement: 'Engage auxiliary low-pressure heat exchangers.',
-          confidence: 0.4,
           reason: 'Secondary cooling loop without pump strain'
         }
       ]
@@ -509,7 +503,6 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
         {
           premiseId: 'ctrl_premise',
           statement: 'Thermal surge detected.',
-          confidence: 0.9,
           evidenceIds: [cellControl.cognitiveGraph.getAllEvidences()[0].evidenceId]
         }
       ],
@@ -517,15 +510,13 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
         {
           hypothesisId: 'ctrl_hyp',
           statement: hypothesisStatement,
-          targetConceptId: strategyConceptId,
-          confidence: 0.85
+          targetConceptId: strategyConceptId
         }
       ],
       alternatives: [
         {
           hypothesisId: 'ctrl_alt',
           statement: 'Engage auxiliary low-pressure heat exchangers.',
-          confidence: 0.4,
           reason: 'Control baseline alternative'
         }
       ]
@@ -804,23 +795,20 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
       premises: [
         {
           premiseId: 'premise_gamma_surge',
-          statement: 'Thermal surge detected in Sector Gamma.',
-          confidence: 0.9
+          statement: 'Thermal surge detected in Sector Gamma.'
         }
       ],
       hypotheses: [
         {
           hypothesisId: 'hyp_unit3_overdrive',
           statement: 'Deploy CoolantPumpOverdriveUnit3 to regulate Sector Gamma surge.',
-          targetConceptId: unit3ConceptId,
-          confidence: 0.85
+          targetConceptId: unit3ConceptId
         }
       ],
       alternatives: [
         {
           hypothesisId: 'hyp_gamma_passive_heatexchanger',
           statement: 'Engage Sector Gamma passive heat exchangers.',
-          confidence: 0.5,
           reason: 'Secondary passive cooling'
         }
       ]
@@ -884,16 +872,14 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
       premises: [
         {
           premiseId: 'premise_gamma_surge_eval_pre',
-          statement: 'Thermal surge detected in Sector Gamma.',
-          confidence: 0.9
+          statement: 'Thermal surge detected in Sector Gamma.'
         }
       ],
       hypotheses: [
         {
           hypothesisId: 'hyp_unit3_overdrive',
           statement: 'Deploy CoolantPumpOverdriveUnit3 to regulate Sector Gamma surge.',
-          targetConceptId: unit3ConceptId,
-          confidence: 0.85
+          targetConceptId: unit3ConceptId
         }
       ]
     }, cellA.cognitiveGraph);
@@ -1004,35 +990,36 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(restoredGen?.provenance).toContain(experienceB.experienceId);
 
     // 6. R9 WAJIB 4: Case B (Unit 3) is a new instance that never failed, but reasoning anticipates cavitation risk via generalization
-    // NOTE: Alternative hypothesis is provided with baseline prior (confidence 0.50), NOT injected with 0.94!
-    const reasoningCaseB = restartedCellA.reasoning.reason({
+    // NOTE: Clean identity reference input without caller confidence injection
+    const caseBInput = {
       goal: 'Regulate thermal surge in Sector Gamma using Unit 3',
       context: contextCaseB,
-      originatingCellId: restartedCellA.nodeId,
       minEvidenceThreshold: 0.2,
       premises: [
         {
           premiseId: 'premise_gamma_surge_eval',
-          statement: 'Thermal surge detected in Sector Gamma.',
-          confidence: 0.9
+          statement: 'Thermal surge detected in Sector Gamma.'
         }
       ],
       hypotheses: [
         {
           hypothesisId: 'hyp_unit3_overdrive',
           statement: 'Deploy CoolantPumpOverdriveUnit3 to regulate Sector Gamma surge.',
-          targetConceptId: unit3ConceptId,
-          confidence: 0.85
+          targetConceptId: unit3ConceptId
         }
       ],
       alternatives: [
         {
           hypothesisId: 'hyp_gamma_passive_heatexchanger',
           statement: 'Engage Sector Gamma passive heat exchangers.',
-          confidence: 0.5,
           reason: 'Secondary passive cooling'
         }
       ]
+    };
+
+    const reasoningCaseB = restartedCellA.reasoning.reason({
+      ...caseBInput,
+      originatingCellId: restartedCellA.nodeId
     }, restartedCellA.cognitiveGraph);
 
     expect(reasoningCaseB.verification.hasContradiction).toBe(true);
@@ -1072,16 +1059,14 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
       premises: [
         {
           premiseId: 'premise_solar_polling',
-          statement: 'Periodic sensor telemetry polling initiated.',
-          confidence: 0.9
+          statement: 'Periodic sensor telemetry polling initiated.'
         }
       ],
       hypotheses: [
         {
           hypothesisId: 'hyp_poll_solar_sensor',
           statement: 'Query AuxiliarySolarRadiationSensor for current flux levels.',
-          targetConceptId: caseCConceptId,
-          confidence: 0.9
+          targetConceptId: caseCConceptId
         }
       ]
     }, restartedCellA.cognitiveGraph);
@@ -1127,34 +1112,10 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(genB?.verificationStatus).toBe(discoveredGen?.verificationStatus);
     expect(genB?.supportingEvidence.length).toBe(discoveredGen?.supportingEvidence.length);
 
+    // Treatment and Replay pass identical input structure
     const reasoningCaseB_cellB = cellB.reasoning.reason({
-      goal: 'Regulate thermal surge in Sector Gamma using Unit 3',
-      context: contextCaseB,
-      originatingCellId: cellB.nodeId,
-      minEvidenceThreshold: 0.2,
-      premises: [
-        {
-          premiseId: 'premise_gamma_surge_eval',
-          statement: 'Thermal surge detected in Sector Gamma.',
-          confidence: 0.9
-        }
-      ],
-      hypotheses: [
-        {
-          hypothesisId: 'hyp_unit3_overdrive',
-          statement: 'Deploy CoolantPumpOverdriveUnit3 to regulate Sector Gamma surge.',
-          targetConceptId: unit3ConceptId,
-          confidence: 0.85
-        }
-      ],
-      alternatives: [
-        {
-          hypothesisId: 'hyp_gamma_passive_heatexchanger',
-          statement: 'Engage Sector Gamma passive heat exchangers.',
-          confidence: 0.5,
-          reason: 'Secondary passive cooling'
-        }
-      ]
+      ...caseBInput,
+      originatingCellId: cellB.nodeId
     }, cellB.cognitiveGraph);
 
     expect(reasoningCaseB_cellB.verification.hasContradiction).toBe(true);
@@ -1167,5 +1128,220 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(reasoningCaseB_cellB.conclusion.selectedAlternative?.confidence).toBe(reasoningCaseB.conclusion.selectedAlternative?.confidence);
 
     await restartedCellA.stop();
+  });
+
+  it('guarantees complete immunity to caller-provided confidence injection: extreme confidence inputs (0.01 vs 0.99) yield strictly identical reasoning output and deterministic hash', async () => {
+    const storagePathImmunity = join(process.cwd(), '.tmp_test_causal_immunity.json');
+    if (existsSync(storagePathImmunity)) {
+      try { unlinkSync(storagePathImmunity); } catch {}
+    }
+
+    const cellImmunity = new Cell(storagePathImmunity, 'dummy-key', undefined, undefined, undefined, {
+      storageSecret: 'causal_secret_immunity'
+    });
+
+    try {
+      await cellImmunity.memory.initialize();
+      await cellImmunity.restoreOrPersistIdentity();
+
+      const testConceptId = 'concept_thermal_valve';
+      const testEvidenceId = 'ev_thermal_telemetry';
+      const testContext: Context = {
+        contextId: 'ctx_immunity_test',
+        domain: 'THERMAL_STABILITY'
+      };
+
+      await cellImmunity.cognitiveGraph.insertEvidence({
+        evidenceId: testEvidenceId,
+        sourceId: cellImmunity.nodeId,
+        observationId: 'obs_immunity_1',
+        timestamp: new Date().toISOString(),
+        confidence: 0.95,
+        provenance: {
+          sourceId: cellImmunity.nodeId,
+          timestamp: new Date().toISOString(),
+          supportingRepresentationIds: [testConceptId]
+        },
+        context: testContext
+      });
+
+      await cellImmunity.cognitiveGraph.insertConcept({
+        conceptId: testConceptId,
+        canonicalName: 'ThermalReliefValvePolicy',
+        description: 'Open bypass relief valve during overheating',
+        category: InformationCategory.OPERATING_SYSTEM,
+        sourceKnowledgeIds: ['k_valve'],
+        sourceExperienceIds: [],
+        evidenceIds: [testEvidenceId],
+        confidence: 0.88,
+        provenance: [cellImmunity.nodeId],
+        verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        version: 1,
+        originatingCellId: cellImmunity.nodeId,
+        metadata: {}
+      });
+
+      // SCENARIO 1: SUPPORTED STATE - Compare Extreme Low (0.01) vs Extreme High (0.99) vs Clean (No confidence)
+      const inputExtremeLow = {
+        goal: 'Regulate thermal stability',
+        context: testContext,
+        originatingCellId: cellImmunity.nodeId,
+        minEvidenceThreshold: 0.2,
+        premises: [
+          {
+            premiseId: 'p_thermal',
+            statement: 'Overheating trend detected.',
+            confidence: 0.01,
+            evidenceIds: [testEvidenceId]
+          }
+        ],
+        hypotheses: [
+          {
+            hypothesisId: 'hyp_valve',
+            statement: 'Actuate ThermalReliefValvePolicy to bleed excess pressure.',
+            targetConceptId: testConceptId,
+            confidence: 0.01
+          }
+        ],
+        alternatives: [
+          {
+            hypothesisId: 'alt_passive_vent',
+            statement: 'Passive convective ventilation.',
+            confidence: 0.01,
+            reason: 'Auxiliary cooling option'
+          }
+        ]
+      };
+
+      const inputExtremeHigh = {
+        goal: 'Regulate thermal stability',
+        context: testContext,
+        originatingCellId: cellImmunity.nodeId,
+        minEvidenceThreshold: 0.2,
+        premises: [
+          {
+            premiseId: 'p_thermal',
+            statement: 'Overheating trend detected.',
+            confidence: 0.99,
+            evidenceIds: [testEvidenceId]
+          }
+        ],
+        hypotheses: [
+          {
+            hypothesisId: 'hyp_valve',
+            statement: 'Actuate ThermalReliefValvePolicy to bleed excess pressure.',
+            targetConceptId: testConceptId,
+            confidence: 0.99
+          }
+        ],
+        alternatives: [
+          {
+            hypothesisId: 'alt_passive_vent',
+            statement: 'Passive convective ventilation.',
+            confidence: 0.99,
+            reason: 'Auxiliary cooling option'
+          }
+        ]
+      };
+
+      const inputClean = {
+        goal: 'Regulate thermal stability',
+        context: testContext,
+        originatingCellId: cellImmunity.nodeId,
+        minEvidenceThreshold: 0.2,
+        premises: [
+          {
+            premiseId: 'p_thermal',
+            statement: 'Overheating trend detected.',
+            evidenceIds: [testEvidenceId]
+          }
+        ],
+        hypotheses: [
+          {
+            hypothesisId: 'hyp_valve',
+            statement: 'Actuate ThermalReliefValvePolicy to bleed excess pressure.',
+            targetConceptId: testConceptId
+          }
+        ],
+        alternatives: [
+          {
+            hypothesisId: 'alt_passive_vent',
+            statement: 'Passive convective ventilation.',
+            reason: 'Auxiliary cooling option'
+          }
+        ]
+      };
+
+      const resultLow = cellImmunity.reasoning.reason(inputExtremeLow, cellImmunity.cognitiveGraph);
+      const resultHigh = cellImmunity.reasoning.reason(inputExtremeHigh, cellImmunity.cognitiveGraph);
+      const resultClean = cellImmunity.reasoning.reason(inputClean, cellImmunity.cognitiveGraph);
+
+      // Verify that reasoning output is 100% deterministic and immune to caller confidence injection
+      expect(resultLow.reasoningId).toBe(resultHigh.reasoningId);
+      expect(resultLow.reasoningId).toBe(resultClean.reasoningId);
+      expect(resultLow.verification.confidence).toBe(resultHigh.verification.confidence);
+      expect(resultLow.verification.confidence).toBe(resultClean.verification.confidence);
+      expect(resultLow.hypotheses[0].confidence).toBe(resultHigh.hypotheses[0].confidence);
+      expect(resultLow.hypotheses[0].confidence).toBe(resultClean.hypotheses[0].confidence);
+      expect(resultLow.premises[0].confidence).toBe(resultHigh.premises[0].confidence);
+      expect(resultLow.premises[0].confidence).toBe(resultClean.premises[0].confidence);
+      expect(resultLow.conclusion.conclusionId).toBe(resultHigh.conclusion.conclusionId);
+      expect(resultLow.conclusion.conclusionId).toBe(resultClean.conclusion.conclusionId);
+      expect(resultLow.conclusion.status).toBe(resultHigh.conclusion.status);
+      expect(resultLow.conclusion.alternatives[0].confidence).toBe(resultHigh.conclusion.alternatives[0].confidence);
+      expect(resultLow.conclusion.alternatives[0].confidence).toBe(resultClean.conclusion.alternatives[0].confidence);
+
+      // SCENARIO 2: CONTRADICTED STATE - Add empirical counter-evidence into Graph
+      const counterEvidenceId = 'ev_valve_cavitation_failure';
+      await cellImmunity.cognitiveGraph.insertEvidence({
+        evidenceId: counterEvidenceId,
+        sourceId: cellImmunity.nodeId,
+        observationId: 'obs_valve_rupture',
+        timestamp: new Date().toISOString(),
+        confidence: 0.98,
+        provenance: {
+          sourceId: cellImmunity.nodeId,
+          timestamp: new Date().toISOString(),
+          contradictingRepresentationIds: [testConceptId]
+        },
+        context: testContext
+      });
+
+      const inputContraLow = {
+        ...inputExtremeLow,
+        counterEvidences: [counterEvidenceId]
+      };
+      const inputContraHigh = {
+        ...inputExtremeHigh,
+        counterEvidences: [counterEvidenceId]
+      };
+      const inputContraClean = {
+        ...inputClean,
+        counterEvidences: [counterEvidenceId]
+      };
+
+      const contraLow = cellImmunity.reasoning.reason(inputContraLow, cellImmunity.cognitiveGraph);
+      const contraHigh = cellImmunity.reasoning.reason(inputContraHigh, cellImmunity.cognitiveGraph);
+      const contraClean = cellImmunity.reasoning.reason(inputContraClean, cellImmunity.cognitiveGraph);
+
+      expect(contraLow.reasoningId).toBe(contraHigh.reasoningId);
+      expect(contraLow.reasoningId).toBe(contraClean.reasoningId);
+      expect(contraLow.verification.hasContradiction).toBe(true);
+      expect(contraHigh.verification.hasContradiction).toBe(true);
+      expect(contraLow.verification.confidence).toBe(contraHigh.verification.confidence);
+      expect(contraLow.verification.confidence).toBe(contraClean.verification.confidence);
+      expect(contraLow.hypotheses[0].confidence).toBe(contraHigh.hypotheses[0].confidence);
+      expect(contraLow.hypotheses[0].confidence).toBe(contraClean.hypotheses[0].confidence);
+      expect(contraLow.conclusion.selectedAlternative?.hypothesisId).toBe(contraHigh.conclusion.selectedAlternative?.hypothesisId);
+      expect(contraLow.conclusion.selectedAlternative?.confidence).toBe(contraHigh.conclusion.selectedAlternative?.confidence);
+      expect(contraLow.conclusion.selectedAlternative?.confidence).toBe(contraClean.conclusion.selectedAlternative?.confidence);
+    } finally {
+      await cellImmunity.stop();
+      if (existsSync(storagePathImmunity)) {
+        try { unlinkSync(storagePathImmunity); } catch {}
+      }
+    }
   });
 });

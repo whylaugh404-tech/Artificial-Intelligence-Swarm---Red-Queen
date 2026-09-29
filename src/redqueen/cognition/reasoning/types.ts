@@ -224,8 +224,8 @@ export interface AlternativeHypothesisInput {
   hypothesisId?: string;
   statement: string;
   status?: EpistemicStatus;
-  confidence: number;
-  reason: string;
+  confidence?: number;
+  reason?: string;
 }
 
 export interface ReasoningInput {
