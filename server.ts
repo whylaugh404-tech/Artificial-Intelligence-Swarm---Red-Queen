@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { Cell } from './src/redqueen/core/cell';
 import { logger } from './src/redqueen/core/logger';
+import { RepresentationVerificationStatus } from './src/redqueen/cognition/representation/types';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -83,6 +84,74 @@ async function startServer() {
   }
 
   await cell.start(p2pPort);
+
+  // Bootstrap foundational cyber topology via canonical metabolism if empty
+  if (cell.cognitiveGraph.getAllConcepts().length === 0) {
+    try {
+      const initInputs = [
+        {
+          sourceType: 'LOCAL_DATA',
+          sourceIdentifier: 'SYSTEM_BOOT',
+          contentType: 'text/plain',
+          content: 'SecurityTelemetryMonitor active: Continuous edge-node security telemetry collection and invariant monitoring online.'
+        },
+        {
+          sourceType: 'LOCAL_DATA',
+          sourceIdentifier: 'NETWORK_INITIALIZER',
+          contentType: 'text/plain',
+          content: 'DistributedKademliaMesh operational: P2P overlay with cryptographic node verification and SHA-256 routing table.'
+        },
+        {
+          sourceType: 'LOCAL_DATA',
+          sourceIdentifier: 'THREAT_DAEMON',
+          contentType: 'text/plain',
+          content: 'AutonomousThreatIntelligence engine initialized: Automated anomaly detection, OSINT parsing, and intrusion signature correlation.'
+        }
+      ];
+
+      for (const item of initInputs) {
+        const metaRes = await cell.metabolize(item as any);
+        if (metaRes.status === 'ACCEPTED' && metaRes.knowledgeId) {
+          const conceptId = `con_${metaRes.knowledgeId.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+          const evId = `ev_init_${metaRes.informationId}`;
+          await cell.cognitiveGraph.insertEvidence({
+            evidenceId: evId,
+            sourceId: cell.nodeId,
+            observationId: metaRes.informationId,
+            timestamp: new Date().toISOString(),
+            confidence: 0.9,
+            context: { contextId: 'ctx_system_boot', domain: 'CYBER_SECURITY' },
+            provenance: {
+              sourceId: cell.nodeId,
+              timestamp: new Date().toISOString(),
+              supportingRepresentationIds: [conceptId],
+              derivedFrom: [metaRes.informationId]
+            }
+          });
+
+          await cell.cognitiveGraph.insertConcept({
+            conceptId,
+            canonicalName: item.content.split(':')[0].trim(),
+            description: item.content,
+            category: 'SYSTEM_OBSERVATION' as any,
+            sourceKnowledgeIds: [metaRes.knowledgeId],
+            sourceExperienceIds: [],
+            evidenceIds: [evId],
+            confidence: 0.85,
+            provenance: [cell.nodeId, metaRes.informationId],
+            verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            version: 1,
+            originatingCellId: cell.nodeId,
+            metadata: { autoBootstrapped: true }
+          });
+        }
+      }
+    } catch (err: any) {
+      logger.warn('server', 'initial_metabolism_bootstrap_skipped', { message: err?.message });
+    }
+  }
 
   // API Routes
   app.get('/api/health', (req, res) => {
@@ -218,9 +287,68 @@ async function startServer() {
       res.json({
         concepts: cell.cognitiveGraph.getAllConcepts(),
         relations: cell.cognitiveGraph.getAllRelations(),
+        abstractions: cell.cognitiveGraph.getAllAbstractions(),
+        generalizations: cell.cognitiveGraph.getAllGeneralizations(),
+        analogies: cell.cognitiveGraph.getAllAnalogies(),
+        conflicts: cell.cognitiveGraph.getAllConflicts(),
         evidences: cell.cognitiveGraph.getAllEvidences(),
         budget: cell.cognitiveGraph.getBudget()
       });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/cell/cognitive-graph/concept', async (req, res) => {
+    try {
+      const { canonicalName, category, description, confidence } = req.body;
+      if (!canonicalName) {
+        return res.status(400).json({ error: 'canonicalName is required' });
+      }
+      const now = new Date().toISOString();
+      const conceptId = 'con_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+      const concept = await cell.cognitiveGraph.insertConcept({
+        conceptId,
+        canonicalName,
+        category: category || 'SYSTEM_OBSERVATION',
+        description: description || 'User-defined operational concept',
+        confidence: typeof confidence === 'number' ? confidence : 0.85,
+        sourceKnowledgeIds: ['kn_user_entry_' + Date.now()],
+        sourceExperienceIds: [],
+        originatingCellId: cell.nodeId,
+        verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+        createdAt: now,
+        updatedAt: now,
+        version: 1,
+        provenance: [cell.nodeId],
+        metadata: { userDefined: true }
+      });
+      res.json({ concept });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/cell/reason', (req, res) => {
+    try {
+      const { goal, context, premises, hypotheses, alternatives } = req.body;
+      const chain = cell.reasoning.reason({
+        goal: goal || 'Autonomous reasoning inquiry',
+        context: context || { contextId: 'ctx_inquiry', domain: 'CYBER_SECURITY' },
+        originatingCellId: cell.nodeId,
+        premises: premises || [],
+        hypotheses: hypotheses || [],
+        alternatives: alternatives || []
+      }, cell.cognitiveGraph);
+      res.json({ chain });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/cell/reasoning', (req, res) => {
+    try {
+      res.json({ chains: cell.reasoning.getAllChains() });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

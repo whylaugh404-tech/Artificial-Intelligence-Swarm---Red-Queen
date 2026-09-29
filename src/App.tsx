@@ -2,12 +2,36 @@ import React, { useEffect, useState } from 'react';
 import { RedQueenCellVisualizer } from './components/RedQueenCell';
 import { ChatInterface } from './components/Chat';
 import { BenchmarkPanel } from './components/BenchmarkPanel';
-import { Database, Shield, Zap, MessageSquare, LayoutDashboard, Activity } from 'lucide-react';
+import { CognitiveReasoningPanel } from './components/CognitiveReasoningPanel';
+import { CognitiveGraphPanel } from './components/CognitiveGraphPanel';
+import { MetabolismHub } from './components/MetabolismHub';
+import { GenomeLineagePanel } from './components/GenomeLineagePanel';
+import {
+  Database,
+  GitBranch,
+  Network,
+  Flame,
+  Dna,
+  Activity,
+  MessageSquare,
+  LayoutDashboard,
+  Shield,
+  Zap
+} from 'lucide-react';
+
+type NavigationTab =
+  | 'overview'
+  | 'reasoning'
+  | 'graph'
+  | 'metabolism'
+  | 'genome'
+  | 'benchmark'
+  | 'terminal';
 
 export default function App() {
   const [health, setHealth] = useState<any>(null);
   const [memories, setMemories] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'chat' | 'dashboard' | 'memory' | 'benchmark'>('benchmark');
+  const [activeTab, setActiveTab] = useState<NavigationTab>('reasoning');
 
   const fetchState = async () => {
     try {
@@ -38,7 +62,6 @@ export default function App() {
         setMemories(memRes.data);
       }
     } catch (err) {
-      // Silently handle transient connection gaps during server initialization
       console.warn('Network state synchronization waiting for server:', err);
     }
   };
@@ -50,116 +73,154 @@ export default function App() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#050505] text-neutral-200 p-4 md:p-8 font-sans overflow-x-hidden flex flex-col">
-      <div className="max-w-[1600px] mx-auto w-full flex flex-col gap-4 lg:gap-6 flex-1 min-h-0">
+    <div className="min-h-screen bg-[#050505] text-neutral-200 p-3 sm:p-6 font-sans overflow-x-hidden flex flex-col">
+      <div className="max-w-[1680px] mx-auto w-full flex flex-col gap-4 flex-1 min-h-0">
         
         {/* Top Navigation / Header */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between px-2 gap-4 shrink-0">
+        <header className="flex flex-col md:flex-row md:items-center justify-between px-2 gap-4 shrink-0 border-b border-neutral-850 pb-4">
           <div className="flex items-center gap-3">
-            <div className="w-2 h-8 bg-red-600 rounded-sm shrink-0"></div>
+            <div className="w-2.5 h-8 bg-red-600 rounded-sm shrink-0" />
             <div>
-              <h1 className="text-2xl font-black tracking-tighter text-white uppercase leading-none mb-1">Red Queen</h1>
-              <p className="text-xs text-neutral-500 font-mono tracking-widest uppercase leading-none">Autonomous Agent Framework</p>
+              <h1 className="text-2xl font-black tracking-tighter text-white uppercase leading-none mb-1">
+                Red Queen
+              </h1>
+              <p className="text-xs text-neutral-500 font-mono tracking-widest uppercase leading-none">
+                Autonomous Cyber-Research Agent Framework
+              </p>
             </div>
           </div>
           
-          <div className="flex gap-4">
-            <StatusBadge icon={<Shield className="w-3 h-3" />} label="Security" status="Active" color="text-emerald-400" />
-            <StatusBadge icon={<Zap className="w-3 h-3" />} label="Uplink" status="Stable" color="text-indigo-400" />
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-neutral-900/60 border border-neutral-800 rounded-md text-xs font-mono">
+              <Shield className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-neutral-400">Swarm:</span>
+              <span className="text-neutral-200 font-bold">{health?.cell?.swarmState || 'AUTHENTICATED'}</span>
+            </div>
+
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-neutral-900/60 border border-neutral-800 rounded-md text-xs font-mono">
+              <Zap className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="text-neutral-400">Node:</span>
+              <span className="text-neutral-200 font-bold">{health?.cell?.nodeId ? health.cell.nodeId.substring(0, 8) : 'ACTIVE'}</span>
+            </div>
           </div>
         </header>
 
-        {/* Mobile Tabs */}
-        <div className="flex lg:hidden bg-neutral-900/50 p-1 rounded-lg border border-neutral-800 shrink-0">
-          <TabButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} icon={<MessageSquare className="w-4 h-4"/>} label="Red Queen" />
-          <TabButton active={activeTab === 'benchmark'} onClick={() => setActiveTab('benchmark')} icon={<Activity className="w-4 h-4"/>} label="Benchmark" />
-          <TabButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard className="w-4 h-4"/>} label="Dashboard" />
-          <TabButton active={activeTab === 'memory'} onClick={() => setActiveTab('memory')} icon={<Database className="w-4 h-4"/>} label="Memory" />
-        </div>
+        {/* Global Navigation Tabs (Clean segmented control) */}
+        <nav className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar p-1.5 bg-neutral-900/50 border border-neutral-800/80 rounded-xl shrink-0">
+          <NavTabItem
+            active={activeTab === 'reasoning'}
+            onClick={() => setActiveTab('reasoning')}
+            icon={<GitBranch className="w-4 h-4 text-red-500" />}
+            label="Causal Reasoning (R9)"
+          />
+          <NavTabItem
+            active={activeTab === 'graph'}
+            onClick={() => setActiveTab('graph')}
+            icon={<Network className="w-4 h-4 text-indigo-400" />}
+            label="Cognitive Graph"
+          />
+          <NavTabItem
+            active={activeTab === 'metabolism'}
+            onClick={() => setActiveTab('metabolism')}
+            icon={<Flame className="w-4 h-4 text-amber-400" />}
+            label="Metabolism Hub"
+          />
+          <NavTabItem
+            active={activeTab === 'genome'}
+            onClick={() => setActiveTab('genome')}
+            icon={<Dna className="w-4 h-4 text-cyan-400" />}
+            label="Genome & Lineage"
+          />
+          <NavTabItem
+            active={activeTab === 'benchmark'}
+            onClick={() => setActiveTab('benchmark')}
+            icon={<Activity className="w-4 h-4 text-emerald-400" />}
+            label="Swarm Benchmark"
+          />
+          <NavTabItem
+            active={activeTab === 'overview'}
+            onClick={() => setActiveTab('overview')}
+            icon={<LayoutDashboard className="w-4 h-4 text-neutral-400" />}
+            label="Cell Overview"
+          />
+          <NavTabItem
+            active={activeTab === 'terminal'}
+            onClick={() => setActiveTab('terminal')}
+            icon={<MessageSquare className="w-4 h-4 text-rose-400" />}
+            label="Neural Terminal"
+          />
+        </nav>
 
-        {/* Main Grid */}
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-0">
+        {/* Main Stage Viewport */}
+        <main className="flex-1 min-h-0 w-full">
+          {activeTab === 'reasoning' && <CognitiveReasoningPanel />}
+          {activeTab === 'graph' && <CognitiveGraphPanel />}
+          {activeTab === 'metabolism' && <MetabolismHub />}
+          {activeTab === 'genome' && <GenomeLineagePanel />}
+          {activeTab === 'benchmark' && <BenchmarkPanel />}
+          {activeTab === 'terminal' && <ChatInterface />}
           
-          {/* Left Column: Navigation (Desktop) & Visualizer */}
-          <div className={`lg:col-span-4 flex-col gap-6 lg:h-full lg:min-h-0 ${activeTab === 'dashboard' || activeTab === 'memory' ? 'flex h-auto' : 'hidden lg:flex'}`}>
-            
-            {/* Desktop Nav */}
-            <div className="hidden lg:flex flex-col gap-2 bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-3 shrink-0">
-              <DesktopNavButton active={activeTab === 'benchmark'} onClick={() => setActiveTab('benchmark')} icon={<Activity className="w-4 h-4" />} label="Distributed Benchmark" />
-              <DesktopNavButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} icon={<MessageSquare className="w-4 h-4" />} label="Agent Interface" />
-              <DesktopNavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard className="w-4 h-4" />} label="Cell Visualizer" />
-              <DesktopNavButton active={activeTab === 'memory'} onClick={() => setActiveTab('memory')} icon={<Database className="w-4 h-4" />} label="Memory Logs" />
-            </div>
-
-            <div className={`shrink-0 ${activeTab === 'dashboard' ? 'h-auto py-8 lg:flex-1' : 'hidden lg:block'}`}>
-              <RedQueenCellVisualizer health={health} memoriesCount={memories.length} />
-            </div>
-            
-            {/* Memory Mini-Log */}
-            <div className={`lg:flex-1 bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-5 flex-col min-h-0 ${activeTab === 'memory' ? 'flex h-[500px]' : 'hidden lg:flex'}`}>
-              <div className="flex items-center gap-2 mb-4 shrink-0">
-                <Database className="w-4 h-4 text-amber-500" />
-                <h3 className="text-xs font-bold tracking-widest text-neutral-400 uppercase">Memory Provenance</h3>
+          {activeTab === 'overview' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full min-h-0">
+              <div className="lg:col-span-5 h-full">
+                <RedQueenCellVisualizer health={health} memoriesCount={memories.length} onRefresh={fetchState} />
               </div>
-              <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                {memories.length === 0 ? (
-                  <p className="text-xs text-neutral-600 font-mono">No engrams recorded.</p>
-                ) : (
-                  memories.slice().reverse().map(mem => (
-                    <div key={mem.id} className="border-l-2 border-amber-900/30 pl-3 py-1">
-                      <p className="text-[10px] text-neutral-500 font-mono mb-1">{new Date(mem.createdAt).toLocaleTimeString()}</p>
-                      <p className="text-xs text-neutral-300 break-words">{mem.content.observation || 'Internal State Update'}</p>
-                    </div>
-                  ))
-                )}
+              <div className="lg:col-span-7 flex flex-col h-full bg-neutral-900/40 border border-neutral-800 rounded-xl p-5 overflow-hidden">
+                <div className="flex items-center gap-2 mb-4 shrink-0 border-b border-neutral-800 pb-3">
+                  <Database className="w-4 h-4 text-amber-500" />
+                  <h3 className="text-xs font-bold tracking-widest text-neutral-300 uppercase">
+                    Engram Memory Stream ({memories.length})
+                  </h3>
+                </div>
+                <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                  {memories.length === 0 ? (
+                    <p className="text-xs text-neutral-600 font-mono">No engrams recorded in cell memory.</p>
+                  ) : (
+                    memories.slice().reverse().map(mem => (
+                      <div key={mem.id} className="border-l-2 border-amber-800/40 pl-3 py-1.5 bg-neutral-950/40 rounded-r">
+                        <div className="flex items-center justify-between text-[10px] text-neutral-500 font-mono mb-1">
+                          <span>{new Date(mem.createdAt).toLocaleTimeString()}</span>
+                          <span className="uppercase text-neutral-400">{mem.category || 'EPISODIC'}</span>
+                        </div>
+                        <p className="text-xs text-neutral-300 break-words font-mono">
+                          {mem.content?.observation || mem.content?.title || mem.content?.facts?.[0] || 'Internal Neural State Update'}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          )}
+        </main>
 
-          {/* Right Column: Chat Interface or Benchmark Panel */}
-          <div className={`lg:col-span-8 lg:h-full lg:min-h-0 w-full ${(activeTab === 'chat' || activeTab === 'benchmark') ? 'block h-[600px] lg:h-full' : 'hidden lg:block'}`}>
-            {activeTab === 'benchmark' && <BenchmarkPanel />}
-            {activeTab === 'chat' && <ChatInterface />}
-          </div>
-          
-        </div>
       </div>
     </div>
   );
 }
 
-function TabButton({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
+function NavTabItem({
+  active,
+  onClick,
+  icon,
+  label
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+}) {
   return (
-    <button onClick={onClick} className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-colors ${active ? 'bg-red-900/20 text-red-500' : 'text-neutral-500 hover:text-neutral-300'}`}>
-      {icon} <span className="hidden sm:inline">{label}</span>
-    </button>
-  );
-}
-
-function DesktopNavButton({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
-  return (
-    <button 
-      onClick={onClick} 
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
-        active 
-          ? 'bg-red-950/30 text-red-400 border border-red-900/50' 
-          : 'bg-transparent text-neutral-500 border border-transparent hover:bg-neutral-800 hover:text-neutral-300'
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
+        active
+          ? 'bg-neutral-800 text-neutral-100 shadow-sm border border-neutral-700/80'
+          : 'bg-transparent text-neutral-400 hover:bg-neutral-850 hover:text-neutral-200'
       }`}
     >
       {icon}
-      {label}
+      <span>{label}</span>
     </button>
-  );
-}
-
-function StatusBadge({ icon, label, status, color }: { icon: React.ReactNode, label: string, status: string, color: string }) {
-  return (
-    <div className="flex items-center gap-3 px-4 py-2 bg-neutral-900/50 border border-neutral-800 rounded-full">
-      <div className={color}>{icon}</div>
-      <div className="flex flex-col">
-        <span className="text-[9px] uppercase tracking-widest text-neutral-500 leading-none">{label}</span>
-        <span className="text-xs font-bold text-neutral-300 leading-none mt-1">{status}</span>
-      </div>
-    </div>
   );
 }
