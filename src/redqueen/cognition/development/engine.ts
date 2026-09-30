@@ -45,7 +45,66 @@ export class CognitiveDevelopmentEngine {
       domain: experience.category || 'general'
     };
 
-    // 1. Causal Target Representation Discovery if not explicitly provided
+    // 1. Classify Experience Epistemic Polarity
+    const isConflict =
+      experience.verificationStatus === 'CONTRADICTED_BY_WORLD' ||
+      experience.noveltyClassification === NoveltyClassification.CONTRADICTION ||
+      (experience.lessonsDerived && experience.lessonsDerived.some(l => l.includes('contradiction') || l.includes('rupture') || l.includes('diverged')));
+
+    const isNegative =
+      isConflict ||
+      experience.outcome === MetabolismStatus.REJECTED ||
+      experience.outcome === MetabolismStatus.INVALID ||
+      experience.outcome === MetabolismStatus.FAILED;
+
+    const isPositive =
+      !isNegative &&
+      experience.outcome === MetabolismStatus.ACCEPTED;
+
+    const isNovel =
+      !isNegative &&
+      !isPositive &&
+      (experience.noveltyClassification === NoveltyClassification.NOVEL ||
+       experience.verificationStatus === 'PENDING');
+
+    // 2. Ground Active Evidence with Complete Provenance
+    const nowIso = new Date().toISOString();
+    let activeEvidence = [...newEvidence];
+
+    if (activeEvidence.length === 0 && experience.evidenceIds && experience.evidenceIds.length > 0) {
+      const existingEvs = experience.evidenceIds
+        .map(id => this.localCell.cognitiveGraph.getEvidence(id))
+        .filter((e): e is Evidence => Boolean(e));
+      if (existingEvs.length > 0) {
+        activeEvidence = existingEvs;
+      }
+    }
+
+    if (activeEvidence.length === 0) {
+      const expEv: Evidence = {
+        evidenceId: `ev_exp_${experience.experienceId}`,
+        sourceId: experience.source || experience.experienceId,
+        observationId: experience.observationId || (experience.causalLinks?.triggeringObservationId),
+        timestamp: nowIso,
+        confidence: experience.confidence,
+        provenance: {
+          sourceId: this.localCell.nodeId,
+          observationId: experience.observationId || (experience.causalLinks?.triggeringObservationId),
+          derivedFrom: [
+            experience.experienceId,
+            ...(experience.observationId ? [experience.observationId] : [])
+          ],
+          supportingRepresentationIds: isPositive ? relatedConceptIds : undefined,
+          contradictingRepresentationIds: (isNegative || isConflict) ? relatedConceptIds : undefined,
+          timestamp: nowIso
+        },
+        context: activeContext
+      };
+      await this.localCell.cognitiveGraph.insertEvidence(expEv);
+      activeEvidence = [expEv];
+    }
+
+    // 3. Causal Target Representation Discovery & Autonomous Concept/Relation Formation
     let targetConceptIds = [...relatedConceptIds];
     const targetRelationIds = [...relatedRelationIds];
 
@@ -56,9 +115,13 @@ export class CognitiveDevelopmentEngine {
         try {
           const obsEntry = await this.localCell.memory.get(obsId);
           if (obsEntry && obsEntry.content) {
-            const subject = obsEntry.content.observedSubject || obsEntry.content.subject || obsEntry.content.canonicalName;
+            const parsed = typeof obsEntry.content === 'string' ? JSON.parse(obsEntry.content) : obsEntry.content;
+            const subject = parsed?.observedSubject || parsed?.subject || parsed?.canonicalName || parsed?.name;
             if (subject && typeof subject === 'string') {
-              const found = await this.localCell.cognitiveGraph.findConceptByName(subject);
+              let found = await this.localCell.cognitiveGraph.findConceptByName(subject);
+              if (!found) {
+                found = await this.autonomouslyFormConcept(subject, experience, activeContext, activeEvidence, isNegative, isConflict);
+              }
               if (found && !targetConceptIds.includes(found.conceptId)) {
                 targetConceptIds.push(found.conceptId);
               }
@@ -103,63 +166,55 @@ export class CognitiveDevelopmentEngine {
       }
     }
 
-    // 2. Classify Experience Epistemic Polarity
-    const isConflict =
-      experience.verificationStatus === 'CONTRADICTED_BY_WORLD' ||
-      experience.noveltyClassification === NoveltyClassification.CONTRADICTION ||
-      (experience.lessonsDerived && experience.lessonsDerived.some(l => l.includes('contradiction') || l.includes('rupture') || l.includes('diverged')));
-
-    const isNegative =
-      isConflict ||
-      experience.outcome === MetabolismStatus.REJECTED ||
-      experience.outcome === MetabolismStatus.INVALID ||
-      experience.outcome === MetabolismStatus.FAILED;
-
-    const isPositive =
-      !isNegative &&
-      experience.outcome === MetabolismStatus.ACCEPTED;
-
-    const isNovel =
-      !isNegative &&
-      !isPositive &&
-      (experience.noveltyClassification === NoveltyClassification.NOVEL ||
-       experience.verificationStatus === 'PENDING');
-
-    // 3. Ground Active Evidence with Complete Provenance
-    const nowIso = new Date().toISOString();
-    let activeEvidence = [...newEvidence];
-
-    if (activeEvidence.length === 0 && experience.evidenceIds && experience.evidenceIds.length > 0) {
-      const existingEvs = experience.evidenceIds
-        .map(id => this.localCell.cognitiveGraph.getEvidence(id))
-        .filter((e): e is Evidence => Boolean(e));
-      if (existingEvs.length > 0) {
-        activeEvidence = existingEvs;
+    // Resolve all target concepts; if any concept does not exist, autonomously form it!
+    const resolvedConceptIds: string[] = [];
+    for (const cRef of targetConceptIds) {
+      let found = this.localCell.cognitiveGraph.getConcept(cRef);
+      if (!found) {
+        found = await this.localCell.cognitiveGraph.findConceptByName(cRef);
+      }
+      if (!found) {
+        found = await this.autonomouslyFormConcept(cRef, experience, activeContext, activeEvidence, isNegative, isConflict);
+      }
+      if (found && !resolvedConceptIds.includes(found.conceptId)) {
+        resolvedConceptIds.push(found.conceptId);
       }
     }
+    targetConceptIds = resolvedConceptIds;
 
-    if (activeEvidence.length === 0) {
-      const expEv: Evidence = {
-        evidenceId: `ev_exp_${experience.experienceId}`,
-        sourceId: experience.source || experience.experienceId,
-        observationId: experience.observationId || (experience.causalLinks?.triggeringObservationId),
-        timestamp: nowIso,
-        confidence: experience.confidence,
-        provenance: {
-          sourceId: this.localCell.nodeId,
-          observationId: experience.observationId || (experience.causalLinks?.triggeringObservationId),
-          derivedFrom: [
-            experience.experienceId,
-            ...(experience.observationId ? [experience.observationId] : [])
-          ],
-          supportingRepresentationIds: isPositive ? targetConceptIds : undefined,
-          contradictingRepresentationIds: (isNegative || isConflict) ? targetConceptIds : undefined,
-          timestamp: nowIso
-        },
-        context: activeContext
+    // Ensure active evidence records the resolved target representations
+    for (let i = 0; i < activeEvidence.length; i++) {
+      const ev = activeEvidence[i];
+      let changed = false;
+      const currentProv = ev.provenance || {
+        sourceId: ev.sourceId || this.localCell.nodeId,
+        timestamp: nowIso
       };
-      await this.localCell.cognitiveGraph.insertEvidence(expEv);
-      activeEvidence = [expEv];
+      let newSup = currentProv.supportingRepresentationIds ? [...currentProv.supportingRepresentationIds] : undefined;
+      let newContra = currentProv.contradictingRepresentationIds ? [...currentProv.contradictingRepresentationIds] : undefined;
+
+      if (isPositive) {
+        newSup = Array.from(new Set([...(newSup || []), ...targetConceptIds]));
+        changed = true;
+      }
+      if (isNegative || isConflict) {
+        newContra = Array.from(new Set([...(newContra || []), ...targetConceptIds]));
+        changed = true;
+      }
+      if (changed) {
+        const updatedEv: Evidence = {
+          ...ev,
+          provenance: {
+            ...currentProv,
+            sourceId: currentProv.sourceId || ev.sourceId || this.localCell.nodeId,
+            timestamp: currentProv.timestamp || nowIso,
+            supportingRepresentationIds: newSup,
+            contradictingRepresentationIds: newContra
+          }
+        };
+        activeEvidence[i] = updatedEv;
+        await this.localCell.cognitiveGraph.insertEvidence(updatedEv);
+      }
     }
 
     // 4. Evidence-driven Learning & State Transitions
@@ -728,7 +783,7 @@ export class CognitiveDevelopmentEngine {
         : 'empirical operational failure';
 
       const pattern = isConflict
-        ? `Empirical risk invariant: ${parentConcept.canonicalName} instances exhibit ${anomalyLabel} across operational units`
+        ? `Empirical risk invariant: ${parentConcept.canonicalName} instances exhibit ${anomalyLabel} across operational instances`
         : `Empirical operational invariant: ${parentConcept.canonicalName} instances confirmed under operational telemetry`;
 
       const genSeed = `${parentConceptId}:${anomalyLabel}`;
@@ -802,11 +857,10 @@ export class CognitiveDevelopmentEngine {
           if (evAnomaly && empiricalAnomaly) {
             const normEv = String(evAnomaly).toLowerCase().replace(/_/g, ' ');
             const normEmp = anomalyLabel;
-            const isCompatible = normEv.includes(normEmp) || normEmp.includes(normEv) ||
-              (normEv.includes('cavitation') && normEmp.includes('cavitation')) ||
-              (normEv.includes('rupture') && normEmp.includes('rupture')) ||
-              (normEv.includes('overdrive') && normEmp.includes('overdrive')) ||
-              (normEv.includes('failure') && normEmp.includes('failure'));
+            const isCompatible = normEv === normEmp ||
+              normEv.includes(normEmp) ||
+              normEmp.includes(normEv) ||
+              (normEv.split(/[\s_]+/).some(token => token.length > 3 && normEmp.includes(token)));
             if (!isCompatible) {
               // Incompatible anomaly: do not merge
               continue;
@@ -832,14 +886,24 @@ export class CognitiveDevelopmentEngine {
         });
       }
 
-      // Evaluate independent evidence invariant (E1 !== E2 AND Exp1 !== Exp2 AND Concept1 !== Concept2)
+      // Evaluate independent evidence invariant (E1 !== E2 AND Exp1 !== Exp2 AND Concept1 !== Concept2 AND distinct provenance)
       let hasIndependentPair = false;
       for (let i = 0; i < matchingGrounded.length; i++) {
         for (let j = i + 1; j < matchingGrounded.length; j++) {
+          const m1 = matchingGrounded[i];
+          const m2 = matchingGrounded[j];
+          const prov1 = m1.evidence.provenance?.sourceId || m1.evidence.sourceId;
+          const prov2 = m2.evidence.provenance?.sourceId || m2.evidence.sourceId;
+          const obs1 = m1.evidence.observationId || m1.evidence.provenance?.observationId;
+          const obs2 = m2.evidence.observationId || m2.evidence.provenance?.observationId;
+
+          const distinctProvenance = (prov1 !== prov2) || (obs1 && obs2 && obs1 !== obs2);
+
           if (
-            matchingGrounded[i].evidenceId !== matchingGrounded[j].evidenceId &&
-            matchingGrounded[i].experienceId !== matchingGrounded[j].experienceId &&
-            matchingGrounded[i].conceptId !== matchingGrounded[j].conceptId
+            m1.evidenceId !== m2.evidenceId &&
+            m1.experienceId !== m2.experienceId &&
+            m1.conceptId !== m2.conceptId &&
+            distinctProvenance
           ) {
             hasIndependentPair = true;
             break;
@@ -856,7 +920,8 @@ export class CognitiveDevelopmentEngine {
         // 2. deduplicate by ID and provenance
         // 3. recompute independent experiences and concepts
         // 4. enforce invariant before setting assertive status
-        const mergedConceptIds = Array.from(new Set([...matchedGen.sourceConceptIds, ...allCoveredConceptIds, ...matchingGrounded.map(m => m.conceptId)])).sort();
+        const groundedConceptIds = Array.from(new Set(matchingGrounded.map(m => m.conceptId))).sort();
+        const mergedConceptIds = Array.from(new Set([...matchedGen.sourceConceptIds, parentConceptId, ...groundedConceptIds])).sort();
         const mergedSupportingEvidence = Array.from(new Set([...matchedGen.supportingEvidence, ...matchingGrounded.map(m => m.evidenceId)])).sort();
         const mergedEvidenceIds = Array.from(new Set([...(matchedGen.evidenceIds || []), ...mergedSupportingEvidence])).sort();
 
@@ -869,6 +934,12 @@ export class CognitiveDevelopmentEngine {
           ? Math.min(0.95, 0.6 + (mergedSupportingEvidence.length * 0.15))
           : Math.min(0.45, 0.3 + (mergedSupportingEvidence.length * 0.1));
 
+        const rawInputIds = matchingGrounded.map(m => m.evidence.observationId || m.evidence.provenance?.sourceId).filter(Boolean);
+        const provTrails = matchingGrounded.map(m => {
+          const rawObs = m.evidence.observationId || m.evidence.provenance?.sourceId || 'raw';
+          return `prov_trail:${rawObs}->${m.conceptId}->${m.evidenceId}->${m.experienceId}->${m.conceptId}->${matchedGen.generalizationId}`;
+        });
+
         const updatedGen: CognitiveGeneralization = {
           ...matchedGen,
           sourceConceptIds: mergedConceptIds,
@@ -877,7 +948,15 @@ export class CognitiveDevelopmentEngine {
           evidenceIds: mergedEvidenceIds,
           confidence: newConfidence,
           verificationStatus: newStatus,
-          provenance: Array.from(new Set([...matchedGen.provenance, ...provMaps, this.localCell.nodeId, experience.experienceId])).sort()
+          provenance: Array.from(new Set([
+            ...matchedGen.provenance,
+            ...provMaps,
+            ...provTrails,
+            ...rawInputIds,
+            ...groundedConceptIds,
+            this.localCell.nodeId,
+            experience.experienceId
+          ])).sort()
         };
 
         const updated = await this.localCell.cognitiveGraph.updateGeneralization(updatedGen);
@@ -890,12 +969,26 @@ export class CognitiveDevelopmentEngine {
           continue;
         }
 
+        const groundedConceptIds = Array.from(new Set(matchingGrounded.map(m => m.conceptId))).sort();
+        // Do NOT blindly include ungrounded siblings without independent evidence!
+        const sourceConceptIdsToStore = Array.from(new Set([parentConceptId, ...groundedConceptIds])).sort();
+
         const evidenceIdsToStore = Array.from(new Set(matchingGrounded.map(m => m.evidenceId))).sort();
+        const rawInputIds = matchingGrounded.map(m => m.evidence.observationId || m.evidence.provenance?.sourceId).filter(Boolean);
+        const provTrails = matchingGrounded.map(m => {
+          const rawObs = m.evidence.observationId || m.evidence.provenance?.sourceId || 'raw';
+          return `prov_trail:${rawObs}->${m.conceptId}->${m.evidenceId}->${m.experienceId}->${m.conceptId}->${genId}`;
+        });
+
         const provenanceToStore = Array.from(new Set([
           this.localCell.nodeId,
           experience.experienceId,
           ...provMaps,
-          ...matchingGrounded.map(m => m.experienceId)
+          ...provTrails,
+          ...rawInputIds,
+          ...evidenceIdsToStore,
+          ...matchingGrounded.map(m => m.experienceId),
+          ...groundedConceptIds
         ])).sort();
 
         const confidence = Math.min(0.95, 0.6 + (matchingGrounded.length * 0.15));
@@ -905,7 +998,7 @@ export class CognitiveDevelopmentEngine {
 
         const newGen: CognitiveGeneralization = {
           generalizationId: genId,
-          sourceConceptIds: allCoveredConceptIds,
+          sourceConceptIds: sourceConceptIdsToStore,
           pattern,
           supportingEvidence: evidenceIdsToStore,
           evidenceIds: evidenceIdsToStore,
@@ -1069,5 +1162,191 @@ export class CognitiveDevelopmentEngine {
     }
 
     return null;
+  }
+
+  /**
+   * Autonomous Ontology Formation:
+   * From Evidence + Experience + Observation, forms Concept and Relation automatically
+   * without reliance on manual test seeding.
+   */
+  private async autonomouslyFormConcept(
+    nameOrId: string,
+    experience: Experience,
+    activeContext: Context,
+    activeEvidence: Evidence[],
+    isNegative: boolean,
+    isConflict: boolean
+  ): Promise<CognitiveConcept> {
+    const nowIso = new Date().toISOString();
+    let obsContent: any = null;
+    let obsSource = experience.source || this.localCell.nodeId;
+    const obsId = experience.observationId || (experience.causalLinks?.triggeringObservationId) || experience.informationId;
+
+    if (obsId) {
+      try {
+        const memEntry = await this.localCell.memory.get(obsId);
+        if (memEntry?.content) {
+          obsContent = typeof memEntry.content === 'string' ? JSON.parse(memEntry.content) : memEntry.content;
+          if (memEntry.source) obsSource = memEntry.source;
+        }
+      } catch {}
+    }
+
+    const canonicalName = obsContent?.observedSubject || obsContent?.canonicalName || obsContent?.name || obsContent?.subject || nameOrId;
+    const conceptId = nameOrId.startsWith('concept_')
+      ? nameOrId
+      : `concept_${computeDeterministicHash(canonicalName).substring(0, 16)}`;
+
+    const existing = this.localCell.cognitiveGraph.getConcept(conceptId) || await this.localCell.cognitiveGraph.findConceptByName(canonicalName);
+    if (existing) return existing;
+
+    const description = obsContent?.details || obsContent?.description || `Concept autonomously formed from experience ${experience.experienceId}`;
+    const category = experience.category || obsContent?.category || InformationCategory.OPERATING_SYSTEM;
+    const evidenceIds = activeEvidence.map(e => e.evidenceId);
+
+    const provenance = Array.from(new Set([
+      this.localCell.nodeId,
+      obsSource,
+      experience.experienceId,
+      ...(obsId ? [obsId] : []),
+      ...evidenceIds,
+      ...(activeEvidence.flatMap(e => e.provenance?.derivedFrom || []))
+    ])).sort();
+
+    const rawObsId = obsId || experience.observationId;
+    const knowledgeIds: string[] = (experience.knowledgeIds && experience.knowledgeIds.length > 0)
+      ? [...experience.knowledgeIds]
+      : [(rawObsId ? `know_obs_${rawObsId}` : `know_${experience.experienceId}`)];
+
+    const concept: CognitiveConcept = {
+      conceptId,
+      canonicalName,
+      description,
+      category,
+      sourceKnowledgeIds: [...knowledgeIds],
+      sourceExperienceIds: [experience.experienceId],
+      evidenceIds: [...evidenceIds],
+      confidence: experience.confidence ?? 0.85,
+      provenance,
+      verificationStatus: isNegative
+        ? (isConflict ? RepresentationVerificationStatus.CONTRADICTED : RepresentationVerificationStatus.PENDING)
+        : RepresentationVerificationStatus.SUPPORTED,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      version: 1,
+      originatingCellId: this.localCell.nodeId,
+      metadata: {
+        ...(obsContent?.metadata || {}),
+        autonomouslyFormed: true,
+        sourceObservationId: obsId
+      }
+    };
+
+    const inserted = await this.localCell.cognitiveGraph.insertConcept(concept);
+
+    // Also check if observation specifies parent / generalization relationship
+    const parentName = obsContent?.parent || obsContent?.instanceOf || obsContent?.generalPolicy || obsContent?.policy ||
+      obsContent?.content?.parent || obsContent?.content?.instanceOf || obsContent?.content?.generalPolicy || obsContent?.content?.policy;
+    if (parentName && typeof parentName === 'string') {
+      let parentConcept = await this.localCell.cognitiveGraph.findConceptByName(parentName);
+      if (!parentConcept && parentName.startsWith('concept_')) {
+        parentConcept = this.localCell.cognitiveGraph.getConcept(parentName);
+      }
+      if (!parentConcept) {
+        const parentConceptId = parentName.startsWith('concept_')
+          ? parentName
+          : `concept_${computeDeterministicHash(parentName).substring(0, 16)}`;
+        parentConcept = await this.localCell.cognitiveGraph.insertConcept({
+          conceptId: parentConceptId,
+          canonicalName: parentName,
+          description: `General policy/abstraction autonomously formed for ${parentName}`,
+          category,
+          sourceKnowledgeIds: [...knowledgeIds],
+          sourceExperienceIds: [experience.experienceId],
+          evidenceIds: [...evidenceIds],
+          confidence: 0.85,
+          provenance: [this.localCell.nodeId, obsSource, experience.experienceId, ...(obsId ? [obsId] : [])],
+          verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+          version: 1,
+          originatingCellId: this.localCell.nodeId,
+          metadata: { autonomouslyFormed: true }
+        });
+      }
+
+      // Create INSTANCE_OF relation
+      const relId = `rel_${computeDeterministicHash(`${concept.conceptId}:INSTANCE_OF:${parentConcept.conceptId}`).substring(0, 16)}`;
+      const existingRel = this.localCell.cognitiveGraph.getRelation(relId);
+      if (!existingRel) {
+        await this.localCell.cognitiveGraph.insertRelation({
+          relationId: relId,
+          subjectConceptId: concept.conceptId,
+          predicate: CognitiveRelationPredicate.INSTANCE_OF,
+          objectConceptId: parentConcept.conceptId,
+          confidence: 0.90,
+          provenance: [this.localCell.nodeId, obsSource, experience.experienceId, concept.conceptId, ...(obsId ? [obsId] : [])],
+          verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+          createdAt: nowIso,
+          originatingCellId: this.localCell.nodeId,
+          metadata: { autonomouslyFormed: true }
+        });
+      }
+    }
+
+    // Also process any explicit relationships defined in observation
+    const relsList = obsContent?.relationships || obsContent?.content?.relationships;
+    if (Array.isArray(relsList)) {
+      for (const rel of relsList) {
+        if (!rel.object || typeof rel.object !== 'string') continue;
+        const targetName = rel.object.trim();
+        let targetConcept = await this.localCell.cognitiveGraph.findConceptByName(targetName);
+        if (!targetConcept && targetName.startsWith('concept_')) {
+          targetConcept = this.localCell.cognitiveGraph.getConcept(targetName);
+        }
+        if (!targetConcept) {
+          const targetConceptId = targetName.startsWith('concept_')
+            ? targetName
+            : `concept_${computeDeterministicHash(targetName).substring(0, 16)}`;
+          targetConcept = await this.localCell.cognitiveGraph.insertConcept({
+            conceptId: targetConceptId,
+            canonicalName: targetName,
+            description: `Concept autonomously formed from relation with ${canonicalName}`,
+            category,
+            sourceKnowledgeIds: [...knowledgeIds],
+            sourceExperienceIds: [experience.experienceId],
+            evidenceIds: [...evidenceIds],
+            confidence: 0.85,
+            provenance: [this.localCell.nodeId, obsSource, experience.experienceId, ...(obsId ? [obsId] : [])],
+            verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+            version: 1,
+            originatingCellId: this.localCell.nodeId,
+            metadata: { autonomouslyFormed: true }
+          });
+        }
+        const relPredicate = rel.predicate && Object.values(CognitiveRelationPredicate).includes(rel.predicate as any)
+          ? (rel.predicate as CognitiveRelationPredicate)
+          : CognitiveRelationPredicate.INSTANCE_OF;
+        const rId = `rel_${computeDeterministicHash(`${concept.conceptId}:${relPredicate}:${targetConcept.conceptId}`).substring(0, 16)}`;
+        if (!this.localCell.cognitiveGraph.getRelation(rId)) {
+          await this.localCell.cognitiveGraph.insertRelation({
+            relationId: rId,
+            subjectConceptId: concept.conceptId,
+            predicate: relPredicate,
+            objectConceptId: targetConcept.conceptId,
+            confidence: rel.confidence ?? 0.90,
+            provenance: [this.localCell.nodeId, obsSource, experience.experienceId, concept.conceptId, ...(obsId ? [obsId] : [])],
+            verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+            createdAt: nowIso,
+            originatingCellId: this.localCell.nodeId,
+            metadata: { autonomouslyFormed: true }
+          });
+        }
+      }
+    }
+
+    return inserted;
   }
 }

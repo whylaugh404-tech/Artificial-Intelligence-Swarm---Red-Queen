@@ -639,142 +639,45 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
   });
 
   it('proves autonomous generalization formation from experience, cross-restart persistence, and selective reasoning impact (Case B affected, Case C unaffected, Control unaffected, Deterministic Replay)', async () => {
-    const generalConceptId = 'concept_policy_overdrive_general';
-    const unit1ConceptId = 'concept_policy_overdrive_unit_1';
-    const unit2ConceptId = 'concept_policy_overdrive_unit_2';
-    const unit3ConceptId = 'concept_policy_overdrive_unit_3';
-    const caseCConceptId = 'concept_auxiliary_solar_sensor';
-    const nowIso = new Date().toISOString();
+    // 1. INGESTION PATH: Ingest operational baseline dataset through production path.
+    // Strict invariant: NO manual concept/relation seeding or populateInitialGraph.
+    const operationalDataset = [
+      {
+        sourceId: 'spec_unit_3',
+        observedSubject: 'CoolantPumpOverdriveUnit3',
+        canonicalName: 'CoolantPumpOverdriveUnit3',
+        description: 'Drive Cooling Pump 3 at 12000 RPM in Reactor Grid Sector Gamma (Never operated under surge)',
+        parent: 'GeneralHighSpeedCoolantOverdrivePolicy',
+        category: InformationCategory.OPERATING_SYSTEM
+      },
+      {
+        sourceId: 'spec_solar',
+        observedSubject: 'AuxiliarySolarRadiationSensor',
+        canonicalName: 'AuxiliarySolarRadiationSensor',
+        description: 'Monitor external photovoltaic and cosmic radiation levels',
+        category: InformationCategory.GENERAL_TECHNOLOGY
+      }
+    ];
 
-    const initialGeneralConcept = {
-      conceptId: generalConceptId,
-      canonicalName: 'GeneralHighSpeedCoolantOverdrivePolicy',
-      description: 'System-wide policy to force coolant flow into overdrive RPM during reactor surges',
-      category: InformationCategory.OPERATING_SYSTEM,
-      sourceKnowledgeIds: ['k_general_reactor_rules'],
-      sourceExperienceIds: [],
-      confidence: 0.85,
-      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      version: 1,
-      metadata: {}
-    };
+    await cellA.ingestDataset(operationalDataset);
+    await cellControl.ingestDataset(operationalDataset);
 
-    const initialUnit1Concept = {
-      conceptId: unit1ConceptId,
-      canonicalName: 'CoolantPumpOverdriveUnit1',
-      description: 'Drive Cooling Pump 1 at 12000 RPM in Reactor Grid Sector Alpha',
-      category: InformationCategory.OPERATING_SYSTEM,
-      sourceKnowledgeIds: ['k_unit_1_specs'],
-      sourceExperienceIds: [],
-      confidence: 0.85,
-      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      version: 1,
-      metadata: { unit: 'UNIT_1', sector: 'ALPHA' }
-    };
-
-    const initialUnit2Concept = {
-      conceptId: unit2ConceptId,
-      canonicalName: 'CoolantPumpOverdriveUnit2',
-      description: 'Drive Cooling Pump 2 at 12000 RPM in Reactor Grid Sector Beta',
-      category: InformationCategory.OPERATING_SYSTEM,
-      sourceKnowledgeIds: ['k_unit_2_specs'],
-      sourceExperienceIds: [],
-      confidence: 0.85,
-      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      version: 1,
-      metadata: { unit: 'UNIT_2', sector: 'BETA' }
-    };
-
-    const initialUnit3Concept = {
-      conceptId: unit3ConceptId,
-      canonicalName: 'CoolantPumpOverdriveUnit3',
-      description: 'Drive Cooling Pump 3 at 12000 RPM in Reactor Grid Sector Gamma (Never operated under surge)',
-      category: InformationCategory.OPERATING_SYSTEM,
-      sourceKnowledgeIds: ['k_unit_3_specs'],
-      sourceExperienceIds: [],
-      confidence: 0.85,
-      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      version: 1,
-      metadata: { unit: 'UNIT_3', sector: 'GAMMA' }
-    };
-
-    const initialCaseCConcept = {
-      conceptId: caseCConceptId,
-      canonicalName: 'AuxiliarySolarRadiationSensor',
-      description: 'Monitor external photovoltaic and cosmic radiation levels',
-      category: InformationCategory.GENERAL_TECHNOLOGY,
-      sourceKnowledgeIds: ['k_solar_specs'],
-      sourceExperienceIds: [],
-      confidence: 0.9,
-      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      version: 1,
-      metadata: { subsystem: 'SOLAR' }
-    };
-
-    // Helper to populate initial knowledge graph without any manual generalizations
-    const populateInitialGraph = async (cell: Cell) => {
-      await cell.cognitiveGraph.insertConcept({ ...initialGeneralConcept, originatingCellId: cell.nodeId, provenance: [cell.nodeId] });
-      await cell.cognitiveGraph.insertConcept({ ...initialUnit1Concept, originatingCellId: cell.nodeId, provenance: [cell.nodeId] });
-      await cell.cognitiveGraph.insertConcept({ ...initialUnit2Concept, originatingCellId: cell.nodeId, provenance: [cell.nodeId] });
-      await cell.cognitiveGraph.insertConcept({ ...initialUnit3Concept, originatingCellId: cell.nodeId, provenance: [cell.nodeId] });
-      await cell.cognitiveGraph.insertConcept({ ...initialCaseCConcept, originatingCellId: cell.nodeId, provenance: [cell.nodeId] });
-
-      await cell.cognitiveGraph.insertRelation({
-        relationId: `rel_${cell.nodeId.substring(0, 6)}_unit1_instance`,
-        subjectConceptId: unit1ConceptId,
-        predicate: CognitiveRelationPredicate.INSTANCE_OF,
-        objectConceptId: generalConceptId,
-        confidence: 0.9,
-        verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-        provenance: [cell.nodeId],
-        createdAt: nowIso,
-        originatingCellId: cell.nodeId,
-        metadata: {}
-      });
-
-      await cell.cognitiveGraph.insertRelation({
-        relationId: `rel_${cell.nodeId.substring(0, 6)}_unit2_instance`,
-        subjectConceptId: unit2ConceptId,
-        predicate: CognitiveRelationPredicate.INSTANCE_OF,
-        objectConceptId: generalConceptId,
-        confidence: 0.9,
-        verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-        provenance: [cell.nodeId],
-        createdAt: nowIso,
-        originatingCellId: cell.nodeId,
-        metadata: {}
-      });
-
-      await cell.cognitiveGraph.insertRelation({
-        relationId: `rel_${cell.nodeId.substring(0, 6)}_unit3_instance`,
-        subjectConceptId: unit3ConceptId,
-        predicate: CognitiveRelationPredicate.INSTANCE_OF,
-        objectConceptId: generalConceptId,
-        confidence: 0.9,
-        verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-        provenance: [cell.nodeId],
-        createdAt: nowIso,
-        originatingCellId: cell.nodeId,
-        metadata: {}
-      });
-    };
-
-    await populateInitialGraph(cellA);
-    await populateInitialGraph(cellControl);
-
-    // Strict invariant: NO CognitiveGeneralization is manually inserted as input
+    // Strict invariant: NO CognitiveGeneralization exists initially in either cell
     expect(cellA.cognitiveGraph.getAllGeneralizations().length).toBe(0);
     expect(cellControl.cognitiveGraph.getAllGeneralizations().length).toBe(0);
+
+    // Dynamically retrieve concept IDs derived through production ingestion
+    const unit3Concept = cellA.cognitiveGraph.findConceptByName('CoolantPumpOverdriveUnit3')!;
+    expect(unit3Concept).toBeDefined();
+    const unit3ConceptId = unit3Concept.conceptId;
+
+    const generalConcept = cellA.cognitiveGraph.findConceptByName('GeneralHighSpeedCoolantOverdrivePolicy')!;
+    expect(generalConcept).toBeDefined();
+    const generalConceptId = generalConcept.conceptId;
+
+    const caseCConcept = cellA.cognitiveGraph.findConceptByName('AuxiliarySolarRadiationSensor')!;
+    expect(caseCConcept).toBeDefined();
+    const caseCConceptId = caseCConcept.conceptId;
 
     // Initial state S0
     const stateS0 = cellA.cognitiveState.getState();
@@ -831,6 +734,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
       content: {
         status: 'CONTRADICTED',
         contradicts: true,
+        parent: 'GeneralHighSpeedCoolantOverdrivePolicy',
         anomaly: 'IMPELLER_CAVITATION_RUPTURE',
         details: 'Unit 1 suffered severe mechanical destruction under 12000 RPM overdrive'
       }
@@ -851,11 +755,19 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     // Develop from Experience A alone
     const learningResultA = await cellA.developFromExperience(experienceA, {
       context: { contextId: 'ctx_unit_1_incident', domain: 'INCIDENT_RESPONSE' },
-      relatedConceptIds: [unit1ConceptId]
+      relatedConceptIds: ['CoolantPumpOverdriveUnit1']
     });
 
+    // Concept & relation for Unit 1 formed autonomously
+    const unit1Concept = cellA.cognitiveGraph.findConceptByName('CoolantPumpOverdriveUnit1');
+    expect(unit1Concept).toBeDefined();
+    expect(unit1Concept?.evidenceIds.length).toBeGreaterThanOrEqual(1);
+
+    const unit1Rels = cellA.cognitiveGraph.getRelationsForConcept(unit1Concept!.conceptId);
+    expect(unit1Rels.some(r => r.predicate === CognitiveRelationPredicate.INSTANCE_OF && r.objectConceptId === generalConceptId)).toBe(true);
+
     // R9 WAJIB 1: Experience A alone must NOT form a generalization!
-    expect(learningResultA.conceptsWeakened).toContain(unit1ConceptId);
+    expect(learningResultA.conceptsWeakened).toContain(unit1Concept!.conceptId);
     expect(learningResultA.generalizationsFormed?.length || 0).toBe(0);
     expect(cellA.cognitiveGraph.getAllGeneralizations().length).toBe(0);
 
@@ -895,6 +807,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
       content: {
         status: 'CONTRADICTED',
         contradicts: true,
+        parent: 'GeneralHighSpeedCoolantOverdrivePolicy',
         anomaly: 'IMPELLER_CAVITATION_RUPTURE',
         details: 'Unit 2 suffered mechanical cavitation destruction under 12000 RPM overdrive in Sector Beta'
       }
@@ -912,10 +825,17 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
 
     const learningResultB = await cellA.developFromExperience(experienceB, {
       context: { contextId: 'ctx_unit_2_incident', domain: 'INCIDENT_RESPONSE' },
-      relatedConceptIds: [unit2ConceptId]
+      relatedConceptIds: ['CoolantPumpOverdriveUnit2']
     });
 
-    expect(learningResultB.conceptsWeakened).toContain(unit2ConceptId);
+    const unit2Concept = cellA.cognitiveGraph.findConceptByName('CoolantPumpOverdriveUnit2');
+    expect(unit2Concept).toBeDefined();
+    expect(unit2Concept?.evidenceIds.length).toBeGreaterThanOrEqual(1);
+
+    const unit2Rels = cellA.cognitiveGraph.getRelationsForConcept(unit2Concept!.conceptId);
+    expect(unit2Rels.some(r => r.predicate === CognitiveRelationPredicate.INSTANCE_OF && r.objectConceptId === generalConceptId)).toBe(true);
+
+    expect(learningResultB.conceptsWeakened).toContain(unit2Concept!.conceptId);
     expect(learningResultB.generalizationsFormed?.length).toBeGreaterThanOrEqual(1);
 
     const formedGenId = learningResultB.generalizationsFormed![0];
@@ -926,12 +846,38 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(discoveredGen?.sourceConceptIds).toContain(generalConceptId);
     expect(discoveredGen?.confidence).toBeGreaterThanOrEqual(0.75);
 
-    // R9 WAJIB 8: Assert provenance points to >= 2 independent Experiences / evidence records
+    // R9 WAJIB: Assert provenance: raw input -> representation -> evidence -> experience -> concept -> generalization
     expect(discoveredGen?.supportingEvidence.length).toBeGreaterThanOrEqual(2);
     expect(discoveredGen?.evidenceIds?.length).toBeGreaterThanOrEqual(2);
     expect(discoveredGen?.provenance).toContain(experienceA.experienceId);
     expect(discoveredGen?.provenance).toContain(experienceB.experienceId);
     expect(discoveredGen?.provenance.length).toBeGreaterThanOrEqual(2);
+
+    // 1. Raw input sources exist
+    expect(observationA.source).toBe('sensor_telemetry_unit_1_monitoring');
+    expect(observationB.source).toBe('sensor_telemetry_unit_2_monitoring');
+
+    // 2. Representation formed with provenance linking to raw input
+    expect(unit1Concept?.provenance).toContain(observationA.source);
+    expect(unit2Concept?.provenance).toContain(observationB.source);
+
+    // 3. Evidence formed with provenance linking to observation
+    const evA = cellA.cognitiveGraph.getEvidence(discoveredGen!.supportingEvidence[0]);
+    const evB = cellA.cognitiveGraph.getEvidence(discoveredGen!.supportingEvidence[1]);
+    expect(evA).toBeDefined();
+    expect(evB).toBeDefined();
+
+    // 4. Experience linked to observation and evidence
+    expect(discoveredGen?.provenance).toContain(experienceA.experienceId);
+    expect(discoveredGen?.provenance).toContain(experienceB.experienceId);
+
+    // 5. Concept grounded in evidence and experience
+    expect(unit1Concept?.sourceExperienceIds).toContain(experienceA.experienceId);
+    expect(unit2Concept?.sourceExperienceIds).toContain(experienceB.experienceId);
+
+    // 6. Generalization holds structured prov_map and prov_trail
+    expect(discoveredGen?.provenance.some(p => p.startsWith('prov_map:'))).toBe(true);
+    expect(discoveredGen?.provenance.some(p => p.startsWith('prov_trail:'))).toBe(true);
 
     // 4. R9 WAJIB 5: Irrelevant Experience C does NOT mistakenly expand or alter the generalization
     const observationC = {
@@ -1076,7 +1022,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(reasoningCaseC.conclusion.status).not.toBe(EpistemicStatus.CONTRADICTED);
 
     // 8. R9 WAJIB 7: Deterministic Replay guarantees identical results
-    await populateInitialGraph(cellB);
+    await cellB.ingestDataset(operationalDataset);
 
     // Replay Experience A on cellB -> NO generalization
     const replayTransA = await cellB.processObservation(observationA, {
@@ -1088,7 +1034,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     const replayExpA = replayTransA.experience;
     const replayLearnA = await cellB.developFromExperience(replayExpA, {
       context: { contextId: 'ctx_unit_1_incident', domain: 'INCIDENT_RESPONSE' },
-      relatedConceptIds: [unit1ConceptId]
+      relatedConceptIds: ['CoolantPumpOverdriveUnit1']
     });
     expect(replayLearnA.generalizationsFormed?.length || 0).toBe(0);
     expect(cellB.cognitiveGraph.getAllGeneralizations().length).toBe(0);
@@ -1103,7 +1049,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     const replayExpB = replayTransB.experience;
     const replayLearnB = await cellB.developFromExperience(replayExpB, {
       context: { contextId: 'ctx_unit_2_incident', domain: 'INCIDENT_RESPONSE' },
-      relatedConceptIds: [unit2ConceptId]
+      relatedConceptIds: ['CoolantPumpOverdriveUnit2']
     });
 
     expect(replayLearnB.generalizationsFormed?.[0]).toBe(formedGenId);

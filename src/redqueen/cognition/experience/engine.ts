@@ -247,18 +247,15 @@ export class OrganicExperienceTransitionEngine {
       // Ignore if graph lookup fails or concept not found
     }
 
-    if (matchedConcept) {
-      // Evaluate concordance vs contradiction
-      const content = validated.content;
-      const isExplicitContradiction = options?.expectedContradiction === true ||
-        (content && (content.contradicts === true || content.status === 'CONTRADICTED' || content.isFalse === true));
+    const content = validated.content;
+    const isExplicitContradiction = options?.expectedContradiction === true ||
+      (content && (content.contradicts === true || content.status === 'CONTRADICTED' || content.isFalse === true));
 
-      if (isExplicitContradiction) {
-        polarity = 'CONTRADICTORY';
-      } else {
-        // Concept exists and observation aligns or reinforces
-        polarity = 'CONCORDANT';
-      }
+    if (isExplicitContradiction) {
+      polarity = 'CONTRADICTORY';
+    } else if (matchedConcept) {
+      // Concept exists and observation aligns or reinforces
+      polarity = 'CONCORDANT';
     } else {
       polarity = 'NOVEL';
     }

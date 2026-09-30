@@ -15,6 +15,7 @@ import {
 import { EpistemicAdapter } from '../epistemic/adapter';
 import { EpistemicState } from '../epistemic/types';
 import { CognitiveGraph } from './graph';
+import { computeDeterministicHash } from '../computation/canonical';
 
 export interface ExtractedRepresentation {
   readonly concepts: CognitiveConcept[];
@@ -89,8 +90,11 @@ export class CognitiveRepresentationEngine {
     const provenanceTrail = Array.from(new Set([
       this.cellId,
       ...(Array.isArray(rawProvenance)
-        ? rawProvenance.map((p: any) => typeof p === 'string' ? p : p.sourceIdentifier || p.cellId || '')
-        : [])
+        ? rawProvenance.map((p: any) => typeof p === 'string' ? p : p.sourceIdentifier || p.cellId || p.informationId || '')
+        : []),
+      knowledge.knowledgeId,
+      ...(knowledge.sourceInformationIds || []),
+      ...(experience ? [experience.experienceId] : [])
     ])).filter(Boolean);
 
     const factsList = knowledge.facts || [];
@@ -103,7 +107,18 @@ export class CognitiveRepresentationEngine {
       (knowledge.confidence * 0.7) + (Math.min(factsList.length, 5) * 0.05)
     );
 
-    const primaryConceptId = `concept_${uuidv4()}`;
+    let primaryConceptId: string | undefined;
+    if (graph) {
+      const existing = graph.findConceptByName(knowledge.title);
+      if (existing) {
+        primaryConceptId = existing.conceptId;
+      }
+    }
+    if (!primaryConceptId) {
+      primaryConceptId = `concept_${computeDeterministicHash(knowledge.title).substring(0, 16)}`;
+    }
+
+    const expEvidenceIds: string[] = experience?.evidenceIds ? [...experience.evidenceIds] : [];
 
     const primaryConcept: CognitiveConcept = {
       conceptId: primaryConceptId,
@@ -112,6 +127,7 @@ export class CognitiveRepresentationEngine {
       category: knowledge.category,
       sourceKnowledgeIds: [knowledge.knowledgeId],
       sourceExperienceIds: experience ? [experience.experienceId] : [],
+      evidenceIds: expEvidenceIds,
       originatingCellId: this.cellId,
       confidence: representationConfidence,
       verificationStatus: RepresentationVerificationStatus.SUPPORTED,
@@ -139,6 +155,7 @@ export class CognitiveRepresentationEngine {
             category: knowledge.category,
             sourceKnowledgeIds: [knowledge.knowledgeId],
             sourceExperienceIds: experience ? [experience.experienceId] : [],
+            evidenceIds: expEvidenceIds,
             originatingCellId: this.cellId,
             confidence: representationConfidence * 0.9,
             verificationStatus: RepresentationVerificationStatus.SUPPORTED,
@@ -156,6 +173,7 @@ export class CognitiveRepresentationEngine {
             predicate: CognitiveRelationPredicate.PART_OF,
             objectConceptId: primaryConcept.conceptId,
             confidence: representationConfidence * 0.9,
+            evidenceIds: expEvidenceIds,
             provenance: provenanceTrail,
             verificationStatus: RepresentationVerificationStatus.SUPPORTED,
             createdAt: now,
@@ -169,13 +187,22 @@ export class CognitiveRepresentationEngine {
     // 2. Secondary Concepts & Typed Relations from Knowledge Relationships
     for (const rel of relsList.slice(0, this.budget.maxRelationsPerTransaction)) {
       const targetConceptName = rel.object.trim();
-      let targetConceptId = `concept_${uuidv4()}`;
+      let targetConceptId: string | undefined;
 
       // Check if target concept already exists in graph
       if (graph) {
         const existingTarget = graph.findConceptByName(targetConceptName);
         if (existingTarget) {
           targetConceptId = existingTarget.conceptId;
+        }
+      }
+
+      if (!targetConceptId) {
+        const inBatch = concepts.find(c => c.canonicalName.toLowerCase() === targetConceptName.toLowerCase());
+        if (inBatch) {
+          targetConceptId = inBatch.conceptId;
+        } else {
+          targetConceptId = `concept_${computeDeterministicHash(targetConceptName).substring(0, 16)}`;
         }
       }
 
@@ -188,6 +215,7 @@ export class CognitiveRepresentationEngine {
           category: knowledge.category,
           sourceKnowledgeIds: [knowledge.knowledgeId],
           sourceExperienceIds: experience ? [experience.experienceId] : [],
+          evidenceIds: expEvidenceIds,
           originatingCellId: this.cellId,
           confidence: representationConfidence * 0.85,
           verificationStatus: RepresentationVerificationStatus.PENDING,
@@ -207,6 +235,7 @@ export class CognitiveRepresentationEngine {
         predicate: relationPredicate,
         objectConceptId: targetConceptId,
         confidence: rel.confidence || representationConfidence,
+        evidenceIds: expEvidenceIds,
         provenance: provenanceTrail,
         verificationStatus: RepresentationVerificationStatus.SUPPORTED,
         createdAt: now,
@@ -381,11 +410,12 @@ export class CognitiveRepresentationEngine {
       };
     }
 
-    if (predicates.length > 0) {
+    const nonTaxonomic = predicates.filter(p => p !== CognitiveRelationPredicate.INSTANCE_OF && p !== CognitiveRelationPredicate.IS_A);
+    if (nonTaxonomic.length > 0) {
       return {
-        pattern: `Relational invariant: ${predicates[0]} structural topology across distributed system entities`,
+        pattern: `Relational invariant: ${nonTaxonomic[0]} structural topology across distributed system entities`,
         retainedStructure: {
-          relationship: predicates[0],
+          relationship: nonTaxonomic[0],
           invariant: 'relational_invariance'
         },
         discardedDetails: ['domain-specific instance labels', 'leaf node attributes']
@@ -456,7 +486,10 @@ export class CognitiveRepresentationEngine {
       }
     }
 
-    // Strict Rule: If evidence <= 1, it is a CANDIDATE/HYPOTHESIS (PENDING), NOT established.
+    if (supportingEvidence.length === 0) {
+      return null;
+    }
+
     const isMultiEvidence = supportingEvidence.length > 1;
     const verificationStatus = isMultiEvidence
       ? RepresentationVerificationStatus.SUPPORTED
@@ -469,7 +502,7 @@ export class CognitiveRepresentationEngine {
       supportingEvidence: Array.from(new Set(supportingEvidence)),
       confidence: isMultiEvidence
         ? Math.min(0.92, 0.5 + (supportingEvidence.length * 0.12))
-        : 0.45,
+        : 0.35,
       verificationStatus,
       provenance: [this.cellId],
       createdAt: new Date().toISOString(),

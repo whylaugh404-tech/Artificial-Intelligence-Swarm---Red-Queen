@@ -193,6 +193,22 @@ export class Cell {
 
       const storedEvidence = await this.cognitiveGraph.insertEvidence(evidence);
 
+      // Link evidence to representations to maintain strict provenance trail
+      for (const repId of representationIds) {
+        const c = this.cognitiveGraph.getConcept(repId);
+        if (c && !c.evidenceIds.includes(storedEvidence.evidenceId)) {
+          c.evidenceIds = Array.from(new Set([...c.evidenceIds, storedEvidence.evidenceId]));
+          c.provenance = Array.from(new Set([...c.provenance, storedEvidence.evidenceId, observationId, sourceId])).sort();
+          await this.cognitiveGraph.updateConcept(c);
+        }
+        const r = this.cognitiveGraph.getRelation(repId);
+        if (r && !r.evidenceIds.includes(storedEvidence.evidenceId)) {
+          r.evidenceIds = Array.from(new Set([...r.evidenceIds, storedEvidence.evidenceId]));
+          r.provenance = Array.from(new Set([...r.provenance, storedEvidence.evidenceId, observationId, sourceId])).sort();
+          await this.cognitiveGraph.updateRelation(r);
+        }
+      }
+
       // 4. WorldModel update
       const understanding = this.understanding.compose({
         evidences: [storedEvidence],

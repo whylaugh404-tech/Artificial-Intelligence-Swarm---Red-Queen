@@ -2,6 +2,7 @@ import {
   InformationCategory,
   InformationRecord,
   KnowledgeRecord,
+  ConceptRelation,
   QualityEvaluation,
   RelevanceEvaluation,
   SourceProvenance,
@@ -21,35 +22,59 @@ export class KnowledgeExtractor {
     owningCellId: string,
     budget: MetabolismBudget = DEFAULT_METABOLISM_BUDGET
   ): KnowledgeRecord {
+    let parsedJson: Record<string, any> | null = null;
+    try {
+      const trimmed = record.content.trim();
+      if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+        parsedJson = JSON.parse(trimmed);
+      }
+    } catch {}
+
     const lines = record.content.split('\n').map(l => l.trim()).filter(Boolean);
 
     // 1. Extract Title
     let title = '';
-    const headerLine = lines.find(l => l.startsWith('# '));
-    if (headerLine) {
-      title = headerLine.replace(/^#+\s*/, '').trim();
-    } else if (lines.length > 0) {
-      const firstLine = lines[0].replace(/^[-*#=>\s]+/, '').trim();
-      title = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
+    if (parsedJson) {
+      title = parsedJson.canonicalName || parsedJson.name || parsedJson.observedSubject || parsedJson.title || parsedJson.subject || '';
+    }
+    if (!title) {
+      const headerLine = lines.find(l => l.startsWith('# '));
+      if (headerLine) {
+        title = headerLine.replace(/^#+\s*/, '').trim();
+      } else if (lines.length > 0) {
+        const firstLine = lines[0].replace(/^[-*#=>\s]+/, '').trim();
+        title = firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
+      }
     }
     if (!title) {
       title = `Knowledge extracted from ${record.sourceIdentifier}`;
     }
 
+    const nonHeaderLines = lines.filter(l => !l.startsWith('#'));
+
     // 2. Extract Summary
     let summary = '';
-    const nonHeaderLines = lines.filter(l => !l.startsWith('#'));
-    if (nonHeaderLines.length > 0) {
-      summary = nonHeaderLines.slice(0, 4).join(' ');
-      if (summary.length > 500) {
-        summary = `${summary.slice(0, 497)}...`;
-      }
+    if (parsedJson) {
+      summary = parsedJson.description || parsedJson.summary || parsedJson.details || title;
     } else {
-      summary = title;
+      if (nonHeaderLines.length > 0) {
+        summary = nonHeaderLines.slice(0, 4).join(' ');
+        if (summary.length > 500) {
+          summary = `${summary.slice(0, 497)}...`;
+        }
+      } else {
+        summary = title;
+      }
     }
 
     // 3. Extract Facts (propositions, bullet points, technical identifiers)
     const facts: string[] = [];
+
+    if (parsedJson && Array.isArray(parsedJson.facts)) {
+      for (const f of parsedJson.facts) {
+        if (typeof f === 'string' && !facts.includes(f)) facts.push(f);
+      }
+    }
 
     // Extract bullet points
     for (const line of lines) {
@@ -121,14 +146,44 @@ export class KnowledgeExtractor {
 
     const knowledgeId = `know_${record.contentHash.slice(0, 16)}_${Date.now()}`;
 
+    const relationships: ConceptRelation[] = [];
+    if (parsedJson) {
+      if (parsedJson.parent || parsedJson.instanceOf) {
+        relationships.push({
+          subject: title,
+          predicate: 'INSTANCE_OF',
+          object: parsedJson.parent || parsedJson.instanceOf,
+          confidence: parsedJson.confidence ?? quality.confidence,
+          provenance: record.sourceIdentifier || record.sourceUri || owningCellId
+        });
+      }
+      if (Array.isArray(parsedJson.relationships)) {
+        for (const rel of parsedJson.relationships) {
+          if (rel && rel.subject && rel.predicate && rel.object) {
+            relationships.push({
+              subject: String(rel.subject),
+              predicate: String(rel.predicate),
+              object: String(rel.object),
+              confidence: typeof rel.confidence === 'number' ? rel.confidence : quality.confidence,
+              provenance: String(rel.provenance || record.sourceIdentifier || record.sourceUri || owningCellId)
+            });
+          }
+        }
+      }
+    }
+
+    const effectiveCategory = (parsedJson && parsedJson.category && Object.values(InformationCategory).includes(parsedJson.category))
+      ? parsedJson.category
+      : category;
+
     return {
       knowledgeId,
       owningCellId,
-      category,
+      category: effectiveCategory,
       title,
       summary,
       facts: Object.freeze(facts),
-      relationships: Object.freeze([]),
+      relationships: Object.freeze(relationships),
       contradictions: Object.freeze([]),
       structuredContent: Object.freeze(structuredContent),
       sourceInformationIds: Object.freeze([record.informationId]),
