@@ -81,6 +81,8 @@ export class MitosisEngine {
   private inFlightReproductions = new Map<string, Promise<{ result: MitosisResult; child?: Cell }>>();
   private committedChildrenByEvent = new Map<string, Cell>();
   private parentQueues = new Map<string, Promise<void>>();
+  /** Fast admission guard closes the cooldown race while requests wait in parentQueues. */
+  private lastSuccessfulAdmissionAt = new Map<string, number>();
   
   constructor(private governance: GovernanceEnforcer) {}
 
@@ -95,6 +97,19 @@ export class MitosisEngine {
     const admissionTimestamp = Date.now();
     const eventId = options.reproductionSeed || `mitosis_${randomUUID()}`;
     const flightKey = `${parent.nodeId}:${eventId}`;
+
+    const lastSuccessful = this.lastSuccessfulAdmissionAt.get(parent.nodeId);
+    if (lastSuccessful !== undefined && admissionTimestamp - lastSuccessful < this.governance.cooldownMs) {
+      return {
+        result: {
+          success: false,
+          parentCellId: parent.nodeId,
+          eventId,
+          generation: parent.genome.generation,
+          errors: ['Reproduction cooldown active']
+        }
+      };
+    }
 
     // Deduplicate in-flight reproduction requests for the exact same parent and eventId
     const existingInFlight = this.inFlightReproductions.get(flightKey);
@@ -673,6 +688,7 @@ export class MitosisEngine {
 
       try {
         const now = Date.now();
+        this.lastSuccessfulAdmissionAt.set(parent.nodeId, now);
         const currentDescendants = parseInt(parentMetadata.descendantsCount || '0', 10);
         
         parent.cognitiveState.setMetadata('lastReproductionEvent', eventId);
@@ -938,4 +954,5 @@ export class MitosisEngine {
     }
   }
 }
+
 
