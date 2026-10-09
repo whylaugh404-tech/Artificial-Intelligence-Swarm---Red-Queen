@@ -180,6 +180,12 @@ export class CollectiveComputationEngine {
       };
     });
 
+    this.defaultExecutors.set('NEURAL_INFERENCE', async (subtask, _resolvedInputs, cell) => {
+      const text = subtask.payload.text;
+      if (typeof text !== 'string' || !text.trim()) throw new Error('NEURAL_INFERENCE requires non-empty text');
+      return cell.learning.infer(text);
+    });
+
     // 4. Default Composer: Transforms partial results and composition into final synthesized computational state
     this.defaultComposers.set('DEFAULT', (task, subtaskResults, dependencies, composition) => {
       const aggregatedOutputs: Record<string, unknown> = {};
@@ -1481,3 +1487,4 @@ export class CollectiveComputationEngine {
     return deepFreeze(computationResult);
   }
 }
+
