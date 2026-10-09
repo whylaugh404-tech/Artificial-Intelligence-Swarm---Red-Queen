@@ -185,6 +185,16 @@ export class CollectiveComputationEngine {
       if (typeof text !== 'string' || !text.trim()) throw new Error('NEURAL_INFERENCE requires non-empty text');
       return cell.learning.infer(text);
     });
+    this.defaultExecutors.set('NEURAL_TRAINING', async (subtask, _resolvedInputs, cell) => {
+      const samples = subtask.payload.samples;
+      if (!Array.isArray(samples) || samples.length === 0) throw new Error('NEURAL_TRAINING requires samples');
+      return cell.learning.train(
+        samples as Array<{ text: string; target: number }>,
+        typeof subtask.payload.epochs === 'number' ? subtask.payload.epochs : 10,
+        typeof subtask.payload.learningRate === 'number' ? subtask.payload.learningRate : 0.05,
+        Array.isArray(subtask.payload.validationSamples) ? subtask.payload.validationSamples as Array<{ text: string; target: number }> : samples as Array<{ text: string; target: number }>
+      );
+    });
 
     // 4. Default Composer: Transforms partial results and composition into final synthesized computational state
     this.defaultComposers.set('DEFAULT', (task, subtaskResults, dependencies, composition) => {
