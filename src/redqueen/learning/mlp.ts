@@ -29,7 +29,7 @@ export class BinaryMLP {
 
   constructor(
     public readonly inputSize: number,
-    public readonly hiddenSize = 16,
+    public readonly hiddenSize = 32,
     checkpoint?: MLPCheckpoint
   ) {
     if (checkpoint) {
@@ -79,7 +79,7 @@ export class BinaryMLP {
       const error = output - sample.target;
       loss += -(sample.target * Math.log(output + 1e-9) + (1 - sample.target) * Math.log(1 - output + 1e-9));
       for (let h = 0; h < this.hiddenSize; h++) {
-        const hiddenGradient = error * this.weights2[h] * hidden[h] * (1 - hidden[h]);
+        const hiddenGradient = Math.max(-1, Math.min(1, error * this.weights2[h] * hidden[h] * (1 - hidden[h])));
         this.weights2[h] -= learningRate * error * hidden[h];
         for (let i = 0; i < this.inputSize; i++) this.weights1[h][i] -= learningRate * hiddenGradient * sample.input[i];
         this.bias1[h] -= learningRate * hiddenGradient;
