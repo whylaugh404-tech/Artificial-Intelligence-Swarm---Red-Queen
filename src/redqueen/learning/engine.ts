@@ -26,7 +26,7 @@ export class NeuralLearningEngine {
   private checkpointId = 'neural_checkpoint_default';
   private nonlinearCheckpointId = 'nonlinear_checkpoint_default';
 
-  constructor(private readonly memory: MemoryStore, dimensions = 32, hiddenSize = 16) {
+  constructor(private readonly memory: MemoryStore, dimensions = 32, hiddenSize = 32) {
     this.embedding = new HashEmbeddingModel(dimensions);
     this.vectorIndex = new NeuralVectorIndex(memory, this.embedding);
     this.model = new BinaryMLP(dimensions, hiddenSize);
