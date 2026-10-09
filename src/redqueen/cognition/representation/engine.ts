@@ -36,6 +36,8 @@ export function normalizePredicate(predicateStr: string): CognitiveRelationPredi
   }
   if (upper.includes('CAUSE')) return CognitiveRelationPredicate.CAUSES;
   if (upper.includes('REQUIRE')) return CognitiveRelationPredicate.REQUIRES;
+  if (upper.includes('USE')) return CognitiveRelationPredicate.DEPENDS_ON;
+  if (upper.includes('OPTIM')) return CognitiveRelationPredicate.SUPPORTS;
   if (upper.includes('DEPEND')) return CognitiveRelationPredicate.DEPENDS_ON;
   if (upper.includes('SUPPORT')) return CognitiveRelationPredicate.SUPPORTS;
   if (upper.includes('CONFLICT') || upper.includes('CONTRADICT')) return CognitiveRelationPredicate.CONTRADICTS;
@@ -634,3 +636,4 @@ export class CognitiveRepresentationEngine {
     return analogies;
   }
 }
+
