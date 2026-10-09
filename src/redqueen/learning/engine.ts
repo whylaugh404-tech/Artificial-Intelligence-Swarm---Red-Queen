@@ -27,6 +27,8 @@ export class NeuralLearningEngine {
 
   async train(samples: TextTrainingSample[], epochs = 10, learningRate = 0.05, validationSamples: TextTrainingSample[] = samples): Promise<{ epochs: number; loss: number; step: number; metrics: BinaryMetrics; validationMetrics: BinaryMetrics }> {
     if (!Number.isInteger(epochs) || epochs <= 0 || epochs > 10000) throw new Error('epochs must be between 1 and 10000');
+    this.validateSamples(samples, 'Training');
+    this.validateSamples(validationSamples, 'Validation');
     const tensors = samples.map(sample => ({ input: this.embedding.embed(sample.text), target: sample.target }));
     let result = { loss: 0, step: 0 };
     let bestCheckpoint: MLPCheckpoint | undefined;
@@ -46,6 +48,7 @@ export class NeuralLearningEngine {
 
   evaluate(samples: TextTrainingSample[]): BinaryMetrics {
     if (samples.length === 0) throw new Error('Evaluation requires at least one sample');
+    this.validateSamples(samples, 'Evaluation');
     let loss = 0;
     let truePositive = 0;
     let falsePositive = 0;
@@ -106,8 +109,22 @@ export class NeuralLearningEngine {
   async loadCheckpoint(): Promise<boolean> {
     const entry = await this.memory.get(this.checkpointId);
     if (!entry || entry.type !== 'NEURAL_CHECKPOINT') return false;
-    this.model = new BinaryMLP(entry.content.inputSize, entry.content.hiddenSize, entry.content as MLPCheckpoint);
+    const checkpoint = entry.content as MLPCheckpoint;
+    if (checkpoint.version !== 1) throw new Error(`Unsupported neural checkpoint version: ${checkpoint.version}`);
+    this.model = new BinaryMLP(checkpoint.inputSize, checkpoint.hiddenSize, checkpoint);
     return true;
+  }
+
+  private validateSamples(samples: TextTrainingSample[], phase: string): void {
+    if (!Array.isArray(samples) || samples.length === 0) throw new Error(`${phase} requires at least one sample`);
+    for (const sample of samples) {
+      if (!sample || typeof sample.text !== 'string' || !sample.text.trim()) {
+        throw new Error(`${phase} samples require non-empty text`);
+      }
+      if (!Number.isFinite(sample.target) || sample.target < 0 || sample.target > 1) {
+        throw new Error(`${phase} targets must be finite numbers between 0 and 1`);
+      }
+    }
   }
 }
 
