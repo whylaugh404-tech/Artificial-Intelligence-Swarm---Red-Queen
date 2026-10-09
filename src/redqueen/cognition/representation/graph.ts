@@ -129,6 +129,25 @@ export class CognitiveGraph {
     for (const abstraction of snapshot.abstractions) this.abstractions.set(abstraction.abstractionId, structuredClone(abstraction));
     for (const generalization of snapshot.generalizations) this.generalizations.set(generalization.generalizationId, structuredClone(generalization));
     for (const analogy of snapshot.analogies) this.analogies.set(analogy.analogyId, structuredClone(analogy));
+
+    // Re-persist the complete pre-transaction graph. Restoring only the in-memory
+    // maps is insufficient: a later restart would resurrect mutated graph entries
+    // that were written before the transaction failed.
+    for (const concept of snapshot.concepts) {
+      await this.persistEntry(concept.conceptId, 'COGNITIVE_CONCEPT', concept, concept.confidence, concept.provenance);
+    }
+    for (const relation of snapshot.relations) {
+      await this.persistEntry(relation.relationId, 'COGNITIVE_RELATION', relation, relation.confidence, relation.provenance);
+    }
+    for (const abstraction of snapshot.abstractions) {
+      await this.persistEntry(abstraction.abstractionId, 'COGNITIVE_ABSTRACTION', abstraction, abstraction.confidence, abstraction.provenance);
+    }
+    for (const generalization of snapshot.generalizations) {
+      await this.persistEntry(generalization.generalizationId, 'COGNITIVE_GENERALIZATION', generalization, generalization.confidence, generalization.provenance);
+    }
+    for (const analogy of snapshot.analogies) {
+      await this.persistEntry(analogy.analogyId, 'COGNITIVE_ANALOGY', analogy, analogy.confidence, analogy.provenance);
+    }
   }
 
   constructor(
