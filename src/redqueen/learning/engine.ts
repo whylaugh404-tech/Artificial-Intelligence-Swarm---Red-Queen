@@ -22,13 +22,23 @@ export class NeuralLearningEngine {
     this.model = new BinaryMLP(dimensions, hiddenSize);
   }
 
-  async train(samples: TextTrainingSample[], epochs = 10, learningRate = 0.05): Promise<{ epochs: number; loss: number; step: number; metrics: BinaryMetrics }> {
+  async train(samples: TextTrainingSample[], epochs = 10, learningRate = 0.05, validationSamples: TextTrainingSample[] = samples): Promise<{ epochs: number; loss: number; step: number; metrics: BinaryMetrics; validationMetrics: BinaryMetrics }> {
     if (!Number.isInteger(epochs) || epochs <= 0 || epochs > 10000) throw new Error('epochs must be between 1 and 10000');
     const tensors = samples.map(sample => ({ input: this.embedding.embed(sample.text), target: sample.target }));
     let result = { loss: 0, step: 0 };
-    for (let epoch = 0; epoch < epochs; epoch++) result = this.model.train(tensors, learningRate);
+    let bestCheckpoint: MLPCheckpoint | undefined;
+    let bestValidationLoss = Number.POSITIVE_INFINITY;
+    for (let epoch = 0; epoch < epochs; epoch++) {
+      result = this.model.train(tensors, learningRate);
+      const validationMetrics = this.evaluate(validationSamples);
+      if (validationMetrics.loss < bestValidationLoss) {
+        bestValidationLoss = validationMetrics.loss;
+        bestCheckpoint = this.model.checkpoint();
+      }
+    }
+    if (bestCheckpoint) this.model = new BinaryMLP(bestCheckpoint.inputSize, bestCheckpoint.hiddenSize, bestCheckpoint);
     await this.saveCheckpoint();
-    return { epochs, ...result, metrics: this.evaluate(samples) };
+    return { epochs, ...result, metrics: this.evaluate(samples), validationMetrics: this.evaluate(validationSamples) };
   }
 
   evaluate(samples: TextTrainingSample[]): BinaryMetrics {
