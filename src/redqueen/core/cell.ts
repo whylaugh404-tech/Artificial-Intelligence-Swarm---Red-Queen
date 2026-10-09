@@ -899,6 +899,7 @@ export class Cell {
     await cell.restoreOrPersistGenome();
     await cell.cognitiveState.restore(cell.memory);
     await cell.cognitiveGraph.load();
+    await cell.learning.loadCheckpoint();
     await cell.recoverExperiences();
     return cell;
   }
@@ -952,6 +953,7 @@ export class Cell {
       this.cognitiveState.syncWithGenome(this.genome.specialization ?? null);
       
       await this.cognitiveGraph.load();
+      await this.learning.loadCheckpoint();
       await this.recoverExperiences();
       this.cognitiveState.syncLifecycleState(CellState.ACTIVE);
       if (this.memory.getStats) {
