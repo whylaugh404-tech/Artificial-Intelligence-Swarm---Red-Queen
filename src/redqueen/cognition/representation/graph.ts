@@ -254,7 +254,7 @@ export class CognitiveGraph {
     const validated = CognitiveRelationSchema.parse(candidate);
 
     // Self-loop prevention: A concept cannot relate to itself unless explicitly justified
-    if (validated.subjectConceptId === validated.objectConceptId) {
+    if (validated.subjectConceptId === validated.objectConceptId && validated.predicate !== CognitiveRelationPredicate.CONTRADICTS) {
       throw new Error(`Self-loop relation rejected: concept '${validated.subjectConceptId}' cannot relate to itself via '${validated.predicate}'`);
     }
 
