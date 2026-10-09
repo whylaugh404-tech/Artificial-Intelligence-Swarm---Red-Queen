@@ -78,8 +78,8 @@ export class KnowledgeExtractor {
 
     // Extract bullet points
     for (const line of lines) {
-      if (/^[-*â€¢]\s+/.test(line) || /^\d+\.\s+/.test(line)) {
-        const fact = line.replace(/^[-*â€¢\d.]+\s*/, '').trim();
+      if (/^[-*•]\s+/.test(line) || /^\d+\.\s+/.test(line)) {
+        const fact = line.replace(/^[-*•\d.]+\s*/, '').trim();
         if (fact.length > 5 && !facts.includes(fact)) {
           facts.push(fact);
           if (facts.length >= budget.maxFactsPerRecord) break;
