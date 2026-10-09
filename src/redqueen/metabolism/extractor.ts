@@ -78,8 +78,8 @@ export class KnowledgeExtractor {
 
     // Extract bullet points
     for (const line of lines) {
-      if (/^[-*•]\s+/.test(line) || /^\d+\.\s+/.test(line)) {
-        const fact = line.replace(/^[-*•\d.]+\s*/, '').trim();
+      if (/^[-*â€¢]\s+/.test(line) || /^\d+\.\s+/.test(line)) {
+        const fact = line.replace(/^[-*â€¢\d.]+\s*/, '').trim();
         if (fact.length > 5 && !facts.includes(fact)) {
           facts.push(fact);
           if (facts.length >= budget.maxFactsPerRecord) break;
@@ -121,6 +121,36 @@ export class KnowledgeExtractor {
     }
 
     // 4. Extract Structured Entities & Metadata
+    const relationships: ConceptRelation[] = [];
+
+    // Domain-aware relation extraction for technical text. The old extractor
+    // only emitted relations when callers supplied JSON, which left ordinary
+    // neural-network prose as isolated concepts. These rules are deliberately
+    // bounded and provenance-preserving; they are candidates, not facts from
+    // an external model.
+    const neuralPatterns: Array<{ terms: string[]; subject: string; predicate: string; object: string }> = [
+      { terms: ['backpropagation', 'computational graph'], subject: 'Backpropagation', predicate: 'REQUIRES', object: 'Computational Graph' },
+      { terms: ['gradient descent', 'loss'], subject: 'Gradient Descent', predicate: 'OPTIMIZES', object: 'Loss Function' },
+      { terms: ['transformer', 'self attention'], subject: 'Transformer', predicate: 'USES', object: 'Self Attention' },
+      { terms: ['convolution', 'receptive field'], subject: 'Convolution', predicate: 'USES', object: 'Receptive Field' },
+      { terms: ['dropout', 'regularization'], subject: 'Dropout', predicate: 'SUPPORTS', object: 'Regularization' },
+      { terms: ['quantization', 'inference'], subject: 'Quantization', predicate: 'SUPPORTS', object: 'Inference Efficiency' }
+    ];
+    const lowerContent = record.content.toLowerCase();
+    const extractedCoreConcepts: string[] = [];
+    for (const pattern of neuralPatterns) {
+      if (pattern.terms.every(term => lowerContent.includes(term))) {
+        extractedCoreConcepts.push(pattern.subject, pattern.object);
+        relationships.push({
+          subject: pattern.subject,
+          predicate: pattern.predicate,
+          object: pattern.object,
+          confidence: Math.min(quality.confidence, 0.8),
+          provenance: record.sourceIdentifier || record.sourceUri || owningCellId
+        });
+      }
+    }
+
     const structuredContent: Record<string, any> = {
       detectedCategory: category,
       sourceType: record.sourceType,
@@ -129,6 +159,7 @@ export class KnowledgeExtractor {
       contentType: record.contentType,
       contentLength: record.content.length,
       extractedFactsCount: facts.length,
+      coreConcepts: Array.from(new Set(extractedCoreConcepts)),
       customMetadata: record.metadata
     };
 
@@ -146,7 +177,6 @@ export class KnowledgeExtractor {
 
     const knowledgeId = `know_${record.contentHash.slice(0, 16)}_${Date.now()}`;
 
-    const relationships: ConceptRelation[] = [];
     if (parsedJson) {
       if (parsedJson.parent || parsedJson.instanceOf) {
         relationships.push({
@@ -198,3 +228,4 @@ export class KnowledgeExtractor {
     };
   }
 }
+
