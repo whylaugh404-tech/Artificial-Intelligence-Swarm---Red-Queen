@@ -108,6 +108,23 @@ async function startServer() {
 
   await cell.start(p2pPort);
 
+  // Optional multi-process swarm bootstrap. A node can advertise a comma-separated
+  // list of ws:// or wss:// peer endpoints through P2P_PEERS. Connections are
+  // attempted after the local listener is ready and one unavailable peer must not
+  // prevent the cell or HTTP API from starting.
+  const peerEndpoints = (process.env.P2P_PEERS || '')
+    .split(',')
+    .map(endpoint => endpoint.trim())
+    .filter(Boolean);
+  for (const endpoint of peerEndpoints) {
+    try {
+      await cell.connectToPeer(endpoint);
+      logger.info('server', 'p2p_peer_connected', { endpoint });
+    } catch (error) {
+      logger.warn('server', 'p2p_peer_connection_failed', { endpoint, error: String(error) });
+    }
+  }
+
   // Bootstrap foundational cyber topology via canonical metabolism if empty
   if (cell.cognitiveGraph.getAllConcepts().length === 0) {
     try {
@@ -316,6 +333,19 @@ async function startServer() {
       }
       const result = await cell.learning.train(validSamples, epochs, learningRate, validValidationSamples);
       res.json({ status: 'trained', result });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/learning/train-dataset', async (req, res) => {
+    try {
+      const { records, epochs, learningRate } = req.body;
+      if (!Array.isArray(records) || records.length < 2) {
+        return res.status(400).json({ error: 'records must contain at least two text records' });
+      }
+      const result = await cell.learning.trainDataset(records, epochs, learningRate);
+      res.json({ status: 'trained_dataset', result });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
