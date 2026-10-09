@@ -11,6 +11,7 @@ export const ALLOWED_CELL_CAPABILITIES = [
   'CODE_ANALYSIS',
   'COGNITIVE_REASONING',
   'SWARM_COORDINATION',
+  'NEURAL_INFERENCE',
   'AUTHORIZED_MEMORY_OPS',
   'PEER_REPLICATION',
   'MEMORY_MUTATION'
@@ -141,3 +142,4 @@ export interface DeriveGenomeOptions {
   logicVersion?: string;
   genomeVersion?: number;
 }
+
