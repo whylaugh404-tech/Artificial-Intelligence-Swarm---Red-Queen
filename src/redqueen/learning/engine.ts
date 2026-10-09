@@ -1,6 +1,7 @@
 import { MemoryCategory, MemoryStore } from '../memory/store';
 import { BinaryMLP, MLPCheckpoint } from './mlp';
 import { HashEmbeddingModel, Vector } from './tensor';
+import { NeuralVectorIndex, VectorSearchResult } from './vector-index';
 
 export interface TextTrainingSample { text: string; target: number; }
 export interface BinaryMetrics {
@@ -14,11 +15,13 @@ export interface BinaryMetrics {
 
 export class NeuralLearningEngine {
   public readonly embedding: HashEmbeddingModel;
+  public readonly vectorIndex: NeuralVectorIndex;
   private model: BinaryMLP;
   private checkpointId = 'neural_checkpoint_default';
 
   constructor(private readonly memory: MemoryStore, dimensions = 32, hiddenSize = 16) {
     this.embedding = new HashEmbeddingModel(dimensions);
+    this.vectorIndex = new NeuralVectorIndex(memory, this.embedding);
     this.model = new BinaryMLP(dimensions, hiddenSize);
   }
 
@@ -74,6 +77,14 @@ export class NeuralLearningEngine {
     return { score, label: score >= 0.5 ? 1 : 0, checkpointId: this.checkpointId };
   }
 
+  async index(textId: string, text: string, metadata?: Record<string, unknown>): Promise<void> {
+    await this.vectorIndex.upsert(textId, text, metadata);
+  }
+
+  async search(text: string, limit = 5): Promise<VectorSearchResult[]> {
+    return this.vectorIndex.search(text, limit);
+  }
+
   async saveCheckpoint(): Promise<void> {
     const checkpoint = this.model.checkpoint();
     await this.memory.put({
@@ -99,4 +110,5 @@ export class NeuralLearningEngine {
     return true;
   }
 }
+
 
