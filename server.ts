@@ -63,6 +63,23 @@ async function startServer() {
   
   app.use(express.json());
 
+  const apiToken = process.env.REDQUEEN_API_TOKEN?.trim();
+  if (process.env.NODE_ENV === 'production' && !apiToken) {
+    throw new Error('REDQUEEN_API_TOKEN is required in production');
+  }
+  app.use('/api', (req, res, next) => {
+    if (req.path === '/health' || req.path === '/health/') return next();
+    if (!apiToken) return next();
+    const authorization = req.header('authorization');
+    const supplied = authorization?.startsWith('Bearer ')
+      ? authorization.slice('Bearer '.length).trim()
+      : req.header('x-api-key');
+    if (!supplied || supplied !== apiToken) {
+      return res.status(401).json({ error: 'authentication required' });
+    }
+    return next();
+  });
+
   // Instantiate the RedQueen Cell
   const apiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || '';
   if (!apiKey) {
@@ -80,7 +97,7 @@ async function startServer() {
     fs.mkdirSync(dataDir, { recursive: true });
   }
 
-  const cell = new Cell('./data/memory.json', apiKey, undefined, undefined, undefined, { storageSecret: process.env.REDQUEEN_STORAGE_SECRET || 'dev_secret_key_override_12345678' });
+  const cell = new Cell('./data/memory.json', apiKey, undefined, undefined, undefined, { storageSecret });
   
   const p2pPort = parseInt(process.env.P2P_PORT || '0', 10);
   if (p2pPort > 0) {
@@ -281,7 +298,7 @@ async function startServer() {
 
   app.post('/api/learning/train', async (req, res) => {
     try {
-      const { samples, epochs, learningRate } = req.body;
+      const { samples, validationSamples, epochs, learningRate } = req.body;
       if (!Array.isArray(samples) || samples.length === 0) {
         return res.status(400).json({ error: 'samples must be a non-empty array' });
       }
@@ -291,7 +308,13 @@ async function startServer() {
       if (validSamples.length !== samples.length) {
         return res.status(400).json({ error: 'each sample requires text and binary target 0 or 1' });
       }
-      const result = await cell.learning.train(validSamples, epochs, learningRate);
+      const validValidationSamples = validationSamples === undefined ? validSamples : validationSamples;
+      if (!Array.isArray(validValidationSamples) || validValidationSamples.some((sample: any) =>
+        !sample || typeof sample.text !== 'string' || (sample.target !== 0 && sample.target !== 1)
+      )) {
+        return res.status(400).json({ error: 'validationSamples must contain text and binary target 0 or 1' });
+      }
+      const result = await cell.learning.train(validSamples, epochs, learningRate, validValidationSamples);
       res.json({ status: 'trained', result });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
