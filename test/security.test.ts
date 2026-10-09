@@ -4,6 +4,7 @@ import { MessageType, createMessage, getCanonicalString, MessageSchema } from '.
 import { identityCrypto } from '../src/redqueen/crypto/identity';
 import { signingCrypto } from '../src/redqueen/crypto/signing';
 import { WebSocket } from 'ws';
+import { generateKeyPairSync } from 'node:crypto';
 
 describe('P2P Security Negative Tests', () => {
   let cellB: Cell;
@@ -26,7 +27,9 @@ describe('P2P Security Negative Tests', () => {
       const ws = new WebSocket('ws://localhost:4005');
       
       ws.on('open', () => {
-        const helloMsg = createMessage(MessageType.HELLO, attackerNodeId, { publicKey: attackerKeys.publicKey }, attackerKeys.privateKey);
+        const ephemeral = generateKeyPairSync('x25519');
+        const ephemeralPublicKey = ephemeral.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+        const helloMsg = createMessage(MessageType.HELLO, attackerNodeId, { publicKey: attackerKeys.publicKey, ephemeralPublicKey }, attackerKeys.privateKey);
         ws.send(JSON.stringify(helloMsg));
       });
       
@@ -151,3 +154,4 @@ describe('P2P Security Negative Tests', () => {
     ws.terminate();
   });
 });
+

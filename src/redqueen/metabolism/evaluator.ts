@@ -148,7 +148,8 @@ export class InformationEvaluator {
     );
 
     // Confidence is calculated from quality combined with classification certainty
-    const rawConfidence = (qualityScore * 0.6) + (classification.confidence * 0.4);
+    const sourceBoost = (sourceCredibility - 0.5) * 0.1;
+    const rawConfidence = (qualityScore * 0.6) + (classification.confidence * 0.4) + sourceBoost;
     const confidence = this.clampUnit(rawConfidence);
 
     return {
@@ -173,3 +174,4 @@ export class InformationEvaluator {
     return Math.max(0.0, Math.min(1.0, val));
   }
 }
+

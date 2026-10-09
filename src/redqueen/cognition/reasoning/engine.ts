@@ -587,20 +587,14 @@ export class ReasoningEngine {
       if (!evidence.provenance?.derivedFrom || evidence.provenance.derivedFrom.length === 0) {
         return evidence;
       }
-      // Filter out storage provenance / cell IDs that are not evidence/observation derivation ancestors
-      const realAncestors = evidence.provenance.derivedFrom.filter(
-        id => id.startsWith('ev_') || id.startsWith('obs_') || id.startsWith('info_') || id.startsWith('exp_') || id.startsWith('kn_')
+      // Preserve known upstream evidence identifiers, including opaque parent
+      // IDs used by external producers, while excluding storage-only cell IDs.
+      const realAncestors = evidence.provenance.derivedFrom.filter(id =>
+        id.startsWith('ev_') || id.startsWith('obs_') || id.startsWith('info_') ||
+        id.startsWith('exp_') || id.startsWith('kn_') || id.startsWith('parent_')
       );
-      if (realAncestors.length === evidence.provenance.derivedFrom.length) {
-        return evidence;
-      }
-      return {
-        ...evidence,
-        provenance: {
-          ...evidence.provenance,
-          derivedFrom: realAncestors
-        }
-      };
+      if (realAncestors.length === evidence.provenance.derivedFrom.length) return evidence;
+      return { ...evidence, provenance: { ...evidence.provenance, derivedFrom: realAncestors } };
     };
 
     const counterEvidenceIds = new Set(loadedCounterEvidences.map(c => c.evidenceId));
@@ -1274,3 +1268,4 @@ export class ReasoningEngine {
     });
   }
 }
+

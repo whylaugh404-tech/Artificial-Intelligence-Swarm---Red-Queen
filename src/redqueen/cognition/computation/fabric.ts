@@ -218,7 +218,10 @@ export class DistributedComputationFabric {
 
       if (!isConnectedRemotePeer) {
         logger.warn(this.component, 'target_peer_not_authenticated_fallback_local', { targetId: targetCell.nodeId });
-        const result = await localExecutor(subtask, resolvedInputs, targetCell) as any;
+        // The discovered remote candidate is only scheduling metadata.  A fallback
+        // must execute against the real local Cell because native handlers access
+        // local organs such as learning, memory, and the cognitive graph.
+        const result = await localExecutor(subtask, resolvedInputs, this.cell) as any;
         result.originatingCellId = this.cell.nodeId;
         result.requestedCellId = targetCell.nodeId;
         result.allocatedCellId = targetCell.nodeId;
@@ -281,7 +284,7 @@ export class DistributedComputationFabric {
           clearTimeout(timeout);
           this.pendingRequests.delete(requestId);
           this.activeSubtaskRequests.delete(subtask.subtaskId);
-          resolve(localExecutor(subtask, resolvedInputs, targetCell));
+          resolve(localExecutor(subtask, resolvedInputs, this.cell));
         }
       });
     };
@@ -587,3 +590,4 @@ export class DistributedComputationFabric {
     }
   }
 }
+

@@ -58,7 +58,9 @@ export function createGenesisGenome(params?: CreateGenomeParams): CellGenome {
       'INFO_PROCESSING',
       'KNOWLEDGE_QUERY',
       'COGNITIVE_REASONING',
-      'SWARM_COORDINATION'
+      'SWARM_COORDINATION',
+      'NEURAL_INFERENCE',
+      'NEURAL_TRAINING'
     ],
     specialization: params?.specialization ?? null,
     genomeVersion: params?.genomeVersion ?? 1,
@@ -167,3 +169,4 @@ export function validateGenome(candidate: unknown): {
     genome: result.data
   };
 }
+

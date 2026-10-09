@@ -262,10 +262,10 @@ export function arrayToVector(
 }
 
 /**
- * Computes linear transformation: z = W x + b
+ * Computes affine transformation: z = W x + b.
  * Uses epistemic mask / valid-dimension set: UNKNOWN dimensions do not drag output down to zero.
  */
-export function applyLinearTransformation(
+export function applyAffineTransformation(
   x: CognitiveFeatureVector,
   matrix: number[][],
   bias: number[],
@@ -316,6 +316,9 @@ export function applyLinearTransformation(
     description
   };
 }
+
+/** @deprecated Use applyAffineTransformation; W x + b is affine, not strictly linear. */
+export const applyLinearTransformation = applyAffineTransformation;
 
 /**
  * Generates a deterministic transformation matrix W_i and bias vector b_i for a Cell.
@@ -372,3 +375,4 @@ export function generateDeterministicMatrixAndBias(
 
   return { matrix, bias };
 }
+

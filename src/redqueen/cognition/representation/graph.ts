@@ -75,6 +75,81 @@ export class CognitiveGraph {
   private readonly outgoingRelations: Map<string, Set<string>> = new Map();
   private readonly incomingRelations: Map<string, Set<string>> = new Map();
 
+  public createTransactionSnapshot(): {
+    concepts: CognitiveConcept[];
+    relations: CognitiveRelation[];
+    abstractions: CognitiveAbstraction[];
+    generalizations: CognitiveGeneralization[];
+    analogies: CognitiveAnalogy[];
+  } {
+    return {
+      concepts: this.getAllConcepts().map(value => structuredClone(value)),
+      relations: this.getAllRelations().map(value => structuredClone(value)),
+      abstractions: this.getAllAbstractions().map(value => structuredClone(value)),
+      generalizations: this.getAllGeneralizations().map(value => structuredClone(value)),
+      analogies: this.getAllAnalogies().map(value => structuredClone(value))
+    };
+  }
+
+  /** Restores graph caches and persistent graph entries after a failed metabolism transaction. */
+  public async restoreTransactionSnapshot(snapshot: ReturnType<CognitiveGraph['createTransactionSnapshot']>): Promise<void> {
+    const keep = new Set([
+      ...snapshot.concepts.map(value => value.conceptId),
+      ...snapshot.relations.map(value => value.relationId),
+      ...snapshot.abstractions.map(value => value.abstractionId),
+      ...snapshot.generalizations.map(value => value.generalizationId),
+      ...snapshot.analogies.map(value => value.analogyId)
+    ]);
+    const current = [
+      ...this.getAllConcepts().map(value => ({ id: value.conceptId, type: 'COGNITIVE_CONCEPT' })),
+      ...this.getAllRelations().map(value => ({ id: value.relationId, type: 'COGNITIVE_RELATION' })),
+      ...this.getAllAbstractions().map(value => ({ id: value.abstractionId, type: 'COGNITIVE_ABSTRACTION' })),
+      ...this.getAllGeneralizations().map(value => ({ id: value.generalizationId, type: 'COGNITIVE_GENERALIZATION' })),
+      ...this.getAllAnalogies().map(value => ({ id: value.analogyId, type: 'COGNITIVE_ANALOGY' }))
+    ];
+    for (const item of current) {
+      if (!keep.has(item.id)) await this.memory.delete(item.id).catch(() => undefined);
+    }
+
+    this.concepts.clear();
+    this.relations.clear();
+    this.abstractions.clear();
+    this.generalizations.clear();
+    this.analogies.clear();
+    this.outgoingRelations.clear();
+    this.incomingRelations.clear();
+    for (const concept of snapshot.concepts) this.concepts.set(concept.conceptId, structuredClone(concept));
+    for (const relation of snapshot.relations) {
+      this.relations.set(relation.relationId, structuredClone(relation));
+      if (!this.outgoingRelations.has(relation.subjectConceptId)) this.outgoingRelations.set(relation.subjectConceptId, new Set());
+      if (!this.incomingRelations.has(relation.objectConceptId)) this.incomingRelations.set(relation.objectConceptId, new Set());
+      this.outgoingRelations.get(relation.subjectConceptId)!.add(relation.relationId);
+      this.incomingRelations.get(relation.objectConceptId)!.add(relation.relationId);
+    }
+    for (const abstraction of snapshot.abstractions) this.abstractions.set(abstraction.abstractionId, structuredClone(abstraction));
+    for (const generalization of snapshot.generalizations) this.generalizations.set(generalization.generalizationId, structuredClone(generalization));
+    for (const analogy of snapshot.analogies) this.analogies.set(analogy.analogyId, structuredClone(analogy));
+
+    // Re-persist the complete pre-transaction graph. Restoring only the in-memory
+    // maps is insufficient: a later restart would resurrect mutated graph entries
+    // that were written before the transaction failed.
+    for (const concept of snapshot.concepts) {
+      await this.persistEntry(concept.conceptId, 'COGNITIVE_CONCEPT', concept, concept.confidence, concept.provenance);
+    }
+    for (const relation of snapshot.relations) {
+      await this.persistEntry(relation.relationId, 'COGNITIVE_RELATION', relation, relation.confidence, relation.provenance);
+    }
+    for (const abstraction of snapshot.abstractions) {
+      await this.persistEntry(abstraction.abstractionId, 'COGNITIVE_ABSTRACTION', abstraction, abstraction.confidence, abstraction.provenance);
+    }
+    for (const generalization of snapshot.generalizations) {
+      await this.persistEntry(generalization.generalizationId, 'COGNITIVE_GENERALIZATION', generalization, generalization.confidence, generalization.provenance);
+    }
+    for (const analogy of snapshot.analogies) {
+      await this.persistEntry(analogy.analogyId, 'COGNITIVE_ANALOGY', analogy, analogy.confidence, analogy.provenance);
+    }
+  }
+
   constructor(
     public readonly cellId: string,
     private readonly memory: MemoryStore,
@@ -198,7 +273,7 @@ export class CognitiveGraph {
     const validated = CognitiveRelationSchema.parse(candidate);
 
     // Self-loop prevention: A concept cannot relate to itself unless explicitly justified
-    if (validated.subjectConceptId === validated.objectConceptId) {
+    if (validated.subjectConceptId === validated.objectConceptId && validated.predicate !== CognitiveRelationPredicate.CONTRADICTS) {
       throw new Error(`Self-loop relation rejected: concept '${validated.subjectConceptId}' cannot relate to itself via '${validated.predicate}'`);
     }
 
@@ -1699,3 +1774,4 @@ export class CognitiveGraph {
     await this.memory.put(memoryEntry);
   }
 }
+

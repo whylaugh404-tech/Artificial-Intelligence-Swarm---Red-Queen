@@ -250,7 +250,7 @@ describe('P6.3 100-Cell Concurrent Stress & Resilience Audit (Tests A - I)', () 
     const governance = new GovernanceEnforcer(
       {
         populationCeiling: 100,
-        cooldownMs: 60, // 60ms cooldown
+        cooldownMs: 500, // Keep cleanup latency below the tested cooldown window.
         requireAuthorization: true,
         minMemoryPressure: 0.0
       },
@@ -296,7 +296,7 @@ describe('P6.3 100-Cell Concurrent Stress & Resilience Audit (Tests A - I)', () 
     expect(burstResults.every((r) => !r.result.success)).toBe(true);
 
     // Wave 3: Wait for cooldown to expire
-    await new Promise((r) => setTimeout(r, 90));
+    await new Promise((r) => setTimeout(r, 550));
 
     // Next request succeeds
     const res3 = await mitosis.reproduce(parent, {
@@ -500,3 +500,4 @@ describe('P6.3 100-Cell Concurrent Stress & Resilience Audit (Tests A - I)', () 
     await parent.stop();
   });
 });
+

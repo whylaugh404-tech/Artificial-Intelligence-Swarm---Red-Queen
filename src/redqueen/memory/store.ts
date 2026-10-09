@@ -111,7 +111,8 @@ export class JsonFileMemoryStore implements MemoryStore {
     try {
       await fs.mkdir(path.dirname(this.storagePath), { recursive: true });
       
-      // Clean up orphaned .tmp file if present from a previous abrupt crash
+      // Clean up the legacy staging file from older versions. New writes use a
+      // unique staging path so two interrupted writers can never collide.
       try {
         await fs.rm(`${this.storagePath}.tmp`, { force: true });
       } catch {}
@@ -168,7 +169,7 @@ export class JsonFileMemoryStore implements MemoryStore {
    * Durably persists in-memory entries to disk.
    * Persistence Semantics:
    * 1. Serialization: In-memory map entries are serialized to JSON.
-   * 2. Staging Write: Serialized data is written to a temporary sibling file (${storagePath}.tmp).
+   * 2. Staging Write: Serialized data is written to a unique temporary sibling file.
    * 3. Atomic Directory Swap: fs.rename performs an atomic POSIX rename(2) replacement.
    *    Concurrent readers see either the old full file or the new full file; never partial state.
    *    In the event of a power crash during writeFile, original storagePath is untouched.
@@ -191,9 +192,35 @@ export class JsonFileMemoryStore implements MemoryStore {
 
     try {
       const data = Array.from(this.memoryMap.values());
-      const tempPath = `${this.storagePath}.tmp`;
-      await fs.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf8');
-      await fs.rename(tempPath, this.storagePath);
+      const tempPath = `${this.storagePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+      let staged = false;
+
+      try {
+        await fs.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf8');
+        staged = true;
+
+        // Windows security scanners and sync clients can briefly hold either
+        // the destination or directory handle. Retry only transient locking
+        // errors; all other failures remain fatal and visible to callers.
+        let lastError: unknown;
+        for (let attempt = 0; attempt < 6; attempt++) {
+          try {
+            await fs.rename(tempPath, this.storagePath);
+            staged = false;
+            return;
+          } catch (err: any) {
+            lastError = err;
+            const transient = err?.code === 'EPERM' || err?.code === 'EACCES' || err?.code === 'EBUSY';
+            if (!transient || attempt === 5) throw err;
+            await new Promise(resolve => setTimeout(resolve, 25 * (attempt + 1)));
+          }
+        }
+        throw lastError;
+      } finally {
+        if (staged) {
+          await fs.rm(tempPath, { force: true }).catch(() => undefined);
+        }
+      }
     } catch (err) {
       logger.error(this.component, 'persistence_failed', err);
       throw err;
@@ -347,3 +374,4 @@ export class JsonFileMemoryStore implements MemoryStore {
     };
   }
 }
+

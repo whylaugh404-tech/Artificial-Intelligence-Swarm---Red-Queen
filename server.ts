@@ -5,13 +5,19 @@ import { createServer as createViteServer } from 'vite';
 import { Cell } from './src/redqueen/core/cell';
 import { logger } from './src/redqueen/core/logger';
 import { RepresentationVerificationStatus } from './src/redqueen/cognition/representation/types';
+import { InformationCategory } from './src/redqueen/metabolism/types';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Ensure REDQUEEN_STORAGE_SECRET exists for server Cell initialization
-if (!process.env.REDQUEEN_STORAGE_SECRET) {
-  process.env.REDQUEEN_STORAGE_SECRET = 'redqueen_local_development_storage_secret_key_32bytes';
+// Persistent cell identity storage must never silently fall back to a source-controlled secret.
+// A missing secret is a configuration error in every environment; otherwise a restart could
+// make encrypted private keys recoverable by anyone who can read this repository.
+const storageSecret = process.env.REDQUEEN_STORAGE_SECRET?.trim();
+if (!storageSecret) {
+  throw new Error(
+    'REDQUEEN_STORAGE_SECRET is required. Set it in .env or the process environment before starting the server.'
+  );
 }
 
 function parseCSV(text: string) {
@@ -57,6 +63,23 @@ async function startServer() {
   
   app.use(express.json());
 
+  const apiToken = process.env.REDQUEEN_API_TOKEN?.trim();
+  if (process.env.NODE_ENV === 'production' && !apiToken) {
+    throw new Error('REDQUEEN_API_TOKEN is required in production');
+  }
+  app.use('/api', (req, res, next) => {
+    if (req.path === '/health' || req.path === '/health/') return next();
+    if (!apiToken) return next();
+    const authorization = req.header('authorization');
+    const supplied = authorization?.startsWith('Bearer ')
+      ? authorization.slice('Bearer '.length).trim()
+      : req.header('x-api-key');
+    if (!supplied || supplied !== apiToken) {
+      return res.status(401).json({ error: 'authentication required' });
+    }
+    return next();
+  });
+
   // Instantiate the RedQueen Cell
   const apiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || '';
   if (!apiKey) {
@@ -74,7 +97,7 @@ async function startServer() {
     fs.mkdirSync(dataDir, { recursive: true });
   }
 
-  const cell = new Cell('./data/memory.json', apiKey, undefined, undefined, undefined, { storageSecret: process.env.REDQUEEN_STORAGE_SECRET || 'dev_secret_key_override_12345678' });
+  const cell = new Cell('./data/memory.json', apiKey, undefined, undefined, undefined, { storageSecret });
   
   const p2pPort = parseInt(process.env.P2P_PORT || '0', 10);
   if (p2pPort > 0) {
@@ -84,6 +107,23 @@ async function startServer() {
   }
 
   await cell.start(p2pPort);
+
+  // Optional multi-process swarm bootstrap. A node can advertise a comma-separated
+  // list of ws:// or wss:// peer endpoints through P2P_PEERS. Connections are
+  // attempted after the local listener is ready and one unavailable peer must not
+  // prevent the cell or HTTP API from starting.
+  const peerEndpoints = (process.env.P2P_PEERS || '')
+    .split(',')
+    .map(endpoint => endpoint.trim())
+    .filter(Boolean);
+  for (const endpoint of peerEndpoints) {
+    try {
+      await cell.connectToPeer(endpoint);
+      logger.info('server', 'p2p_peer_connected', { endpoint });
+    } catch (error) {
+      logger.warn('server', 'p2p_peer_connection_failed', { endpoint, error: String(error) });
+    }
+  }
 
   // Bootstrap foundational cyber topology via canonical metabolism if empty
   if (cell.cognitiveGraph.getAllConcepts().length === 0) {
@@ -133,7 +173,7 @@ async function startServer() {
             conceptId,
             canonicalName: item.content.split(':')[0].trim(),
             description: item.content,
-            category: 'SYSTEM_OBSERVATION' as any,
+            category: InformationCategory.CYBERSECURITY,
             sourceKnowledgeIds: [metaRes.knowledgeId],
             sourceExperienceIds: [],
             evidenceIds: [evId],
@@ -273,6 +313,55 @@ async function startServer() {
     }
   });
 
+  app.post('/api/learning/train', async (req, res) => {
+    try {
+      const { samples, validationSamples, epochs, learningRate } = req.body;
+      if (!Array.isArray(samples) || samples.length === 0) {
+        return res.status(400).json({ error: 'samples must be a non-empty array' });
+      }
+      const validSamples = samples.filter((sample: any) =>
+        sample && typeof sample.text === 'string' && (sample.target === 0 || sample.target === 1)
+      );
+      if (validSamples.length !== samples.length) {
+        return res.status(400).json({ error: 'each sample requires text and binary target 0 or 1' });
+      }
+      const validValidationSamples = validationSamples === undefined ? validSamples : validationSamples;
+      if (!Array.isArray(validValidationSamples) || validValidationSamples.some((sample: any) =>
+        !sample || typeof sample.text !== 'string' || (sample.target !== 0 && sample.target !== 1)
+      )) {
+        return res.status(400).json({ error: 'validationSamples must contain text and binary target 0 or 1' });
+      }
+      const result = await cell.learning.train(validSamples, epochs, learningRate, validValidationSamples);
+      res.json({ status: 'trained', result });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/learning/train-dataset', async (req, res) => {
+    try {
+      const { records, epochs, learningRate } = req.body;
+      if (!Array.isArray(records) || records.length < 2) {
+        return res.status(400).json({ error: 'records must contain at least two text records' });
+      }
+      const result = await cell.learning.trainDataset(records, epochs, learningRate);
+      res.json({ status: 'trained_dataset', result });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/learning/infer', async (req, res) => {
+    try {
+      if (typeof req.body?.text !== 'string' || !req.body.text.trim()) {
+        return res.status(400).json({ error: 'text is required' });
+      }
+      res.json({ result: cell.learning.infer(req.body.text) });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.get('/api/cell/metabolism/events', (req, res) => {
     try {
       const limit = parseInt(req.query.limit as string || '100', 10);
@@ -382,12 +471,21 @@ async function startServer() {
       if (!observation || typeof observation !== 'string') {
         return res.status(400).json({ error: 'observation string required' });
       }
-      
-      // We run cognition in the background so as not to block HTTP response
-      cell.cognition.executeCycle(observation).catch(err => {
-        logger.error('api', 'cognition_error', err);
+
+      // The legacy CognitionPipeline is deliberately blocked. Observations must enter
+      // through the canonical CognitiveRuntime so the response reflects actual processing.
+      const result = await cell.processCognitiveRequest({
+        requestId: `api_observation_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+        creatorInput: observation,
+        context: {
+          contextId: 'ctx_api_observation',
+          domain: 'GENERAL'
+        },
+        timestamp: new Date().toISOString()
       });
-      res.json({ status: 'accepted', message: 'Observation injected into cognition pipeline' });
+
+      const statusCode = result.status === 'SUCCESS' ? 200 : 422;
+      res.status(statusCode).json({ status: result.status.toLowerCase(), result });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -470,3 +568,4 @@ startServer().catch(err => {
   console.error('Failed to start server:', err);
   process.exit(1);
 });
+

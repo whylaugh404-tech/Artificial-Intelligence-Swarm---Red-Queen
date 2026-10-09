@@ -57,7 +57,8 @@ import { Context } from '../cognition/epistemic/types';
 import { CollectiveCognitionEngine } from '../cognition/collective/engine';
 import { CognitiveDevelopmentEngine, CognitiveDevelopmentResult } from '../cognition/development/engine';
 import { computeCanonicalHash } from './canonical';
-import { CollectiveComputationEngine } from '../cognition/computation/engine';
+import { CollectiveComputationEngine, computeDeterministicHash } from '../cognition/computation/engine';
+import type { ComputationResult, ComputationTask } from '../cognition/computation/types';
 import { DistributedComputationFabric } from '../cognition/computation/fabric';
 import {
   EvolutionEngine,
@@ -87,6 +88,7 @@ import {
 import type { DistributedPopulationRegistry } from '../evolution/population';
 import type { MembershipAuthority } from '../swarm/authority';
 import { MembershipCertificate, MembershipState } from '../swarm/types';
+import { NeuralLearningEngine } from '../learning';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -248,7 +250,7 @@ export class Cell {
   }
 
   /**
-   * P05: Organic Observation → Experience Canonical Transition
+   * P05: Organic Observation â†’ Experience Canonical Transition
    * Transforms relevant empirical observations into causal episodic experiences.
    */
   public async processObservation(
@@ -458,6 +460,45 @@ export class Cell {
   public readonly evolution: EvolutionEngine;
   public readonly governance: GovernanceEnforcer;
   public readonly mitosis: MitosisEngine;
+  public readonly learning: NeuralLearningEngine;
+
+  public async inferNeuralDistributed(text: string, availableCells: Cell[] = [this]): Promise<ComputationResult> {
+    if (!text.trim()) throw new Error('Distributed neural inference requires non-empty text');
+    const taskId = `neural_infer_${computeDeterministicHash({ cellId: this.nodeId, text }).slice(0, 16)}`;
+    const task: ComputationTask = {
+      taskId,
+      goal: 'Distributed neural inference',
+      computationType: 'NEURAL_INFERENCE',
+      payload: { subtasks: [{ type: 'NEURAL_INFERENCE', payload: { text }, requiredCapabilities: ['NEURAL_INFERENCE'], timeoutMs: 5000, maxRetries: 1 }] },
+      requiredCapabilities: ['NEURAL_INFERENCE'],
+      originatingCellId: this.nodeId,
+      timeoutMs: 10000,
+      deterministicIdentity: computeDeterministicHash({ taskId, text }),
+      createdAt: new Date().toISOString()
+    };
+    return this.collectiveComputation.executeTask(task, { availableCells });
+  }
+
+  public async trainNeuralDistributed(
+    samples: Array<{ text: string; target: number }>,
+    options: { epochs?: number; learningRate?: number; validationSamples?: Array<{ text: string; target: number }> } = {},
+    availableCells: Cell[] = [this]
+  ): Promise<ComputationResult> {
+    if (samples.length === 0) throw new Error('Distributed neural training requires samples');
+    const taskId = `neural_train_${computeDeterministicHash({ cellId: this.nodeId, samples, options }).slice(0, 16)}`;
+    const task: ComputationTask = {
+      taskId,
+      goal: 'Distributed neural training',
+      computationType: 'NEURAL_TRAINING',
+      payload: { subtasks: [{ type: 'NEURAL_TRAINING', payload: { samples, ...options }, requiredCapabilities: ['NEURAL_TRAINING'], timeoutMs: 30000, maxRetries: 1 }] },
+      requiredCapabilities: ['NEURAL_TRAINING'],
+      originatingCellId: this.nodeId,
+      timeoutMs: 60000,
+      deterministicIdentity: computeDeterministicHash({ taskId, samples, options }),
+      createdAt: new Date().toISOString()
+    };
+    return this.collectiveComputation.executeTask(task, { availableCells });
+  }
 
   private _genome: CellGenome;
   private _lineage: CellLineage;
@@ -521,6 +562,7 @@ export class Cell {
     
     // Scoped storage: ensure individual memory store enforces ownership by this.nodeId
     this.memory = new JsonFileMemoryStore(storagePath, this.nodeId);
+    this.learning = new NeuralLearningEngine(this.memory);
     this.aiProvider = new OpenRouterAIProvider(openRouterApiKey);
     this.cognition = new CognitionPipeline(this.aiProvider, this.memory, this.nodeId);
     
@@ -857,6 +899,7 @@ export class Cell {
     await cell.restoreOrPersistGenome();
     await cell.cognitiveState.restore(cell.memory);
     await cell.cognitiveGraph.load();
+    await cell.learning.loadCheckpoint();
     await cell.recoverExperiences();
     return cell;
   }
@@ -910,6 +953,7 @@ export class Cell {
       this.cognitiveState.syncWithGenome(this.genome.specialization ?? null);
       
       await this.cognitiveGraph.load();
+      await this.learning.loadCheckpoint();
       await this.recoverExperiences();
       this.cognitiveState.syncLifecycleState(CellState.ACTIVE);
       if (this.memory.getStats) {
@@ -1282,3 +1326,5 @@ export class Cell {
     return this.getStatus();
   }
 }
+
+

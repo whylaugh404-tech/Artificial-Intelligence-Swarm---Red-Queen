@@ -48,6 +48,10 @@ describe('P4 Metabolism: Transaction & Budget Enforcement', () => {
       return originalPut(entry);
     };
 
+    const graphBefore = {
+      concepts: cell.cognitiveGraph.getAllConcepts().map(concept => concept.conceptId),
+      relations: cell.cognitiveGraph.getAllRelations().map(relation => relation.relationId)
+    };
     const rawContent = `
 # New Idea
 This is a very specific new idea that should be rolled back if it fails.
@@ -65,6 +69,8 @@ This is a very specific new idea that should be rolled back if it fails.
     const allMemory = await cell.memory.search({});
     const knowledgeRecords = allMemory.filter(m => m.type === 'KNOWLEDGE_RECORD');
     expect(knowledgeRecords.length).toBe(0);
+    expect(cell.cognitiveGraph.getAllConcepts().map(concept => concept.conceptId)).toEqual(graphBefore.concepts);
+    expect(cell.cognitiveGraph.getAllRelations().map(relation => relation.relationId)).toEqual(graphBefore.relations);
 
     // Ensure deduplicator is compensated (we can test by metabolizing again with same content and success)
     cell.memory.put = originalPut; // restore
@@ -155,3 +161,4 @@ This should be rolled back because cognitive state fails.
     expect(result2.status).toBe(MetabolismStatus.ACCEPTED);
   });
 });
+
