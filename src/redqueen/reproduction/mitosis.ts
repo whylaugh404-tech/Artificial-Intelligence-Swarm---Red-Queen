@@ -688,7 +688,6 @@ export class MitosisEngine {
 
       try {
         const now = Date.now();
-        this.lastSuccessfulAdmissionAt.set(parent.nodeId, now);
         const currentDescendants = parseInt(parentMetadata.descendantsCount || '0', 10);
         
         parent.cognitiveState.setMetadata('lastReproductionEvent', eventId);
@@ -775,6 +774,7 @@ export class MitosisEngine {
         }
 
         this.committedChildrenByEvent.set(eventId, child);
+        this.lastSuccessfulAdmissionAt.set(parent.nodeId, now);
       } catch (persistError: any) {
         if (!isCommittedOnDisk) {
           // Cooldown or event persistence failed: rollback parent cognitive state and re-throw
