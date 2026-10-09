@@ -36,6 +36,15 @@ export class BinaryMLP {
       if (checkpoint.inputSize !== inputSize || checkpoint.hiddenSize !== hiddenSize) {
         throw new Error('Checkpoint shape does not match model shape');
       }
+      if (!Number.isInteger(checkpoint.step) || checkpoint.step < 0 ||
+        checkpoint.weights1.length !== hiddenSize ||
+        checkpoint.bias1.length !== hiddenSize ||
+        checkpoint.weights2.length !== hiddenSize ||
+        checkpoint.weights1.some(row => row.length !== inputSize) ||
+        [...checkpoint.weights1.flat(), ...checkpoint.bias1, ...checkpoint.weights2, checkpoint.bias2]
+          .some(value => !Number.isFinite(value))) {
+        throw new Error('Checkpoint contains invalid tensor values');
+      }
       this.weights1 = checkpoint.weights1.map(row => [...row]);
       this.bias1 = [...checkpoint.bias1];
       this.weights2 = [...checkpoint.weights2];
@@ -62,7 +71,9 @@ export class BinaryMLP {
     let loss = 0;
     for (const sample of samples) {
       this.assertInput(sample.input);
-      if (sample.target < 0 || sample.target > 1) throw new Error('Binary target must be between 0 and 1');
+      if (!Number.isFinite(sample.target) || sample.target < 0 || sample.target > 1) {
+        throw new Error('Binary target must be a finite number between 0 and 1');
+      }
       const hidden = this.weights1.map((row, index) => sigmoid(dot(row, sample.input) + this.bias1[index]));
       const output = sigmoid(dot(this.weights2, hidden) + this.bias2);
       const error = output - sample.target;
@@ -98,4 +109,5 @@ export class BinaryMLP {
     }
   }
 }
+
 
