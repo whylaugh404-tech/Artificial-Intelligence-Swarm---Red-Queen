@@ -25,25 +25,28 @@ export class NeuralLearningEngine {
     this.model = new BinaryMLP(dimensions, hiddenSize);
   }
 
-  async train(samples: TextTrainingSample[], epochs = 10, learningRate = 0.05, validationSamples: TextTrainingSample[] = samples): Promise<{ epochs: number; loss: number; step: number; metrics: BinaryMetrics; validationMetrics: BinaryMetrics }> {
+  async train(samples: TextTrainingSample[], epochs = 10, learningRate = 0.05, validationSamples?: TextTrainingSample[]): Promise<{ epochs: number; loss: number; step: number; metrics: BinaryMetrics; validationMetrics: BinaryMetrics }> {
     if (!Number.isInteger(epochs) || epochs <= 0 || epochs > 10000) throw new Error('epochs must be between 1 and 10000');
     this.validateSamples(samples, 'Training');
-    this.validateSamples(validationSamples, 'Validation');
+    const validationSet = validationSamples ?? this.createValidationSplit(samples);
+    this.validateSamples(validationSet, 'Validation');
     const tensors = samples.map(sample => ({ input: this.embedding.embed(sample.text), target: sample.target }));
     let result = { loss: 0, step: 0 };
+    let bestTrainingResult = result;
     let bestCheckpoint: MLPCheckpoint | undefined;
     let bestValidationLoss = Number.POSITIVE_INFINITY;
     for (let epoch = 0; epoch < epochs; epoch++) {
       result = this.model.train(tensors, learningRate);
-      const validationMetrics = this.evaluate(validationSamples);
+      const validationMetrics = this.evaluate(validationSet);
       if (validationMetrics.loss < bestValidationLoss) {
         bestValidationLoss = validationMetrics.loss;
         bestCheckpoint = this.model.checkpoint();
+        bestTrainingResult = result;
       }
     }
     if (bestCheckpoint) this.model = new BinaryMLP(bestCheckpoint.inputSize, bestCheckpoint.hiddenSize, bestCheckpoint);
     await this.saveCheckpoint();
-    return { epochs, ...result, metrics: this.evaluate(samples), validationMetrics: this.evaluate(validationSamples) };
+    return { epochs, ...bestTrainingResult, metrics: this.evaluate(samples), validationMetrics: this.evaluate(validationSet) };
   }
 
   evaluate(samples: TextTrainingSample[]): BinaryMetrics {
@@ -125,6 +128,12 @@ export class NeuralLearningEngine {
         throw new Error(`${phase} targets must be finite numbers between 0 and 1`);
       }
     }
+  }
+
+  private createValidationSplit(samples: TextTrainingSample[]): TextTrainingSample[] {
+    if (samples.length < 2) return samples;
+    const holdoutSize = Math.max(1, Math.floor(samples.length * 0.2));
+    return samples.slice(samples.length - holdoutSize);
   }
 }
 
