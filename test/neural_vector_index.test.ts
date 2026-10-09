@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { Cell } from '../src/redqueen/core/cell';
 
 describe('neural vector index and collective inference', () => {
+  it('gives a genesis cell the capabilities required by its neural distributed APIs', () => {
+    const cell = new Cell(':memory:', '', undefined, undefined, undefined, { storageSecret: 'genesis-neural-capabilities' });
+    expect(cell.genome.capabilities).toContain('NEURAL_INFERENCE');
+    expect(cell.genome.capabilities).toContain('NEURAL_TRAINING');
+  });
+
   it('persists vectors and returns deterministic nearest neighbours', async () => {
     const cell = new Cell(':memory:', '', undefined, undefined, undefined, { storageSecret: 'vector-test-secret' });
     await cell.memory.initialize();
@@ -27,7 +33,10 @@ describe('neural vector index and collective inference', () => {
   });
 
   it('executes neural inference on an authenticated remote cell', async () => {
-    const cellA = new Cell(':memory:', '', undefined, undefined, undefined, { storageSecret: 'remote-inference-a' });
+    const cellA = new Cell(':memory:', '', undefined, undefined, undefined, {
+      storageSecret: 'remote-inference-a',
+      capabilities: ['OSINT_SCAN', 'INFO_PROCESSING', 'KNOWLEDGE_QUERY', 'COGNITIVE_REASONING', 'SWARM_COORDINATION']
+    });
     const cellB = new Cell(':memory:', '', undefined, undefined, undefined, { storageSecret: 'remote-inference-b', capabilities: ['NEURAL_INFERENCE', 'NEURAL_TRAINING'] });
     try {
       await cellA.start(4111);
