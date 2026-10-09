@@ -479,6 +479,27 @@ export class Cell {
     return this.collectiveComputation.executeTask(task, { availableCells });
   }
 
+  public async trainNeuralDistributed(
+    samples: Array<{ text: string; target: number }>,
+    options: { epochs?: number; learningRate?: number; validationSamples?: Array<{ text: string; target: number }> } = {},
+    availableCells: Cell[] = [this]
+  ): Promise<ComputationResult> {
+    if (samples.length === 0) throw new Error('Distributed neural training requires samples');
+    const taskId = `neural_train_${computeDeterministicHash({ cellId: this.nodeId, samples, options }).slice(0, 16)}`;
+    const task: ComputationTask = {
+      taskId,
+      goal: 'Distributed neural training',
+      computationType: 'NEURAL_TRAINING',
+      payload: { subtasks: [{ type: 'NEURAL_TRAINING', payload: { samples, ...options }, requiredCapabilities: ['NEURAL_TRAINING'], timeoutMs: 30000, maxRetries: 1 }] },
+      requiredCapabilities: ['NEURAL_TRAINING'],
+      originatingCellId: this.nodeId,
+      timeoutMs: 60000,
+      deterministicIdentity: computeDeterministicHash({ taskId, samples, options }),
+      createdAt: new Date().toISOString()
+    };
+    return this.collectiveComputation.executeTask(task, { availableCells });
+  }
+
   private _genome: CellGenome;
   private _lineage: CellLineage;
   public readonly cognitiveState: CognitiveStateManager;
