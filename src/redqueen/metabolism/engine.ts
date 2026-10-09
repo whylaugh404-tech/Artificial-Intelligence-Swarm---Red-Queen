@@ -298,6 +298,7 @@ export class MetabolismEngine {
 
       // STAGED PERSISTENCE WITH COMPENSATION
       const originalCognitiveState = this.cognitiveState.getState();
+      const originalGraph = this.graph?.createTransactionSnapshot();
       let storedKnowledgeId: string | undefined = undefined;
       let storedExperienceId: string | undefined = undefined;
       let registeredHash: string | undefined = undefined;
@@ -522,6 +523,11 @@ export class MetabolismEngine {
           this.deduplicator.unregisterHash(registeredHash);
         }
         this.cognitiveState.restoreFromSnapshot(originalCognitiveState);
+        if (originalGraph) {
+          await this.graph!.restoreTransactionSnapshot(originalGraph).catch(err => {
+            logger.error(this.component, 'compensation_failed_graph', err, { transactionId });
+          });
+        }
 
         throw new Error(`Transaction rolled back due to error: ${persistenceError.message}`);
       }
@@ -751,3 +757,4 @@ export class MetabolismEngine {
     }
   }
 }
+
