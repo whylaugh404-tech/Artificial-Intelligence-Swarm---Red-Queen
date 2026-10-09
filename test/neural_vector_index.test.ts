@@ -28,7 +28,7 @@ describe('neural vector index and collective inference', () => {
 
   it('executes neural inference on an authenticated remote cell', async () => {
     const cellA = new Cell(':memory:', '', undefined, undefined, undefined, { storageSecret: 'remote-inference-a' });
-    const cellB = new Cell(':memory:', '', undefined, undefined, undefined, { storageSecret: 'remote-inference-b', capabilities: ['NEURAL_INFERENCE'] });
+    const cellB = new Cell(':memory:', '', undefined, undefined, undefined, { storageSecret: 'remote-inference-b', capabilities: ['NEURAL_INFERENCE', 'NEURAL_TRAINING'] });
     try {
       await cellA.start(4111);
       await cellB.start(4112);
@@ -40,6 +40,15 @@ describe('neural vector index and collective inference', () => {
       expect(subtask.executingCellId).toBe(cellB.nodeId);
       expect(subtask.actualExecutorCellId).toBeUndefined();
       expect(subtask.provenance).toEqual([cellA.nodeId, cellB.nodeId]);
+      const training = await cellA.trainNeuralDistributed(
+        [{ text: 'safe compiler', target: 0 }, { text: 'malicious exploit', target: 1 }],
+        { epochs: 2, learningRate: 0.05 },
+        [cellA, cellB]
+      );
+      const trainingSubtask = Object.values(training.partialResults)[0];
+      expect(training.status).toBe('COMPLETED');
+      expect(trainingSubtask.executingCellId).toBe(cellB.nodeId);
+      expect((await cellB.memory.get('neural_checkpoint_default'))?.type).toBe('NEURAL_CHECKPOINT');
     } finally {
       await cellA.stop();
       await cellB.stop();
