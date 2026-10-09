@@ -100,7 +100,7 @@ export class ReasoningEngine {
 
   /**
    * Primary deterministic native reasoning pipeline:
-   * Premise â†’ Inference â†’ Hypothesis â†’ Evidence â†’ Verification â†’ Conclusion
+   * Premise → Inference → Hypothesis → Evidence → Verification → Conclusion
    */
   public reason(
     input: ReasoningInput,
@@ -1019,7 +1019,7 @@ export class ReasoningEngine {
   }
 
   /**
-   * Traceable provenance: CognitiveGraph â†’ Understanding â†’ WorldModel â†’ Evidence
+   * Traceable provenance: CognitiveGraph → Understanding → WorldModel → Evidence
    */
   public trace(
     chain: ReasoningChain,
