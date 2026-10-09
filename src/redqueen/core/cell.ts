@@ -57,7 +57,8 @@ import { Context } from '../cognition/epistemic/types';
 import { CollectiveCognitionEngine } from '../cognition/collective/engine';
 import { CognitiveDevelopmentEngine, CognitiveDevelopmentResult } from '../cognition/development/engine';
 import { computeCanonicalHash } from './canonical';
-import { CollectiveComputationEngine } from '../cognition/computation/engine';
+import { CollectiveComputationEngine, computeDeterministicHash } from '../cognition/computation/engine';
+import type { ComputationResult, ComputationTask } from '../cognition/computation/types';
 import { DistributedComputationFabric } from '../cognition/computation/fabric';
 import {
   EvolutionEngine,
@@ -460,6 +461,23 @@ export class Cell {
   public readonly governance: GovernanceEnforcer;
   public readonly mitosis: MitosisEngine;
   public readonly learning: NeuralLearningEngine;
+
+  public async inferNeuralDistributed(text: string, availableCells: Cell[] = [this]): Promise<ComputationResult> {
+    if (!text.trim()) throw new Error('Distributed neural inference requires non-empty text');
+    const taskId = `neural_infer_${computeDeterministicHash({ cellId: this.nodeId, text }).slice(0, 16)}`;
+    const task: ComputationTask = {
+      taskId,
+      goal: 'Distributed neural inference',
+      computationType: 'NEURAL_INFERENCE',
+      payload: { subtasks: [{ type: 'NEURAL_INFERENCE', payload: { text }, requiredCapabilities: ['NEURAL_INFERENCE'], timeoutMs: 5000, maxRetries: 1 }] },
+      requiredCapabilities: ['NEURAL_INFERENCE'],
+      originatingCellId: this.nodeId,
+      timeoutMs: 10000,
+      deterministicIdentity: computeDeterministicHash({ taskId, text }),
+      createdAt: new Date().toISOString()
+    };
+    return this.collectiveComputation.executeTask(task, { availableCells });
+  }
 
   private _genome: CellGenome;
   private _lineage: CellLineage;
@@ -1285,4 +1303,5 @@ export class Cell {
     return this.getStatus();
   }
 }
+
 
