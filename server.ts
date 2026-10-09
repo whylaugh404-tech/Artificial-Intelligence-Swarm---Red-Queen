@@ -279,6 +279,36 @@ async function startServer() {
     }
   });
 
+  app.post('/api/learning/train', async (req, res) => {
+    try {
+      const { samples, epochs, learningRate } = req.body;
+      if (!Array.isArray(samples) || samples.length === 0) {
+        return res.status(400).json({ error: 'samples must be a non-empty array' });
+      }
+      const validSamples = samples.filter((sample: any) =>
+        sample && typeof sample.text === 'string' && (sample.target === 0 || sample.target === 1)
+      );
+      if (validSamples.length !== samples.length) {
+        return res.status(400).json({ error: 'each sample requires text and binary target 0 or 1' });
+      }
+      const result = await cell.learning.train(validSamples, epochs, learningRate);
+      res.json({ status: 'trained', result });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/learning/infer', async (req, res) => {
+    try {
+      if (typeof req.body?.text !== 'string' || !req.body.text.trim()) {
+        return res.status(400).json({ error: 'text is required' });
+      }
+      res.json({ result: cell.learning.infer(req.body.text) });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.get('/api/cell/metabolism/events', (req, res) => {
     try {
       const limit = parseInt(req.query.limit as string || '100', 10);
