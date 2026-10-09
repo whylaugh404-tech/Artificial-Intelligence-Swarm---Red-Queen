@@ -87,6 +87,7 @@ import {
 import type { DistributedPopulationRegistry } from '../evolution/population';
 import type { MembershipAuthority } from '../swarm/authority';
 import { MembershipCertificate, MembershipState } from '../swarm/types';
+import { NeuralLearningEngine } from '../learning';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -248,7 +249,7 @@ export class Cell {
   }
 
   /**
-   * P05: Organic Observation → Experience Canonical Transition
+   * P05: Organic Observation â†’ Experience Canonical Transition
    * Transforms relevant empirical observations into causal episodic experiences.
    */
   public async processObservation(
@@ -458,6 +459,7 @@ export class Cell {
   public readonly evolution: EvolutionEngine;
   public readonly governance: GovernanceEnforcer;
   public readonly mitosis: MitosisEngine;
+  public readonly learning: NeuralLearningEngine;
 
   private _genome: CellGenome;
   private _lineage: CellLineage;
@@ -521,6 +523,7 @@ export class Cell {
     
     // Scoped storage: ensure individual memory store enforces ownership by this.nodeId
     this.memory = new JsonFileMemoryStore(storagePath, this.nodeId);
+    this.learning = new NeuralLearningEngine(this.memory);
     this.aiProvider = new OpenRouterAIProvider(openRouterApiKey);
     this.cognition = new CognitionPipeline(this.aiProvider, this.memory, this.nodeId);
     
@@ -1282,3 +1285,4 @@ export class Cell {
     return this.getStatus();
   }
 }
+
