@@ -5,13 +5,19 @@ import { createServer as createViteServer } from 'vite';
 import { Cell } from './src/redqueen/core/cell';
 import { logger } from './src/redqueen/core/logger';
 import { RepresentationVerificationStatus } from './src/redqueen/cognition/representation/types';
+import { InformationCategory } from './src/redqueen/metabolism/types';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Ensure REDQUEEN_STORAGE_SECRET exists for server Cell initialization
-if (!process.env.REDQUEEN_STORAGE_SECRET) {
-  process.env.REDQUEEN_STORAGE_SECRET = 'redqueen_local_development_storage_secret_key_32bytes';
+// Persistent cell identity storage must never silently fall back to a source-controlled secret.
+// A missing secret is a configuration error in every environment; otherwise a restart could
+// make encrypted private keys recoverable by anyone who can read this repository.
+const storageSecret = process.env.REDQUEEN_STORAGE_SECRET?.trim();
+if (!storageSecret) {
+  throw new Error(
+    'REDQUEEN_STORAGE_SECRET is required. Set it in .env or the process environment before starting the server.'
+  );
 }
 
 function parseCSV(text: string) {
@@ -133,7 +139,7 @@ async function startServer() {
             conceptId,
             canonicalName: item.content.split(':')[0].trim(),
             description: item.content,
-            category: 'SYSTEM_OBSERVATION' as any,
+            category: InformationCategory.CYBERSECURITY,
             sourceKnowledgeIds: [metaRes.knowledgeId],
             sourceExperienceIds: [],
             evidenceIds: [evId],
@@ -382,12 +388,21 @@ async function startServer() {
       if (!observation || typeof observation !== 'string') {
         return res.status(400).json({ error: 'observation string required' });
       }
-      
-      // We run cognition in the background so as not to block HTTP response
-      cell.cognition.executeCycle(observation).catch(err => {
-        logger.error('api', 'cognition_error', err);
+
+      // The legacy CognitionPipeline is deliberately blocked. Observations must enter
+      // through the canonical CognitiveRuntime so the response reflects actual processing.
+      const result = await cell.processCognitiveRequest({
+        requestId: `api_observation_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+        creatorInput: observation,
+        context: {
+          contextId: 'ctx_api_observation',
+          domain: 'GENERAL'
+        },
+        timestamp: new Date().toISOString()
       });
-      res.json({ status: 'accepted', message: 'Observation injected into cognition pipeline' });
+
+      const statusCode = result.status === 'SUCCESS' ? 200 : 422;
+      res.status(statusCode).json({ status: result.status.toLowerCase(), result });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -470,3 +485,4 @@ startServer().catch(err => {
   console.error('Failed to start server:', err);
   process.exit(1);
 });
+
