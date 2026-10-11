@@ -29,6 +29,7 @@ import { CognitiveConcept, CognitiveRelationPredicate } from '../representation/
 import { Evidence } from '../evidence/types';
 import { Context } from '../epistemic/types';
 import { CognitiveDevelopmentResult } from '../development/engine';
+import { extractSemanticProfile } from '../representation/semantic';
 import { logger } from '../../core/logger';
 import type { Cell } from '../../core/cell';
 
@@ -138,6 +139,9 @@ export class OrganicExperienceTransitionEngine {
     let observationId: string | undefined;
 
     if (rawObservation.domainKind === DomainKind.OBSERVATION) {
+      if (rawObservation.observedSubject !== undefined && (typeof rawObservation.observedSubject !== 'string' || rawObservation.observedSubject.trim().length === 0)) {
+        throw new Error('Observation missing mandatory observedSubject: observedSubject cannot be an empty string');
+      }
       observedSubject = rawObservation.observedSubject || (rawObservation.payload as any)?.observedSubject;
       source = rawObservation.source || (rawObservation.payload as any)?.sourceIdentifier || (rawObservation.payload as any)?.source;
       timestamp = rawObservation.timestamp || (rawObservation.payload as any)?.timestamp;
@@ -153,12 +157,17 @@ export class OrganicExperienceTransitionEngine {
       observationId = rawObservation.observationId || rawObservation.id;
     }
 
+    const profile = extractSemanticProfile(content || rawObservation);
+
     if (!observedSubject || typeof observedSubject !== 'string' || observedSubject.trim().length === 0) {
-      throw new Error("Observation validation failed: 'observedSubject' must be a non-empty string");
+      if (Object.keys(profile.attributes).length === 0) {
+        throw new Error('Observation missing mandatory observedSubject or semantic profile attributes');
+      }
+      observedSubject = profile.canonicalName || `EmpiricalPhenomenon_${profile.semanticHash.substring(0, 10)}`;
     }
 
     if (!source || typeof source !== 'string' || source.trim().length === 0) {
-      throw new Error("Observation validation failed: 'source' must be a non-empty string");
+      source = rawObservation.sourceId || 'empirical_telemetry_stream';
     }
 
     const validTimestamp = timestamp && !isNaN(Date.parse(timestamp))
@@ -173,6 +182,7 @@ export class OrganicExperienceTransitionEngine {
       const hashContent = computeDeterministicHash({
         subject: normalizedSubject,
         source: normalizedSource,
+        semanticHash: profile.semanticHash,
         content
       });
       observationId = `obs_${hashContent.substring(0, 20)}`;
@@ -241,13 +251,17 @@ export class OrganicExperienceTransitionEngine {
     let polarity: 'CONCORDANT' | 'CONTRADICTORY' | 'NOVEL' = 'NOVEL';
     let matchedConcept: CognitiveConcept | undefined;
 
+    const content = validated.content;
+    const profile = extractSemanticProfile(content || validated);
+
     try {
-      matchedConcept = await cell.cognitiveGraph.findConceptByName(validated.observedSubject);
+      matchedConcept = cell.cognitiveGraph.getConcept(profile.conceptId) ||
+        (options?.relatedConceptIds?.[0] ? cell.cognitiveGraph.getConcept(options.relatedConceptIds[0]) : undefined) ||
+        await cell.cognitiveGraph.findConceptByName(validated.observedSubject);
     } catch {
       // Ignore if graph lookup fails or concept not found
     }
 
-    const content = validated.content;
     const isExplicitContradiction = options?.expectedContradiction === true ||
       (content && (content.contradicts === true || content.status === 'CONTRADICTED' || content.isFalse === true));
 
@@ -287,7 +301,8 @@ export class OrganicExperienceTransitionEngine {
           ? [
               'empirical_world_contradiction_detected',
               'prior_belief_conflicted_with_empirical_observation',
-              'evidence_conflict_preserved_non_destructively'
+              'evidence_conflict_preserved_non_destructively',
+              ...Object.entries(profile.attributes).slice(0, 3).map(([k, v]) => `sem_${k}:${v}`)
             ]
           : (polarity === 'CONCORDANT'
               ? ['empirical_world_confirmation_recorded', 'prior_representation_reinforced']
@@ -298,6 +313,7 @@ export class OrganicExperienceTransitionEngine {
     // 6. Handle Contradiction Non-Destructively (Preserve Evidence Conflict)
     if (polarity === 'CONTRADICTORY') {
       const conflictEvidenceId = `ev_conflict_${validated.observationId}`;
+      const semanticFeatureTokens = Object.entries(profile.attributes).map(([k, v]) => `attr:${k}=${v}`);
       const conflictEvidence: Evidence = {
         evidenceId: conflictEvidenceId,
         sourceId: validated.source,
@@ -307,11 +323,11 @@ export class OrganicExperienceTransitionEngine {
           sourceId: validated.source,
           observationId: validated.observationId,
           timestamp,
-          derivedFrom: [validated.observationId, experienceId],
+          derivedFrom: [validated.observationId, experienceId, ...semanticFeatureTokens],
           contradictingRepresentationIds: matchedConcept ? [matchedConcept.conceptId] : undefined
         },
         context: {
-          contextId: `ctx_conflict_${validated.observedSubject.toLowerCase()}`,
+          contextId: `ctx_conflict_${(profile.canonicalName || validated.observedSubject).toLowerCase()}`,
           domain: 'empirical_observation'
         },
         confidence: validated.confidence

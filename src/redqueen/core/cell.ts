@@ -89,6 +89,7 @@ import type { DistributedPopulationRegistry } from '../evolution/population';
 import type { MembershipAuthority } from '../swarm/authority';
 import { MembershipCertificate, MembershipState } from '../swarm/types';
 import { NeuralLearningEngine } from '../learning';
+import { NeuroSymbolicEngine } from '../cognition/neuro_symbolic_engine';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -461,6 +462,7 @@ export class Cell {
   public readonly governance: GovernanceEnforcer;
   public readonly mitosis: MitosisEngine;
   public readonly learning: NeuralLearningEngine;
+  public readonly neuroSymbolic: NeuroSymbolicEngine;
 
   public async inferNeuralDistributed(text: string, availableCells: Cell[] = [this]): Promise<ComputationResult> {
     if (!text.trim()) throw new Error('Distributed neural inference requires non-empty text');
@@ -616,6 +618,11 @@ export class Cell {
 
     // Canonical Cognitive Orchestrator Initialization
     // Target topology: Cell -> CognitiveRuntime -> cognition organs (Understanding/Reasoning/Collective) -> WorldModel -> Action/Feedback
+    this.neuroSymbolic = new NeuroSymbolicEngine({
+      cognitiveGraph: this.cognitiveGraph,
+      memoryStore: this.memory
+    });
+
     this.cognitiveRuntime = new CognitiveRuntime([this], {
       understandingEngine: this.understanding,
       reasoningEngine: this.reasoning,

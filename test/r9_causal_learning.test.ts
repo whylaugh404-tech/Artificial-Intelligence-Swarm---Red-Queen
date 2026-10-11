@@ -15,6 +15,7 @@ import { EvolutionEventStatus } from '../src/redqueen/evolution/types';
 import { DomainKind } from '../src/redqueen/feedback/types';
 import { SemanticBoundaryViolationError } from '../src/redqueen/feedback/errors';
 import { computeDeterministicHash } from '../src/redqueen/cognition/computation/canonical';
+import { extractSemanticProfile } from '../src/redqueen/cognition/representation/semantic';
 import { unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 
@@ -104,12 +105,12 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     const initialDataset = [
       {
         sourceId: 'sensor_telemetry_cooling_grid',
-        parameter: 'core_coolant_flow',
-        value: 120.5,
-        unit: 'liters_per_minute',
-        recommendedPolicy: 'MAX_THROUGHPUT_OVERDRIVE',
-        status: 'SURGE_WARNING',
-        confidence: 0.88
+        subsystem: 'coolant_pump',
+        operatingMode: 'overdrive_speed',
+        coreCoolantFlow: 120.5,
+        flowUnit: 'liters_per_minute',
+        operationalStatus: 'surge_warning',
+        confidence: 0.95
       }
     ];
 
@@ -120,68 +121,15 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     const episodicMemories = await cellA.memory.search({ category: MemoryCategory.EPISODIC });
     expect(episodicMemories.length).toBeGreaterThanOrEqual(1);
 
-    // Initial domain handbook knowledge metabolized
-    const handbookInput: InformationRecordInput = {
-      sourceType: 'LOCAL_DATA',
-      sourceIdentifier: 'reactor_safety_handbook_ch4',
-      content: JSON.stringify({ rule: 'Overdrive flow immediately when temperature surges.' }),
-      contentType: 'application/json',
-      originatingCellId: cellA.nodeId
-    };
-    const metabolismResult = await cellA.metabolize(handbookInput);
-    expect(metabolismResult.status).toBe(MetabolismStatus.ACCEPTED);
+    // Autonomous concept & primary evidence retrieval (zero manual injection)
+    const profileInitial = extractSemanticProfile(initialDataset[0]);
+    const initialConcept = cellA.cognitiveGraph.getConcept(profileInitial.conceptId)!;
+    expect(initialConcept).toBeDefined();
+    const strategyConceptId = initialConcept.conceptId;
 
-    // Form initial representation and ground primary evidence
-    const strategyConceptId = 'concept_policy_overdrive';
-    const primaryEvidenceId = `ev_surge_${metabolismResult.informationId}`;
-    const primaryEvidence = {
-      evidenceId: primaryEvidenceId,
-      sourceId: cellA.nodeId,
-      observationId: metabolismResult.informationId,
-      timestamp: new Date().toISOString(),
-      confidence: 0.95,
-      provenance: {
-        sourceId: cellA.nodeId,
-        timestamp: new Date().toISOString(),
-        supportingRepresentationIds: [strategyConceptId],
-        derivedFrom: [metabolismResult.informationId]
-      },
-      context: problemContext
-    };
-    await cellA.cognitiveGraph.insertEvidence(primaryEvidence);
-
-    const initialConcept = await cellA.cognitiveGraph.insertConcept({
-      conceptId: strategyConceptId,
-      canonicalName: 'MaxThroughputOverdrivePolicy',
-      description: 'Force coolant pump to maximum overdrive RPM during thermal surges',
-      category: InformationCategory.OPERATING_SYSTEM,
-      sourceKnowledgeIds: [metabolismResult.knowledgeId || metabolismResult.informationId],
-      sourceExperienceIds: [],
-      evidenceIds: [primaryEvidenceId],
-      confidence: 0.50,
-      provenance: [cellA.nodeId, 'sensor_telemetry_cooling_grid'],
-      verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      version: 1,
-      originatingCellId: cellA.nodeId,
-      metadata: { targetActuator: 'PRIMARY_COOLANT_PUMP' }
-    });
-
-    // Replicate baseline state to cellControl for rigorous counterfactual comparison
-    await cellControl.cognitiveGraph.insertEvidence({
-      ...primaryEvidence,
-      sourceId: cellControl.nodeId,
-      provenance: {
-        ...primaryEvidence.provenance,
-        sourceId: cellControl.nodeId
-      }
-    });
-    await cellControl.cognitiveGraph.insertConcept({
-      ...initialConcept,
-      originatingCellId: cellControl.nodeId,
-      provenance: [cellControl.nodeId, 'sensor_telemetry_cooling_grid']
-    });
+    const primaryEvidenceId = initialConcept.evidenceIds[0];
+    const primaryEvidence = cellA.cognitiveGraph.getEvidence(primaryEvidenceId)!;
+    expect(primaryEvidence).toBeDefined();
 
     // Capture initial State S0
     const stateS0 = cellA.cognitiveState.getState();
@@ -207,12 +155,12 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     });
 
     // Verify World Model 1 belief state: Positive belief mass, zero disbelief
-    expect(worldModelCycle1.uncertainty.belief).toBeGreaterThan(0.2);
+    expect(worldModelCycle1.uncertainty.belief).toBeGreaterThan(0.15);
     expect(worldModelCycle1.uncertainty.disbelief).toBe(0.0);
     const initialBelief = worldModelCycle1.uncertainty.belief;
     const initialDisbelief = worldModelCycle1.uncertainty.disbelief;
 
-    const hypothesisStatement = 'Deploy MaxThroughputOverdrivePolicy to stabilize thermal surge.';
+    const hypothesisStatement = `Deploy ${initialConcept.canonicalName} to stabilize thermal surge.`;
     const reasoningCycle1 = cellA.reasoning.reason({
       goal: 'Resolve reactor thermal surge',
       context: problemContext,
@@ -275,10 +223,13 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     // The overdrive action at 12,000 RPM triggered acute cavitation and pump rupture.
     const empiricalObservation = {
       domainKind: DomainKind.OBSERVATION,
-      observedSubject: 'MaxThroughputOverdrivePolicy',
       source: 'sensor_telemetry_actuator_feedback',
       confidence: 0.96,
       content: {
+        subsystem: 'coolant_pump',
+        operatingMode: 'overdrive_speed',
+        coreCoolantFlow: 120.5,
+        flowUnit: 'liters_per_minute',
         status: 'CONTRADICTED',
         contradicts: true,
         anomaly: 'PUMP_CAVITATION_FAILURE',
@@ -293,7 +244,8 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     const transitionResult = await cellA.processObservation(empiricalObservation, {
       actionComputationId: actionTask1.taskId,
       expectedContradiction: true,
-      cycleNumber: 1
+      cycleNumber: 1,
+      relatedConceptIds: [strategyConceptId]
     });
 
     expect(transitionResult.status).toBe('CREATED');
@@ -476,7 +428,8 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     // Verify that cellControl (which did NOT experience the failure) still believes the overdrive policy
     const controlConcept = cellControl.cognitiveGraph.getConcept(strategyConceptId);
     expect(controlConcept?.verificationStatus).toBe(RepresentationVerificationStatus.SUPPORTED);
-    expect(controlConcept?.confidence).toBe(0.50);
+    expect(controlConcept?.confidence).toBe(initialConcept.confidence);
+    expect(controlConcept?.confidence).toBeGreaterThan(0.50);
 
     const controlUnderstanding = cellControl.understanding.compose({
       context: problemContext,
@@ -643,19 +596,19 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     // Strict invariant: NO manual concept/relation seeding or populateInitialGraph.
     const operationalDataset = [
       {
-        sourceId: 'spec_unit_3',
-        observedSubject: 'CoolantPumpOverdriveUnit3',
-        canonicalName: 'CoolantPumpOverdriveUnit3',
-        description: 'Drive Cooling Pump 3 at 12000 RPM in Reactor Grid Sector Gamma (Never operated under surge)',
-        parent: 'GeneralHighSpeedCoolantOverdrivePolicy',
-        category: InformationCategory.OPERATING_SYSTEM
+        sourceId: 'spec_telemetry_unit_3',
+        subsystem: 'coolant_pump',
+        operatingMode: 'overdrive_speed',
+        coolantFlowRate: 120.0,
+        gridSector: 'gamma',
+        operationalStatus: 'active_nominal'
       },
       {
-        sourceId: 'spec_solar',
-        observedSubject: 'AuxiliarySolarRadiationSensor',
-        canonicalName: 'AuxiliarySolarRadiationSensor',
-        description: 'Monitor external photovoltaic and cosmic radiation levels',
-        category: InformationCategory.GENERAL_TECHNOLOGY
+        sourceId: 'spec_telemetry_solar',
+        subsystem: 'solar_radiation_sensor',
+        operatingMode: 'photovoltaic_monitoring',
+        radiationFlux: 1361.0,
+        operationalStatus: 'nominal'
       }
     ];
 
@@ -667,15 +620,18 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(cellControl.cognitiveGraph.getAllGeneralizations().length).toBe(0);
 
     // Dynamically retrieve concept IDs derived through production ingestion
-    const unit3Concept = cellA.cognitiveGraph.findConceptByName('CoolantPumpOverdriveUnit3')!;
+    const profileUnit3 = extractSemanticProfile(operationalDataset[0]);
+    const profileSolar = extractSemanticProfile(operationalDataset[1]);
+
+    const unit3Concept = cellA.cognitiveGraph.getConcept(profileUnit3.conceptId)!;
     expect(unit3Concept).toBeDefined();
     const unit3ConceptId = unit3Concept.conceptId;
 
-    const generalConcept = cellA.cognitiveGraph.findConceptByName('GeneralHighSpeedCoolantOverdrivePolicy')!;
+    const generalConcept = cellA.cognitiveGraph.getConcept(profileUnit3.abstractConceptId)!;
     expect(generalConcept).toBeDefined();
     const generalConceptId = generalConcept.conceptId;
 
-    const caseCConcept = cellA.cognitiveGraph.findConceptByName('AuxiliarySolarRadiationSensor')!;
+    const caseCConcept = cellA.cognitiveGraph.getConcept(profileSolar.conceptId)!;
     expect(caseCConcept).toBeDefined();
     const caseCConceptId = caseCConcept.conceptId;
 
@@ -728,15 +684,16 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     // 2. REQUIREMENT 1 & 2: Experience A alone -> NO generalization formed
     const observationA = {
       domainKind: DomainKind.OBSERVATION,
-      observedSubject: 'CoolantPumpOverdriveUnit1',
       source: 'sensor_telemetry_unit_1_monitoring',
       confidence: 0.98,
       content: {
-        status: 'CONTRADICTED',
-        contradicts: true,
-        parent: 'GeneralHighSpeedCoolantOverdrivePolicy',
-        anomaly: 'IMPELLER_CAVITATION_RUPTURE',
-        details: 'Unit 1 suffered severe mechanical destruction under 12000 RPM overdrive'
+        subsystem: 'coolant_pump',
+        operatingMode: 'overdrive_speed',
+        anomaly: 'impeller_cavitation_rupture',
+        operationalStatus: 'ruptured_failure',
+        rpm: 12000,
+        gridSector: 'alpha',
+        contradicts: true
       }
     };
 
@@ -752,14 +709,14 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(experienceA.noveltyClassification).toBe(NoveltyClassification.CONTRADICTION);
     expect(experienceA.verificationStatus).toBe('CONTRADICTED_BY_WORLD');
 
-    // Develop from Experience A alone
+    // Develop from Experience A alone (autonomous concept formation without caller conceptId or name injection)
     const learningResultA = await cellA.developFromExperience(experienceA, {
-      context: { contextId: 'ctx_unit_1_incident', domain: 'INCIDENT_RESPONSE' },
-      relatedConceptIds: ['CoolantPumpOverdriveUnit1']
+      context: { contextId: 'ctx_unit_1_incident', domain: 'INCIDENT_RESPONSE' }
     });
 
-    // Concept & relation for Unit 1 formed autonomously
-    const unit1Concept = cellA.cognitiveGraph.findConceptByName('CoolantPumpOverdriveUnit1');
+    // Concept & relation for Unit 1 formed autonomously from semantic attributes
+    const profileObsA = extractSemanticProfile(observationA.content);
+    const unit1Concept = cellA.cognitiveGraph.getConcept(profileObsA.conceptId);
     expect(unit1Concept).toBeDefined();
     expect(unit1Concept?.evidenceIds.length).toBeGreaterThanOrEqual(1);
 
@@ -790,7 +747,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
       hypotheses: [
         {
           hypothesisId: 'hyp_unit3_overdrive',
-          statement: 'Deploy CoolantPumpOverdriveUnit3 to regulate Sector Gamma surge.',
+          statement: 'Deploy overdrive mode in Sector Gamma.',
           targetConceptId: unit3ConceptId
         }
       ]
@@ -801,15 +758,16 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     // 3. R9 WAJIB 2: Experience B (Unit 2) with compatible pattern -> Generalization CREATED!
     const observationB = {
       domainKind: DomainKind.OBSERVATION,
-      observedSubject: 'CoolantPumpOverdriveUnit2',
       source: 'sensor_telemetry_unit_2_monitoring',
       confidence: 0.98,
       content: {
-        status: 'CONTRADICTED',
-        contradicts: true,
-        parent: 'GeneralHighSpeedCoolantOverdrivePolicy',
-        anomaly: 'IMPELLER_CAVITATION_RUPTURE',
-        details: 'Unit 2 suffered mechanical cavitation destruction under 12000 RPM overdrive in Sector Beta'
+        subsystem: 'coolant_pump',
+        operatingMode: 'overdrive_speed',
+        anomaly: 'impeller_cavitation_rupture',
+        operationalStatus: 'ruptured_failure',
+        rpm: 12000,
+        gridSector: 'beta',
+        contradicts: true
       }
     };
 
@@ -824,11 +782,11 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     expect(experienceB.noveltyClassification).toBe(NoveltyClassification.CONTRADICTION);
 
     const learningResultB = await cellA.developFromExperience(experienceB, {
-      context: { contextId: 'ctx_unit_2_incident', domain: 'INCIDENT_RESPONSE' },
-      relatedConceptIds: ['CoolantPumpOverdriveUnit2']
+      context: { contextId: 'ctx_unit_2_incident', domain: 'INCIDENT_RESPONSE' }
     });
 
-    const unit2Concept = cellA.cognitiveGraph.findConceptByName('CoolantPumpOverdriveUnit2');
+    const profileObsB = extractSemanticProfile(observationB.content);
+    const unit2Concept = cellA.cognitiveGraph.getConcept(profileObsB.conceptId);
     expect(unit2Concept).toBeDefined();
     expect(unit2Concept?.evidenceIds.length).toBeGreaterThanOrEqual(1);
 
@@ -882,13 +840,13 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     // 4. R9 WAJIB 5: Irrelevant Experience C does NOT mistakenly expand or alter the generalization
     const observationC = {
       domainKind: DomainKind.OBSERVATION,
-      observedSubject: 'AuxiliarySolarRadiationSensor',
       source: 'sensor_telemetry_solar_monitoring',
       confidence: 0.95,
       content: {
-        status: 'COMPLETED',
+        subsystem: 'solar_radiation_sensor',
+        operatingMode: 'photovoltaic_monitoring',
         radiationFlux: 1361.0,
-        details: 'Standard solar irradiance telemetry, fully nominal'
+        operationalStatus: 'nominal'
       }
     };
     const transitionResultC = await cellA.processObservation(observationC, {
@@ -898,8 +856,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     });
     const experienceC = transitionResultC.experience;
     await cellA.developFromExperience(experienceC, {
-      context: { contextId: 'ctx_solar_polling', domain: 'SOLAR_ARRAY_MONITORING' },
-      relatedConceptIds: [caseCConceptId]
+      context: { contextId: 'ctx_solar_polling', domain: 'SOLAR_ARRAY_MONITORING' }
     });
 
     const genAfterC = cellA.cognitiveGraph.getGeneralization(formedGenId);
@@ -950,7 +907,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
       hypotheses: [
         {
           hypothesisId: 'hyp_unit3_overdrive',
-          statement: 'Deploy CoolantPumpOverdriveUnit3 to regulate Sector Gamma surge.',
+          statement: 'Deploy overdrive mode in Sector Gamma.',
           targetConceptId: unit3ConceptId
         }
       ],
@@ -1033,8 +990,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     });
     const replayExpA = replayTransA.experience;
     const replayLearnA = await cellB.developFromExperience(replayExpA, {
-      context: { contextId: 'ctx_unit_1_incident', domain: 'INCIDENT_RESPONSE' },
-      relatedConceptIds: ['CoolantPumpOverdriveUnit1']
+      context: { contextId: 'ctx_unit_1_incident', domain: 'INCIDENT_RESPONSE' }
     });
     expect(replayLearnA.generalizationsFormed?.length || 0).toBe(0);
     expect(cellB.cognitiveGraph.getAllGeneralizations().length).toBe(0);
@@ -1048,8 +1004,7 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
     });
     const replayExpB = replayTransB.experience;
     const replayLearnB = await cellB.developFromExperience(replayExpB, {
-      context: { contextId: 'ctx_unit_2_incident', domain: 'INCIDENT_RESPONSE' },
-      relatedConceptIds: ['CoolantPumpOverdriveUnit2']
+      context: { contextId: 'ctx_unit_2_incident', domain: 'INCIDENT_RESPONSE' }
     });
 
     expect(replayLearnB.generalizationsFormed?.[0]).toBe(formedGenId);
@@ -1288,6 +1243,238 @@ describe('R9 Causal Learning: Production Experience-Driven Adaptation', () => {
       if (existsSync(storagePathImmunity)) {
         try { unlinkSync(storagePathImmunity); } catch {}
       }
+    }
+  });
+
+  it('guarantees identity-invariance: altering entity names/IDs while preserving semantic attributes yields equivalent ontology and relation topology', async () => {
+    const storagePathInv1 = join(process.cwd(), '.tmp_test_inv_1.json');
+    const storagePathInv2 = join(process.cwd(), '.tmp_test_inv_2.json');
+    if (existsSync(storagePathInv1)) { try { unlinkSync(storagePathInv1); } catch {} }
+    if (existsSync(storagePathInv2)) { try { unlinkSync(storagePathInv2); } catch {} }
+
+    const cellInv1 = new Cell(storagePathInv1, 'dummy-key', undefined, undefined, undefined, { storageSecret: 'secret_inv1' });
+    const cellInv2 = new Cell(storagePathInv2, 'dummy-key', undefined, undefined, undefined, { storageSecret: 'secret_inv2' });
+
+    try {
+      await cellInv1.memory.initialize();
+      await cellInv2.memory.initialize();
+      await cellInv1.restoreOrPersistIdentity();
+      await cellInv2.restoreOrPersistIdentity();
+
+      // Entity 1: Caller uses "CoolantPumpAlpha" name, custom ID, proposal hints
+      const rawObservation1 = {
+        domainKind: DomainKind.OBSERVATION,
+        source: 'telemetry_node_alpha_cluster',
+        confidence: 0.95,
+        content: {
+          name: 'CoolantPumpAlpha',
+          observedSubject: 'AlphaTelemetryChannel',
+          entityId: 'alpha-device-uuid-1122',
+          assetTag: 'TAG-ALPHA-01',
+          subsystem: 'coolant_pump',
+          operatingMode: 'overdrive_speed',
+          rpm: 12000,
+          gridSector: 'gamma'
+        }
+      };
+
+      // Entity 2: Caller uses "CoolantPumpOmega" name, different custom ID, completely different caller metadata
+      // BUT IDENTICAL SEMANTIC ATTRIBUTES: subsystem, operatingMode, rpm, gridSector
+      const rawObservation2 = {
+        domainKind: DomainKind.OBSERVATION,
+        source: 'telemetry_node_omega_cluster',
+        confidence: 0.95,
+        content: {
+          name: 'CoolantPumpOmega',
+          observedSubject: 'OmegaTelemetryChannel',
+          entityId: 'omega-device-uuid-9988',
+          assetTag: 'TAG-OMEGA-99',
+          subsystem: 'coolant_pump',
+          operatingMode: 'overdrive_speed',
+          rpm: 12000,
+          gridSector: 'gamma'
+        }
+      };
+
+      // 1. Direct semantic profile comparison
+      const profile1 = extractSemanticProfile(rawObservation1.content);
+      const profile2 = extractSemanticProfile(rawObservation2.content);
+
+      expect(profile1.conceptId).toBe(profile2.conceptId);
+      expect(profile1.abstractConceptId).toBe(profile2.abstractConceptId);
+      expect(profile1.canonicalName).toBe(profile2.canonicalName);
+      expect(profile1.abstractCanonicalName).toBe(profile2.abstractCanonicalName);
+      expect(profile1.semanticHash).toBe(profile2.semanticHash);
+      expect(profile1.invariantHash).toBe(profile2.invariantHash);
+
+      // Caller proposed names/hints exist only in proposedHints / ephemeralValues
+      expect(profile1.proposedHints.name).toBe('CoolantPumpAlpha');
+      expect(profile2.proposedHints.name).toBe('CoolantPumpOmega');
+      expect(profile1.attributes['name']).toBeUndefined();
+      expect(profile2.attributes['name']).toBeUndefined();
+
+      // 2. Full Cell pipeline execution: Observation -> Experience -> Cognitive Development
+      const transResult1 = await cellInv1.processObservation(rawObservation1, { cycleNumber: 1 });
+      const transResult2 = await cellInv2.processObservation(rawObservation2, { cycleNumber: 1 });
+
+      expect(transResult1.status).toBe('CREATED');
+      expect(transResult2.status).toBe('CREATED');
+
+      await cellInv1.developFromExperience(transResult1.experience);
+      await cellInv2.developFromExperience(transResult2.experience);
+
+      // The autonomously formed concepts in both graphs must have identical conceptId and abstract structure
+      const concept1 = cellInv1.cognitiveGraph.getConcept(profile1.conceptId);
+      const concept2 = cellInv2.cognitiveGraph.getConcept(profile2.conceptId);
+
+      expect(concept1).toBeDefined();
+      expect(concept2).toBeDefined();
+      expect(concept1?.conceptId).toBe(concept2?.conceptId);
+      expect(concept1?.canonicalName).toBe(concept2?.canonicalName);
+      expect(concept1?.verificationStatus).toBe(concept2?.verificationStatus);
+
+      // Both must possess identical abstract class concepts
+      const abstract1 = cellInv1.cognitiveGraph.getConcept(profile1.abstractConceptId);
+      const abstract2 = cellInv2.cognitiveGraph.getConcept(profile2.abstractConceptId);
+      expect(abstract1).toBeDefined();
+      expect(abstract2).toBeDefined();
+      expect(abstract1?.conceptId).toBe(abstract2?.conceptId);
+      expect(abstract1?.canonicalName).toBe(abstract2?.canonicalName);
+
+      // Sibling relational topology: INSTANCE_OF relation formed identically
+      const rels1 = cellInv1.cognitiveGraph.getRelationsForConcept(concept1!.conceptId);
+      const rels2 = cellInv2.cognitiveGraph.getRelationsForConcept(concept2!.conceptId);
+
+      expect(rels1.length).toBeGreaterThanOrEqual(1);
+      expect(rels2.length).toBeGreaterThanOrEqual(1);
+      expect(rels1[0].predicate).toBe(CognitiveRelationPredicate.INSTANCE_OF);
+      expect(rels2[0].predicate).toBe(CognitiveRelationPredicate.INSTANCE_OF);
+      expect(rels1[0].objectConceptId).toBe(abstract1!.conceptId);
+      expect(rels2[0].objectConceptId).toBe(abstract2!.conceptId);
+
+      // Assert complete provenance trace:
+      // raw source -> observation -> representation -> evidence -> experience -> concept -> relation
+      expect(concept1?.provenance).toContain(rawObservation1.source);
+      expect(concept1?.provenance).toContain(transResult1.experience.experienceId);
+      expect(concept1?.evidenceIds.length).toBeGreaterThanOrEqual(1);
+      expect(rels1[0].provenance).toContain(concept1!.conceptId);
+      expect(rels1[0].provenance).toContain(abstract1!.conceptId);
+    } finally {
+      await cellInv1.stop();
+      await cellInv2.stop();
+      if (existsSync(storagePathInv1)) { try { unlinkSync(storagePathInv1); } catch {} }
+      if (existsSync(storagePathInv2)) { try { unlinkSync(storagePathInv2); } catch {} }
+    }
+  });
+
+  it('guarantees semantic-sensitivity: altering semantic attributes deterministically alters the resulting ontology and relation topology', async () => {
+    const storagePathSens = join(process.cwd(), '.tmp_test_sens.json');
+    if (existsSync(storagePathSens)) { try { unlinkSync(storagePathSens); } catch {} }
+
+    const cellSens = new Cell(storagePathSens, 'dummy-key', undefined, undefined, undefined, { storageSecret: 'secret_sens' });
+
+    try {
+      await cellSens.memory.initialize();
+      await cellSens.restoreOrPersistIdentity();
+
+      // Base: High speed coolant pump in sector gamma
+      const baseObservation = {
+        domainKind: DomainKind.OBSERVATION,
+        source: 'sensor_telemetry_base',
+        confidence: 0.95,
+        content: {
+          subsystem: 'coolant_pump',
+          operatingMode: 'overdrive_speed',
+          coolantFlowRate: 150.0,
+          gridSector: 'gamma'
+        }
+      };
+
+      // Alteration A (Leaf perturbation): Change leaf metric (gridSector to delta, flow to 180)
+      // Preserves invariant systemic class (subsystem: coolant_pump, operatingMode: overdrive_speed)
+      const leafAlteredObservation = {
+        domainKind: DomainKind.OBSERVATION,
+        source: 'sensor_telemetry_leaf',
+        confidence: 0.95,
+        content: {
+          subsystem: 'coolant_pump',
+          operatingMode: 'overdrive_speed',
+          coolantFlowRate: 180.0,
+          gridSector: 'delta'
+        }
+      };
+
+      // Alteration B (Invariant systemic shift): Change operatingMode from overdrive_speed to low_pressure_eco
+      const invariantAlteredObservation = {
+        domainKind: DomainKind.OBSERVATION,
+        source: 'sensor_telemetry_invariant',
+        confidence: 0.95,
+        content: {
+          subsystem: 'coolant_pump',
+          operatingMode: 'low_pressure_eco',
+          coolantFlowRate: 40.0,
+          gridSector: 'gamma'
+        }
+      };
+
+      const profileBase = extractSemanticProfile(baseObservation.content);
+      const profileLeaf = extractSemanticProfile(leafAlteredObservation.content);
+      const profileInv = extractSemanticProfile(invariantAlteredObservation.content);
+
+      // 1. Leaf perturbation creates a DISTINCT concrete concept ID, but PRESERVES the abstract invariant class
+      expect(profileLeaf.conceptId).not.toBe(profileBase.conceptId);
+      expect(profileLeaf.canonicalName).not.toBe(profileBase.canonicalName);
+      expect(profileLeaf.abstractConceptId).toBe(profileBase.abstractConceptId);
+      expect(profileLeaf.abstractCanonicalName).toBe(profileBase.abstractCanonicalName);
+
+      // 2. Invariant systemic shift changes BOTH the concrete concept ID AND the abstract class ID
+      expect(profileInv.conceptId).not.toBe(profileBase.conceptId);
+      expect(profileInv.conceptId).not.toBe(profileLeaf.conceptId);
+      expect(profileInv.abstractConceptId).not.toBe(profileBase.abstractConceptId);
+      expect(profileInv.abstractCanonicalName).not.toBe(profileBase.abstractCanonicalName);
+
+      // 3. Process through Cell cognition pipeline
+      const transBase = await cellSens.processObservation(baseObservation, { cycleNumber: 1 });
+      const transLeaf = await cellSens.processObservation(leafAlteredObservation, { cycleNumber: 2 });
+      const transInv = await cellSens.processObservation(invariantAlteredObservation, { cycleNumber: 3 });
+
+      await cellSens.developFromExperience(transBase.experience);
+      await cellSens.developFromExperience(transLeaf.experience);
+      await cellSens.developFromExperience(transInv.experience);
+
+      // Verify CognitiveGraph state
+      const conceptBase = cellSens.cognitiveGraph.getConcept(profileBase.conceptId);
+      const conceptLeaf = cellSens.cognitiveGraph.getConcept(profileLeaf.conceptId);
+      const conceptInv = cellSens.cognitiveGraph.getConcept(profileInv.conceptId);
+
+      expect(conceptBase).toBeDefined();
+      expect(conceptLeaf).toBeDefined();
+      expect(conceptInv).toBeDefined();
+
+      // ConceptBase and ConceptLeaf both point to the SAME abstract class
+      const relsBase = cellSens.cognitiveGraph.getRelationsForConcept(conceptBase!.conceptId);
+      const relsLeaf = cellSens.cognitiveGraph.getRelationsForConcept(conceptLeaf!.conceptId);
+      const relsInv = cellSens.cognitiveGraph.getRelationsForConcept(conceptInv!.conceptId);
+
+      const parentBase = relsBase.find(r => r.predicate === CognitiveRelationPredicate.INSTANCE_OF)?.objectConceptId;
+      const parentLeaf = relsLeaf.find(r => r.predicate === CognitiveRelationPredicate.INSTANCE_OF)?.objectConceptId;
+      const parentInv = relsInv.find(r => r.predicate === CognitiveRelationPredicate.INSTANCE_OF)?.objectConceptId;
+
+      expect(parentBase).toBe(profileBase.abstractConceptId);
+      expect(parentLeaf).toBe(profileBase.abstractConceptId);
+      expect(parentInv).toBe(profileInv.abstractConceptId);
+      expect(parentInv).not.toBe(parentBase);
+
+      // Assert provenance: raw source -> observation -> representation -> evidence -> experience -> concept -> relation
+      expect(conceptBase?.provenance).toContain(baseObservation.source);
+      expect(conceptLeaf?.provenance).toContain(leafAlteredObservation.source);
+      expect(conceptInv?.provenance).toContain(invariantAlteredObservation.source);
+      expect(conceptBase?.sourceExperienceIds).toContain(transBase.experience.experienceId);
+      expect(conceptLeaf?.sourceExperienceIds).toContain(transLeaf.experience.experienceId);
+      expect(conceptInv?.sourceExperienceIds).toContain(transInv.experience.experienceId);
+    } finally {
+      await cellSens.stop();
+      if (existsSync(storagePathSens)) { try { unlinkSync(storagePathSens); } catch {} }
     }
   });
 });

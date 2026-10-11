@@ -4,6 +4,7 @@ import { EpistemicTransitionTrigger, Context } from '../epistemic/types';
 import { Evidence } from '../evidence/types';
 import { Experience, MetabolismStatus, NoveltyClassification, InformationCategory } from '../../metabolism/types';
 import { computeDeterministicHash } from '../computation/canonical';
+import { extractSemanticProfile } from '../representation/semantic';
 
 export interface CognitiveDevelopmentResult {
   conceptsStrengthened: string[];
@@ -116,19 +117,45 @@ export class CognitiveDevelopmentEngine {
           const obsEntry = await this.localCell.memory.get(obsId);
           if (obsEntry && obsEntry.content) {
             const parsed = typeof obsEntry.content === 'string' ? JSON.parse(obsEntry.content) : obsEntry.content;
-            const subject = parsed?.observedSubject || parsed?.subject || parsed?.canonicalName || parsed?.name;
-            if (subject && typeof subject === 'string') {
-              let found = await this.localCell.cognitiveGraph.findConceptByName(subject);
+            const profile = extractSemanticProfile(parsed);
+            if (profile && Object.keys(profile.attributes).length > 0) {
+              let found = this.localCell.cognitiveGraph.getConcept(profile.conceptId);
               if (!found) {
-                found = await this.autonomouslyFormConcept(subject, experience, activeContext, activeEvidence, isNegative, isConflict);
+                found = await this.autonomouslyFormConcept(profile.conceptId, experience, activeContext, activeEvidence, isNegative, isConflict);
               }
               if (found && !targetConceptIds.includes(found.conceptId)) {
                 targetConceptIds.push(found.conceptId);
+              }
+            } else {
+              const subject = parsed?.observedSubject || parsed?.subject || parsed?.canonicalName || parsed?.name;
+              if (subject && typeof subject === 'string') {
+                let found = await this.localCell.cognitiveGraph.findConceptByName(subject);
+                if (!found) {
+                  found = await this.autonomouslyFormConcept(subject, experience, activeContext, activeEvidence, isNegative, isConflict);
+                }
+                if (found && !targetConceptIds.includes(found.conceptId)) {
+                  targetConceptIds.push(found.conceptId);
+                }
               }
             }
           }
         } catch {
           // safe fallback
+        }
+      }
+
+      // B. Look up from experience content semantic profile if still empty
+      if (targetConceptIds.length === 0) {
+        const expRaw = (experience as any).payload || (experience as any).content || experience;
+        const profile = extractSemanticProfile(expRaw);
+        if (profile && Object.keys(profile.attributes).length > 0) {
+          let found = this.localCell.cognitiveGraph.getConcept(profile.conceptId);
+          if (!found) {
+            found = await this.autonomouslyFormConcept(profile.conceptId, experience, activeContext, activeEvidence, isNegative, isConflict);
+          }
+          if (found && !targetConceptIds.includes(found.conceptId)) {
+            targetConceptIds.push(found.conceptId);
+          }
         }
       }
 
@@ -1192,16 +1219,29 @@ export class CognitiveDevelopmentEngine {
       } catch {}
     }
 
-    const canonicalName = obsContent?.observedSubject || obsContent?.canonicalName || obsContent?.name || obsContent?.subject || nameOrId;
-    const conceptId = nameOrId.startsWith('concept_')
-      ? nameOrId
-      : `concept_${computeDeterministicHash(canonicalName).substring(0, 16)}`;
+    const rawInput = obsContent || (experience as any).payload || (experience as any).content || experience;
+    const profile = extractSemanticProfile(rawInput);
+    const hasSemanticAttributes = profile && Object.keys(profile.attributes).length > 0;
 
-    const existing = this.localCell.cognitiveGraph.getConcept(conceptId) || await this.localCell.cognitiveGraph.findConceptByName(canonicalName);
+    let conceptId: string;
+    let canonicalName: string;
+
+    if (hasSemanticAttributes) {
+      conceptId = profile.conceptId;
+      canonicalName = profile.canonicalName;
+    } else {
+      canonicalName = obsContent?.observedSubject || obsContent?.canonicalName || obsContent?.name || obsContent?.subject || nameOrId;
+      conceptId = nameOrId.startsWith('concept_')
+        ? nameOrId
+        : `concept_${computeDeterministicHash(canonicalName).substring(0, 16)}`;
+    }
+
+    const existing = this.localCell.cognitiveGraph.getConcept(conceptId) ||
+      (!hasSemanticAttributes ? await this.localCell.cognitiveGraph.findConceptByName(canonicalName) : undefined);
     if (existing) return existing;
 
     const description = obsContent?.details || obsContent?.description || `Concept autonomously formed from experience ${experience.experienceId}`;
-    const category = experience.category || obsContent?.category || InformationCategory.OPERATING_SYSTEM;
+    const category = profile?.category || experience.category || obsContent?.category || InformationCategory.OPERATING_SYSTEM;
     const evidenceIds = activeEvidence.map(e => e.evidenceId);
 
     const provenance = Array.from(new Set([
@@ -1238,44 +1278,50 @@ export class CognitiveDevelopmentEngine {
       metadata: {
         ...(obsContent?.metadata || {}),
         autonomouslyFormed: true,
-        sourceObservationId: obsId
+        sourceObservationId: obsId,
+        semanticAttributes: profile?.attributes,
+        invariantAttributes: profile?.invariantAttributes
       }
     };
 
     const inserted = await this.localCell.cognitiveGraph.insertConcept(concept);
 
-    // Also check if observation specifies parent / generalization relationship
-    const parentName = obsContent?.parent || obsContent?.instanceOf || obsContent?.generalPolicy || obsContent?.policy ||
-      obsContent?.content?.parent || obsContent?.content?.instanceOf || obsContent?.content?.generalPolicy || obsContent?.content?.policy;
-    if (parentName && typeof parentName === 'string') {
-      let parentConcept = await this.localCell.cognitiveGraph.findConceptByName(parentName);
-      if (!parentConcept && parentName.startsWith('concept_')) {
-        parentConcept = this.localCell.cognitiveGraph.getConcept(parentName);
+    // Autonomous Abstraction & Hierarchical Relation Discovery
+    // Infer abstract parent from invariant operational features, NOT from caller parent/taxonomy fields
+    if (
+      hasSemanticAttributes &&
+      profile.invariantAttributes &&
+      Object.keys(profile.invariantAttributes).length > 0 &&
+      profile.abstractConceptId !== concept.conceptId
+    ) {
+      let parentConcept = this.localCell.cognitiveGraph.getConcept(profile.abstractConceptId);
+      if (!parentConcept) {
+        parentConcept = await this.localCell.cognitiveGraph.findConceptByName(profile.abstractCanonicalName);
       }
       if (!parentConcept) {
-        const parentConceptId = parentName.startsWith('concept_')
-          ? parentName
-          : `concept_${computeDeterministicHash(parentName).substring(0, 16)}`;
         parentConcept = await this.localCell.cognitiveGraph.insertConcept({
-          conceptId: parentConceptId,
-          canonicalName: parentName,
-          description: `General policy/abstraction autonomously formed for ${parentName}`,
-          category,
+          conceptId: profile.abstractConceptId,
+          canonicalName: profile.abstractCanonicalName,
+          description: `Autonomous structural abstraction representing invariant ${JSON.stringify(profile.invariantAttributes)}`,
+          category: profile.category || category,
           sourceKnowledgeIds: [...knowledgeIds],
           sourceExperienceIds: [experience.experienceId],
           evidenceIds: [...evidenceIds],
-          confidence: 0.85,
+          confidence: 0.88,
           provenance: [this.localCell.nodeId, obsSource, experience.experienceId, ...(obsId ? [obsId] : [])],
           verificationStatus: RepresentationVerificationStatus.SUPPORTED,
           createdAt: nowIso,
           updatedAt: nowIso,
           version: 1,
           originatingCellId: this.localCell.nodeId,
-          metadata: { autonomouslyFormed: true }
+          metadata: {
+            autonomouslyInferred: true,
+            abstractInvariantAttributes: profile.invariantAttributes
+          }
         });
       }
 
-      // Create INSTANCE_OF relation
+      // Establish evidence-grounded INSTANCE_OF relation
       const relId = `rel_${computeDeterministicHash(`${concept.conceptId}:INSTANCE_OF:${parentConcept.conceptId}`).substring(0, 16)}`;
       const existingRel = this.localCell.cognitiveGraph.getRelation(relId);
       if (!existingRel) {
@@ -1285,11 +1331,15 @@ export class CognitiveDevelopmentEngine {
           predicate: CognitiveRelationPredicate.INSTANCE_OF,
           objectConceptId: parentConcept.conceptId,
           confidence: 0.90,
-          provenance: [this.localCell.nodeId, obsSource, experience.experienceId, concept.conceptId, ...(obsId ? [obsId] : [])],
+          evidenceIds: [...evidenceIds],
+          provenance: [this.localCell.nodeId, obsSource, experience.experienceId, concept.conceptId, parentConcept.conceptId, ...(obsId ? [obsId] : [])],
           verificationStatus: RepresentationVerificationStatus.SUPPORTED,
           createdAt: nowIso,
           originatingCellId: this.localCell.nodeId,
-          metadata: { autonomouslyFormed: true }
+          metadata: {
+            autonomouslyInferred: true,
+            basis: 'invariant_attribute_subsumption'
+          }
         });
       }
     }

@@ -70,8 +70,8 @@ export class NeuralLearningEngine {
     if (samples.some(sample => sample.target < 0 || sample.target > 1)) {
       throw new Error('Dataset labels must be between 0 and 1');
     }
-    const validationSize = Math.max(1, Math.floor(samples.length * 0.2));
-    const training = samples.slice(0, samples.length - validationSize);
+    const validationSize = samples.length <= 4 ? 1 : Math.max(1, Math.floor(samples.length * 0.2));
+    const training = samples.length <= 4 ? samples : samples.slice(0, samples.length - validationSize);
     const validation = samples.slice(samples.length - validationSize);
     return this.train(training, epochs, learningRate, validation);
   }

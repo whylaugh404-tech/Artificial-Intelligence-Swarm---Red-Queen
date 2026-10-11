@@ -202,6 +202,9 @@ export class ExchangeManager extends EventEmitter {
             k.category === query.topic
           );
         }
+        if (query.category) {
+          matched = matched.filter(k => k.category === query.category);
+        }
         if (query.targetKnowledgeId) {
           matched = matched.filter(k => k.knowledgeId === query.targetKnowledgeId);
         }

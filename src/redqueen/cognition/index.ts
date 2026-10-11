@@ -15,3 +15,8 @@ export * from './types';
 export * from './activation';
 export * from './chaos';
 export * from './experience';
+export * from './hdc';
+export * from './tokenizer';
+export * from './neuro_symbolic_engine';
+export * from './knowledge_distillation';
+export * from './wiki_pipeline';

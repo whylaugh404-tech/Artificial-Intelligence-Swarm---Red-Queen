@@ -6,6 +6,7 @@ import { CognitiveReasoningPanel } from './components/CognitiveReasoningPanel';
 import { CognitiveGraphPanel } from './components/CognitiveGraphPanel';
 import { MetabolismHub } from './components/MetabolismHub';
 import { GenomeLineagePanel } from './components/GenomeLineagePanel';
+import { NeuroSymbolicPanel } from './components/NeuroSymbolicPanel';
 import {
   Database,
   GitBranch,
@@ -16,11 +17,13 @@ import {
   MessageSquare,
   LayoutDashboard,
   Shield,
-  Zap
+  Zap,
+  Cpu
 } from 'lucide-react';
 
 type NavigationTab =
   | 'overview'
+  | 'neuro-symbolic'
   | 'reasoning'
   | 'graph'
   | 'metabolism'
@@ -108,6 +111,12 @@ export default function App() {
         {/* Global Navigation Tabs (Clean segmented control) */}
         <nav className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar p-1.5 bg-neutral-900/50 border border-neutral-800/80 rounded-xl shrink-0">
           <NavTabItem
+            active={activeTab === 'neuro-symbolic'}
+            onClick={() => setActiveTab('neuro-symbolic')}
+            icon={<Cpu className="w-4 h-4 text-rose-500" />}
+            label="Neuro-Symbolic (HDC & MoE)"
+          />
+          <NavTabItem
             active={activeTab === 'reasoning'}
             onClick={() => setActiveTab('reasoning')}
             icon={<GitBranch className="w-4 h-4 text-red-500" />}
@@ -153,6 +162,7 @@ export default function App() {
 
         {/* Main Stage Viewport */}
         <main className="flex-1 min-h-0 w-full">
+          {activeTab === 'neuro-symbolic' && <NeuroSymbolicPanel />}
           {activeTab === 'reasoning' && <CognitiveReasoningPanel />}
           {activeTab === 'graph' && <CognitiveGraphPanel />}
           {activeTab === 'metabolism' && <MetabolismHub />}

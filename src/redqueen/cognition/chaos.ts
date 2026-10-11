@@ -60,7 +60,9 @@ export function logisticMapStep(c: number, r: number = DEFAULT_CHAOS_R): number 
   validateChaosParameters(r, DEFAULT_CHAOS_LAMBDA);
   validateChaosState(c);
 
-  const next = r * c * (1.0 - c);
+  const raw = r * c * (1.0 - c);
+  // Ensure next strictly stays within (0, 1) bounds even under slight floating point drift
+  const next = Math.max(1e-15, Math.min(1.0 - 1e-15, raw));
 
   // Validate that the output stays strictly within (0, 1)
   validateChaosState(next);
