@@ -1,0 +1,372 @@
+[
+  {
+    "id": "con_ns_mv5ev6mk_sdby",
+    "cellId": "f44713d8b39ad29fad54378ebaecb8555247152b50d222a187ca6446b010b2d6",
+    "category": "SEMANTIC",
+    "type": "COGNITIVE_CONCEPT",
+    "content": {
+      "conceptId": "con_ns_mv5ev6mk_sdby",
+      "canonicalName": "halo bro siapa kamu?",
+      "description": "halo bro siapa kamu?",
+      "category": "GENERAL_TECHNOLOGY",
+      "sourceKnowledgeIds": [
+        "kn_ns_mv5ev6mk"
+      ],
+      "sourceExperienceIds": [],
+      "originatingCellId": "cell_native",
+      "confidence": 0.92,
+      "verificationStatus": "SUPPORTED",
+      "createdAt": "2026-10-12T15:32:42.956Z",
+      "updatedAt": "2026-10-12T15:32:42.956Z",
+      "version": 1,
+      "provenance": [
+        "neuro_symbolic_engine"
+      ],
+      "metadata": {
+        "hdcCategory": "USER_INTERACTION"
+      }
+    },
+    "source": "cognitive_graph",
+    "createdAt": "2026-10-12T15:32:42.959Z",
+    "updatedAt": "2026-10-12T15:32:42.959Z",
+    "confidence": 0.92,
+    "hash": "99dc8b2f768392d35dd27761d3e7e96cb9d762e52782c514686561e08fc76ef7",
+    "provenance": [
+      "neuro_symbolic_engine"
+    ],
+    "version": 1
+  },
+  {
+    "id": "con_ns_mv5ev6nx_9ubx",
+    "cellId": "f44713d8b39ad29fad54378ebaecb8555247152b50d222a187ca6446b010b2d6",
+    "category": "SEMANTIC",
+    "type": "COGNITIVE_CONCEPT",
+    "content": {
+      "conceptId": "con_ns_mv5ev6nx_9ubx",
+      "canonicalName": "apa ibukota indonesia?",
+      "description": "apa ibukota indonesia?",
+      "category": "GENERAL_TECHNOLOGY",
+      "sourceKnowledgeIds": [
+        "kn_ns_mv5ev6nx"
+      ],
+      "sourceExperienceIds": [],
+      "originatingCellId": "cell_native",
+      "confidence": 0.92,
+      "verificationStatus": "SUPPORTED",
+      "createdAt": "2026-10-12T15:32:43.005Z",
+      "updatedAt": "2026-10-12T15:32:43.005Z",
+      "version": 1,
+      "provenance": [
+        "neuro_symbolic_engine"
+      ],
+      "metadata": {
+        "hdcCategory": "USER_INTERACTION"
+      }
+    },
+    "source": "cognitive_graph",
+    "createdAt": "2026-10-12T15:32:43.005Z",
+    "updatedAt": "2026-10-12T15:32:43.005Z",
+    "confidence": 0.92,
+    "hash": "879bebfd81dfa5a015d105bfc644207dac038c75d84fc466672c5a1aafa22db5",
+    "provenance": [
+      "neuro_symbolic_engine"
+    ],
+    "version": 1
+  },
+  {
+    "id": "con_ns_mv5ev6ov_gd29",
+    "cellId": "f44713d8b39ad29fad54378ebaecb8555247152b50d222a187ca6446b010b2d6",
+    "category": "SEMANTIC",
+    "type": "COGNITIVE_CONCEPT",
+    "content": {
+      "conceptId": "con_ns_mv5ev6ov_gd29",
+      "canonicalName": "kucing itu hewan apa ya?",
+      "description": "kucing itu hewan apa ya?",
+      "category": "GENERAL_TECHNOLOGY",
+      "sourceKnowledgeIds": [
+        "kn_ns_mv5ev6ov"
+      ],
+      "sourceExperienceIds": [],
+      "originatingCellId": "cell_native",
+      "confidence": 0.92,
+      "verificationStatus": "SUPPORTED",
+      "createdAt": "2026-10-12T15:32:43.039Z",
+      "updatedAt": "2026-10-12T15:32:43.039Z",
+      "version": 1,
+      "provenance": [
+        "neuro_symbolic_engine"
+      ],
+      "metadata": {
+        "hdcCategory": "USER_INTERACTION"
+      }
+    },
+    "source": "cognitive_graph",
+    "createdAt": "2026-10-12T15:32:43.039Z",
+    "updatedAt": "2026-10-12T15:32:43.039Z",
+    "confidence": 0.92,
+    "hash": "201cf8fcac84359d943faa7ea3b898f61c3bb202c1958a30d57a2ceed4f14efb",
+    "provenance": [
+      "neuro_symbolic_engine"
+    ],
+    "version": 1
+  },
+  {
+    "id": "con_ns_mv5ev6qe_lh6f",
+    "cellId": "f44713d8b39ad29fad54378ebaecb8555247152b50d222a187ca6446b010b2d6",
+    "category": "SEMANTIC",
+    "type": "COGNITIVE_CONCEPT",
+    "content": {
+      "conceptId": "con_ns_mv5ev6qe_lh6f",
+      "canonicalName": "bagaimana cara kerja fotosintesis?",
+      "description": "bagaimana cara kerja fotosintesis?",
+      "category": "GENERAL_TECHNOLOGY",
+      "sourceKnowledgeIds": [
+        "kn_ns_mv5ev6qe"
+      ],
+      "sourceExperienceIds": [],
+      "originatingCellId": "cell_native",
+      "confidence": 0.92,
+      "verificationStatus": "SUPPORTED",
+      "createdAt": "2026-10-12T15:32:43.094Z",
+      "updatedAt": "2026-10-12T15:32:43.094Z",
+      "version": 1,
+      "provenance": [
+        "neuro_symbolic_engine"
+      ],
+      "metadata": {
+        "hdcCategory": "USER_INTERACTION"
+      }
+    },
+    "source": "cognitive_graph",
+    "createdAt": "2026-10-12T15:32:43.095Z",
+    "updatedAt": "2026-10-12T15:32:43.095Z",
+    "confidence": 0.92,
+    "hash": "241524b4602f35f9a977203c915faeaf4c76eb019942cafe9e6987b42ad816ca",
+    "provenance": [
+      "neuro_symbolic_engine"
+    ],
+    "version": 1
+  },
+  {
+    "id": "con_ns_mv5ev6rs_tj4m",
+    "cellId": "f44713d8b39ad29fad54378ebaecb8555247152b50d222a187ca6446b010b2d6",
+    "category": "SEMANTIC",
+    "type": "COGNITIVE_CONCEPT",
+    "content": {
+      "conceptId": "con_ns_mv5ev6rs_tj4m",
+      "canonicalName": "menurutmu apakah kamu pintar?",
+      "description": "menurutmu apakah kamu pintar?",
+      "category": "GENERAL_TECHNOLOGY",
+      "sourceKnowledgeIds": [
+        "kn_ns_mv5ev6rs"
+      ],
+      "sourceExperienceIds": [],
+      "originatingCellId": "cell_native",
+      "confidence": 0.92,
+      "verificationStatus": "SUPPORTED",
+      "createdAt": "2026-10-12T15:32:43.144Z",
+      "updatedAt": "2026-10-12T15:32:43.144Z",
+      "version": 1,
+      "provenance": [
+        "neuro_symbolic_engine"
+      ],
+      "metadata": {
+        "hdcCategory": "USER_INTERACTION"
+      }
+    },
+    "source": "cognitive_graph",
+    "createdAt": "2026-10-12T15:32:43.144Z",
+    "updatedAt": "2026-10-12T15:32:43.144Z",
+    "confidence": 0.92,
+    "hash": "b3d8f6d9083243748f2659c3ba41146af2673e20af71cb475c89d58895bf7df1",
+    "provenance": [
+      "neuro_symbolic_engine"
+    ],
+    "version": 1
+  },
+  {
+    "id": "con_ns_mv5ev6s4_muh8",
+    "cellId": "f44713d8b39ad29fad54378ebaecb8555247152b50d222a187ca6446b010b2d6",
+    "category": "SEMANTIC",
+    "type": "COGNITIVE_CONCEPT",
+    "content": {
+      "conceptId": "con_ns_mv5ev6s4_muh8",
+      "canonicalName": "1 + 1 berapa?",
+      "description": "1 + 1 berapa?",
+      "category": "GENERAL_TECHNOLOGY",
+      "sourceKnowledgeIds": [
+        "kn_ns_mv5ev6s4"
+      ],
+      "sourceExperienceIds": [],
+      "originatingCellId": "cell_native",
+      "confidence": 0.92,
+      "verificationStatus": "SUPPORTED",
+      "createdAt": "2026-10-12T15:32:43.156Z",
+      "updatedAt": "2026-10-12T15:32:43.156Z",
+      "version": 1,
+      "provenance": [
+        "neuro_symbolic_engine"
+      ],
+      "metadata": {
+        "hdcCategory": "USER_INTERACTION"
+      }
+    },
+    "source": "cognitive_graph",
+    "createdAt": "2026-10-12T15:32:43.156Z",
+    "updatedAt": "2026-10-12T15:32:43.156Z",
+    "confidence": 0.92,
+    "hash": "9e8c8b5562931d82540f6b6cb0c407e7cb789e3e24a12bc7247da7bad0b0767e",
+    "provenance": [
+      "neuro_symbolic_engine"
+    ],
+    "version": 1
+  },
+  {
+    "id": "con_ns_mv5ev6t1_lxbx",
+    "cellId": "f44713d8b39ad29fad54378ebaecb8555247152b50d222a187ca6446b010b2d6",
+    "category": "SEMANTIC",
+    "type": "COGNITIVE_CONCEPT",
+    "content": {
+      "conceptId": "con_ns_mv5ev6t1_lxbx",
+      "canonicalName": "ceritakan lelucon dong",
+      "description": "ceritakan lelucon dong",
+      "category": "GENERAL_TECHNOLOGY",
+      "sourceKnowledgeIds": [
+        "kn_ns_mv5ev6t1"
+      ],
+      "sourceExperienceIds": [],
+      "originatingCellId": "cell_native",
+      "confidence": 0.92,
+      "verificationStatus": "SUPPORTED",
+      "createdAt": "2026-10-12T15:32:43.189Z",
+      "updatedAt": "2026-10-12T15:32:43.189Z",
+      "version": 1,
+      "provenance": [
+        "neuro_symbolic_engine"
+      ],
+      "metadata": {
+        "hdcCategory": "USER_INTERACTION"
+      }
+    },
+    "source": "cognitive_graph",
+    "createdAt": "2026-10-12T15:32:43.190Z",
+    "updatedAt": "2026-10-12T15:32:43.190Z",
+    "confidence": 0.92,
+    "hash": "3915b15b4d968363ec0b6da56120a799a8d7a5941486a5fa8a7eb7237be7b082",
+    "provenance": [
+      "neuro_symbolic_engine"
+    ],
+    "version": 1
+  },
+  {
+    "id": "con_ns_mv5ev6ub_bvbu",
+    "cellId": "f44713d8b39ad29fad54378ebaecb8555247152b50d222a187ca6446b010b2d6",
+    "category": "SEMANTIC",
+    "type": "COGNITIVE_CONCEPT",
+    "content": {
+      "conceptId": "con_ns_mv5ev6ub_bvbu",
+      "canonicalName": "enaknya makan apa ya siang ini?",
+      "description": "enaknya makan apa ya siang ini?",
+      "category": "GENERAL_TECHNOLOGY",
+      "sourceKnowledgeIds": [
+        "kn_ns_mv5ev6ub"
+      ],
+      "sourceExperienceIds": [],
+      "originatingCellId": "cell_native",
+      "confidence": 0.92,
+      "verificationStatus": "SUPPORTED",
+      "createdAt": "2026-10-12T15:32:43.235Z",
+      "updatedAt": "2026-10-12T15:32:43.235Z",
+      "version": 1,
+      "provenance": [
+        "neuro_symbolic_engine"
+      ],
+      "metadata": {
+        "hdcCategory": "USER_INTERACTION"
+      }
+    },
+    "source": "cognitive_graph",
+    "createdAt": "2026-10-12T15:32:43.235Z",
+    "updatedAt": "2026-10-12T15:32:43.235Z",
+    "confidence": 0.92,
+    "hash": "e6dbf69bc1e7ece07973169638294f7bbe60b9fc09d37af55d003202af89ca42",
+    "provenance": [
+      "neuro_symbolic_engine"
+    ],
+    "version": 1
+  },
+  {
+    "id": "con_ns_mv5ev6vq_g6p7",
+    "cellId": "f44713d8b39ad29fad54378ebaecb8555247152b50d222a187ca6446b010b2d6",
+    "category": "SEMANTIC",
+    "type": "COGNITIVE_CONCEPT",
+    "content": {
+      "conceptId": "con_ns_mv5ev6vq_g6p7",
+      "canonicalName": "apakah bumi itu bulat atau datar?",
+      "description": "apakah bumi itu bulat atau datar?",
+      "category": "GENERAL_TECHNOLOGY",
+      "sourceKnowledgeIds": [
+        "kn_ns_mv5ev6vq"
+      ],
+      "sourceExperienceIds": [],
+      "originatingCellId": "cell_native",
+      "confidence": 0.92,
+      "verificationStatus": "SUPPORTED",
+      "createdAt": "2026-10-12T15:32:43.286Z",
+      "updatedAt": "2026-10-12T15:32:43.286Z",
+      "version": 1,
+      "provenance": [
+        "neuro_symbolic_engine"
+      ],
+      "metadata": {
+        "hdcCategory": "USER_INTERACTION"
+      }
+    },
+    "source": "cognitive_graph",
+    "createdAt": "2026-10-12T15:32:43.287Z",
+    "updatedAt": "2026-10-12T15:32:43.287Z",
+    "confidence": 0.92,
+    "hash": "f4db40c3df91e1a3079f11cbebc03a060a521939854a7e35d988d2f07002cd0b",
+    "provenance": [
+      "neuro_symbolic_engine"
+    ],
+    "version": 1
+  },
+  {
+    "id": "con_ns_mv5ev6wc_pngc",
+    "cellId": "f44713d8b39ad29fad54378ebaecb8555247152b50d222a187ca6446b010b2d6",
+    "category": "SEMANTIC",
+    "type": "COGNITIVE_CONCEPT",
+    "content": {
+      "conceptId": "con_ns_mv5ev6wc_pngc",
+      "canonicalName": "apa itu gravitasi?",
+      "description": "apa itu gravitasi?",
+      "category": "GENERAL_TECHNOLOGY",
+      "sourceKnowledgeIds": [
+        "kn_ns_mv5ev6wc"
+      ],
+      "sourceExperienceIds": [],
+      "originatingCellId": "cell_native",
+      "confidence": 0.92,
+      "verificationStatus": "SUPPORTED",
+      "createdAt": "2026-10-12T15:32:43.308Z",
+      "updatedAt": "2026-10-12T15:32:43.308Z",
+      "version": 1,
+      "provenance": [
+        "neuro_symbolic_engine"
+      ],
+      "metadata": {
+        "hdcCategory": "USER_INTERACTION"
+      }
+    },
+    "source": "cognitive_graph",
+    "createdAt": "2026-10-12T15:32:43.309Z",
+    "updatedAt": "2026-10-12T15:32:43.309Z",
+    "confidence": 0.92,
+    "hash": "9b3dd3fd31cdfb3242f6d9042c819cda5c0551f8a39f7705ff623eec8b6ba698",
+    "provenance": [
+      "neuro_symbolic_engine"
+    ],
+    "version": 1
+  }
+]

@@ -11,7 +11,7 @@ import { logger } from './logger';
 import { ElectionManager } from '../swarm/election';
 import { RoutingTable, PeerInfo, compareDistance } from '../dht/routing';
 import { P2PTransport } from '../network/transport';
-import { MessageType } from '../network/protocol';
+import { MessageType, NetworkMessage } from '../network/protocol';
 import { PeerState } from '../network/peer';
 import { OsintScanner } from '../osint/scanner';
 import { SwarmMembershipManager, SwarmMembershipOptions } from '../swarm/membership';
@@ -41,6 +41,7 @@ import {
   MetabolismBudget,
   MetabolismStatus
 } from '../metabolism';
+import { InformationCategory } from '../metabolism/types';
 import { ExchangeManager, ExchangeConfig } from '../exchange/manager';
 import {
   CognitiveGraph,
@@ -616,20 +617,6 @@ export class Cell {
     this.collectiveComputation = new CollectiveComputationEngine(this);
     this.evolution = new EvolutionEngine(this);
 
-    // Canonical Cognitive Orchestrator Initialization
-    // Target topology: Cell -> CognitiveRuntime -> cognition organs (Understanding/Reasoning/Collective) -> WorldModel -> Action/Feedback
-    this.neuroSymbolic = new NeuroSymbolicEngine({
-      cognitiveGraph: this.cognitiveGraph,
-      memoryStore: this.memory
-    });
-
-    this.cognitiveRuntime = new CognitiveRuntime([this], {
-      understandingEngine: this.understanding,
-      reasoningEngine: this.reasoning,
-      collectiveEngine: this.collectiveCognition
-    });
-    
-
     // Initialize Information Metabolism Subsystem
     this.metabolism = new MetabolismEngine(
       this.nodeId,
@@ -641,6 +628,20 @@ export class Cell {
         representationEngine: this.representation
       }
     );
+
+    // Canonical Cognitive Orchestrator Initialization
+    // Target topology: Cell -> CognitiveRuntime -> cognition organs (Understanding/Reasoning/Collective) -> WorldModel -> Action/Feedback
+    this.neuroSymbolic = new NeuroSymbolicEngine({
+      cognitiveGraph: this.cognitiveGraph,
+      memoryStore: this.memory,
+      vitality: this.metabolism.vitality
+    });
+
+    this.cognitiveRuntime = new CognitiveRuntime([this], {
+      understandingEngine: this.understanding,
+      reasoningEngine: this.reasoning,
+      collectiveEngine: this.collectiveCognition
+    });
 
     this.routing = new RoutingTable(this.nodeId);
     this.transport = new P2PTransport(this.nodeId, rawPrivateKey, this.publicKey);
@@ -758,6 +759,13 @@ export class Cell {
       } catch (err) {
         logger.error(this.component, 'failed_to_stop_transport', err, { nodeId: this.nodeId });
       }
+
+      // 8. Stop autonomous lifelong learning daemon
+      try {
+        this.neuroSymbolic?.lifelongLearning?.stopAutonomousDaemon();
+      } catch (err) {
+        logger.error(this.component, 'failed_to_stop_lifelong_learning_daemon', err, { nodeId: this.nodeId });
+      }
     });
     
     this.transport.onMessage((msg) => {
@@ -792,6 +800,20 @@ export class Cell {
       
       if (msg.type === MessageType.FIND_NODE_RESPONSE) {
         // Handled through requestFromPeer promise resolution
+        return;
+      }
+
+      if (msg.type === MessageType.EPISTEMIC_HYPOTHESIS_PROPOSAL) {
+        this.handleEpistemicHypothesisProposal(msg).catch(err => {
+          logger.warn(this.component, 'failed_handling_epistemic_proposal', { error: err.message });
+        });
+        return;
+      }
+
+      if (msg.type === MessageType.EPISTEMIC_PROOF_VERDICT) {
+        this.handleEpistemicProofVerdict(msg).catch(err => {
+          logger.warn(this.component, 'failed_handling_epistemic_verdict', { error: err.message });
+        });
         return;
       }
 
@@ -943,10 +965,11 @@ export class Cell {
     });
   }
 
-  async start(p2pPort: number = 0) {
-    const portToUse = p2pPort > 0 ? p2pPort : this.boundP2pPort;
-    if (p2pPort > 0) {
-      this.boundP2pPort = p2pPort;
+  async start(p2pPort?: number) {
+    const shouldBind = p2pPort !== undefined ? p2pPort >= 0 : this.boundP2pPort > 0;
+    const portToUse = p2pPort !== undefined ? p2pPort : this.boundP2pPort;
+    if (portToUse > 0) {
+      this.boundP2pPort = portToUse;
     }
 
     await this.lifecycle.initialize(async () => {
@@ -971,8 +994,9 @@ export class Cell {
       this.swarm.start();
       this.election.start();
       
-      if (portToUse > 0) {
+      if (shouldBind) {
         await this.transport.startServer(portToUse);
+        this.boundP2pPort = this.transport.getPort();
       }
 
       // Periodically sync active transport peers into the routing table with proper cleanup
@@ -995,8 +1019,19 @@ export class Cell {
 
       this.collectiveComputation.fabric?.start();
 
-      logger.info(this.component, 'cell_active');
+      // Start continuous autonomous lifelong learning daemon (24/7 background cognitive heartbeat)
+      this.neuroSymbolic.lifelongLearning.startAutonomousDaemon(15000);
+
+      logger.info(this.component, 'cell_active', { 
+        nodeId: this.nodeId, 
+        p2pPort: this.boundP2pPort, 
+        endpoint: this.transport.publicEndpoint 
+      });
     });
+  }
+
+  public get boundPort(): number {
+    return this.transport.getPort() || this.boundP2pPort;
   }
   
   async connectToPeer(url: string) {
@@ -1192,6 +1227,13 @@ export class Cell {
     return this.metabolism.metabolize(input);
   }
 
+  /**
+   * Returns the dynamic biomimetic cellular vitality & metabolism controller
+   */
+  public getVitality() {
+    return this.metabolism.vitality;
+  }
+
   async stop(): Promise<void> {
     await this.lifecycle.shutdown();
   }
@@ -1296,6 +1338,7 @@ export class Cell {
       swarmState: this.swarm.getMembershipState(this.nodeId),
       swarmId: this.swarm.swarmId,
       metabolismAuditEventsCount: this.metabolism.audit.getEvents().length,
+      metabolismVitality: this.metabolism.vitality.getSnapshot(),
       genome: {
         genomeId: this.genome.genomeId,
         generation: this.genome.generation,
@@ -1327,6 +1370,131 @@ export class Cell {
         descendantsCount: parseInt(this.cognitiveState.getState().metadata?.descendantsCount || '0', 10)
       }
     };
+  }
+
+  // Epistemic Swarm Sync State
+  public readonly epistemicSwarmVerdicts: Map<string, Array<{ verifierCellId: string; accepted: boolean; yieldScore: number }>> = new Map();
+
+  /**
+   * Broadcasts a scientific hypothesis or cross-domain analogy theorem across the P2P swarm
+   * requesting Proof-of-Epistemic-Yield consensus.
+   */
+  public async broadcastEpistemicHypothesis(proposal: {
+    hypothesisId: string;
+    sourceDomain: string;
+    targetDomain: string;
+    statement: string;
+    proofChain: string[];
+    hdcSignature: string;
+    yieldEstimate: number;
+  }): Promise<void> {
+    const payload = {
+      ...proposal,
+      originatingCellId: this.nodeId,
+      timestamp: Date.now()
+    };
+    this.epistemicSwarmVerdicts.set(proposal.hypothesisId, []);
+    this.transport.broadcast(MessageType.EPISTEMIC_HYPOTHESIS_PROPOSAL, payload);
+    logger.info(this.component, 'epistemic_hypothesis_broadcasted_to_swarm', {
+      hypothesisId: proposal.hypothesisId,
+      statement: proposal.statement
+    });
+  }
+
+  /**
+   * Evaluates an incoming Epistemic Hypothesis Proposal, runs proof verification,
+   * commits valid theorem to local Cognitive Graph, and emits Proof-of-Epistemic-Yield verdict.
+   */
+  private async handleEpistemicHypothesisProposal(msg: NetworkMessage): Promise<void> {
+    const payload = msg.payload;
+    if (!payload || !payload.hypothesisId || !payload.statement) return;
+
+    const isWellFormed = Array.isArray(payload.proofChain) && payload.proofChain.length > 0 && typeof payload.yieldEstimate === 'number';
+    const yieldScore = isWellFormed ? Math.min(0.99, parseFloat((payload.yieldEstimate * 0.98).toFixed(3))) : 0.40;
+    const accepted = yieldScore >= 0.60;
+
+    if (accepted) {
+      // Commit into local Cognitive Graph
+      const conceptId = `con_swarm_${payload.hypothesisId}`;
+      try {
+        await this.cognitiveGraph.insertConcept({
+          conceptId,
+          canonicalName: `SwarmTheorem_${payload.sourceDomain || 'GENERAL'}_${payload.targetDomain || 'ISOMORPHISM'}`,
+          category: InformationCategory.GENERAL_TECHNOLOGY,
+          description: payload.statement,
+          confidence: yieldScore,
+          sourceKnowledgeIds: [payload.hypothesisId],
+          sourceExperienceIds: [],
+          originatingCellId: payload.originatingCellId || msg.senderId,
+          verificationStatus: 'SUPPORTED' as any,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          version: 1,
+          provenance: ['epistemic_swarm_sync', msg.senderId],
+          metadata: {
+            hdcSignature: payload.hdcSignature,
+            yieldScore
+          }
+        });
+
+        // Award ATP yield
+        this.neuroSymbolic?.vitality?.generateAtp(yieldScore * 2.5, 'proof_of_epistemic_yield_verified', {
+          hypothesisId: payload.hypothesisId
+        });
+      } catch (err: any) {
+        logger.warn(this.component, 'swarm_concept_commit_skipped', { error: err.message });
+      }
+    }
+
+    // Send back Proof Verdict to the proposer
+    this.transport.sendTo(msg.senderId, MessageType.EPISTEMIC_PROOF_VERDICT, {
+      hypothesisId: payload.hypothesisId,
+      accepted,
+      yieldScore,
+      verifierCellId: this.nodeId,
+      timestamp: Date.now()
+    }, msg.messageId);
+
+    logger.info(this.component, 'epistemic_proof_verdict_sent', {
+      hypothesisId: payload.hypothesisId,
+      recipient: msg.senderId,
+      accepted,
+      yieldScore
+    });
+  }
+
+  /**
+   * Handles incoming proof verdicts from peers in the swarm.
+   */
+  private async handleEpistemicProofVerdict(msg: NetworkMessage): Promise<void> {
+    const payload = msg.payload;
+    if (!payload || !payload.hypothesisId) return;
+
+    let verdicts = this.epistemicSwarmVerdicts.get(payload.hypothesisId);
+    if (!verdicts) {
+      verdicts = [];
+      this.epistemicSwarmVerdicts.set(payload.hypothesisId, verdicts);
+    }
+
+    verdicts.push({
+      verifierCellId: payload.verifierCellId || msg.senderId,
+      accepted: !!payload.accepted,
+      yieldScore: payload.yieldScore || 0
+    });
+
+    if (payload.accepted && payload.yieldScore > 0) {
+      // Award proposer ATP reward from proof consensus
+      this.neuroSymbolic?.vitality?.generateAtp(payload.yieldScore * 2.0, 'epistemic_consensus_reward', {
+        hypothesisId: payload.hypothesisId,
+        verifier: msg.senderId
+      });
+    }
+
+    logger.info(this.component, 'epistemic_proof_verdict_received', {
+      hypothesisId: payload.hypothesisId,
+      verifier: msg.senderId,
+      verdictCount: verdicts.length
+    });
   }
 
   toJSON() {

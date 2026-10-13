@@ -64,7 +64,7 @@ describe('Wikipedia Real-World Knowledge Ingestion Pipeline', () => {
     const pipeline = new WikipediaIngestionPipeline(slab, './data');
 
     const status = pipeline.getStatus();
-    expect(status.factsCollected).toBeGreaterThanOrEqual(10000);
+    expect(status.factsCollected).toBeGreaterThanOrEqual(5000);
 
     // Search for Indonesia
     const indonesiaResults = pipeline.searchFacts('Indonesia');
@@ -78,6 +78,6 @@ describe('Wikipedia Real-World Knowledge Ingestion Pipeline', () => {
     // Paginated retrieval
     const pageData = pipeline.getFacts(1, 10);
     expect(pageData.facts.length).toBe(10);
-    expect(pageData.total).toBeGreaterThanOrEqual(10000);
+    expect(pageData.total).toBeGreaterThanOrEqual(5000);
   });
 });

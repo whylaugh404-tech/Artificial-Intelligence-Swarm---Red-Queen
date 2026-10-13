@@ -11,10 +11,7 @@ interface ChatMessage {
 }
 
 const MODELS = [
-  { id: 'red-queen-native', name: 'Red Queen Neuro-Symbolic (Edge Local, Active)' },
-  { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Cloud LLM)' },
-  { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Cloud LLM)' },
-  { id: 'meta-llama/llama-3.1-8b-instruct', name: 'Llama 3.1 8B (OpenRouter)' },
+  { id: 'red-queen-native', name: 'Red Queen Sovereign (100% Local Edge, Zero Cloud)' },
 ];
 
 export function ChatInterface() {
@@ -97,12 +94,12 @@ export function ChatInterface() {
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-bold text-neutral-200">Red Queen Terminal</h2>
-              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-red-950 text-red-400 border border-red-900/60">
-                {selectedModel === 'red-queen-native' ? 'NEURO-SYMBOLIC EDGE' : 'CLOUD API'}
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-950 text-emerald-400 border border-emerald-900/60">
+                SOVEREIGN EDGE • 100% LOCAL
               </span>
             </div>
             <p className="text-[10px] text-neutral-500 font-mono tracking-widest">
-              AUTONOMOUS COGNITION LINK
+              AUTONOMOUS SOVEREIGN COGNITION • ZERO EXTERNAL CLOUD
             </p>
           </div>
         </div>

@@ -28,6 +28,18 @@ export class P2PTransport {
     private readonly publicKey: string
   ) {}
 
+  private boundPort: number = 0;
+
+  getPort(): number {
+    if (this.wss) {
+      const addr = this.wss.address();
+      if (typeof addr === 'object' && addr !== null) {
+        return addr.port;
+      }
+    }
+    return this.boundPort;
+  }
+
   setEndpoint(url: string) {
     const val = validateEndpoint(url);
     if (!val.valid) {
@@ -51,7 +63,13 @@ export class P2PTransport {
         });
 
         this.wss.on('listening', () => {
-          logger.info(this.component, 'server_listening', { port });
+          const addr = this.wss?.address();
+          const actualPort = (typeof addr === 'object' && addr !== null) ? addr.port : port;
+          this.boundPort = actualPort;
+          if (!this.publicEndpoint) {
+            this.publicEndpoint = `ws://127.0.0.1:${actualPort}`;
+          }
+          logger.info(this.component, 'server_listening', { port: actualPort, endpoint: this.publicEndpoint });
           resolve();
         });
 
@@ -382,6 +400,7 @@ export class P2PTransport {
       }
       this.wss = null;
     }
+    this.boundPort = 0;
 
     // Clean up temporary request listeners without wiping permanent subsystem listeners
     for (const listener of this.pendingRequestListeners) {

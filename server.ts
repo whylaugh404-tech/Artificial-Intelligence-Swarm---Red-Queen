@@ -76,33 +76,48 @@ async function startServer() {
     return next();
   });
 
-  // Instantiate the RedQueen Cell
-  const apiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || '';
-  if (!apiKey) {
-    logger.warn('server', 'no_api_key_set', {
-      message: 'Neither OPENROUTER_API_KEY nor GEMINI_API_KEY is configured. AI chat will return helpful configuration notices.'
-    });
-  } else {
-    logger.info('server', 'api_key_configured', {
-      provider: process.env.GEMINI_API_KEY ? 'gemini' : 'openrouter'
-    });
-  }
+  // Instantiate sovereign RedQueen Cell (100% Edge Local, Zero External Cloud/LLM Dependency)
+  logger.info('server', 'sovereign_mode_active', {
+    engine: 'Red Queen Neuro-Symbolic Cognitive Architecture',
+    cloudDependency: 'NONE (100% Local Sovereign Edge)'
+  });
   
   const dataDir = path.join(process.cwd(), 'data');
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
 
-  const cell = new Cell('./data/memory.json', apiKey, undefined, undefined, undefined, { storageSecret });
+  const cell = new Cell('./data/memory.json', '', undefined, undefined, undefined, { storageSecret });
   
-  const p2pPort = parseInt(process.env.P2P_PORT || '0', 10);
+  const p2pPort = parseInt(process.env.P2P_PORT || '3001', 10);
   if (p2pPort > 0) {
-    logger.info('server', 'p2p_enabled', { port: p2pPort });
-  } else {
-    logger.info('server', 'P2P: DISABLED');
+    try {
+      cell.transport.setEndpoint(`ws://127.0.0.1:${p2pPort}`);
+    } catch {
+      // safe fallback if already set
+    }
   }
 
-  await cell.start(p2pPort);
+  try {
+    await cell.start(p2pPort);
+    logger.info('server', 'p2p_active', { 
+      port: cell.transport.getPort(), 
+      endpoint: cell.transport.publicEndpoint 
+    });
+  } catch (err: any) {
+    if (err?.code === 'EADDRINUSE') {
+      logger.warn('server', 'p2p_port_collision_fallback', { requestedPort: p2pPort, error: err.message });
+      await cell.start(0);
+      logger.info('server', 'p2p_active_ephemeral', { 
+        port: cell.transport.getPort(), 
+        endpoint: cell.transport.publicEndpoint 
+      });
+    } else {
+      throw err;
+    }
+  }
+
+  logger.info('server', 'autonomous_lifelong_learning_daemon_active', { intervalMs: 15000 });
 
   // Optional multi-process swarm bootstrap. A node can advertise a comma-separated
   // list of ws:// or wss:// peer endpoints through P2P_PEERS. Connections are
@@ -315,6 +330,9 @@ async function startServer() {
     try {
       const result = await cell.metabolize(req.body);
       const statusCode = result.status === 'ACCEPTED' ? 200 : (result.status === 'INVALID' ? 400 : 202);
+      if (result.status === 'ACCEPTED' && req.body.content) {
+        cell.neuroSymbolic.learnConcept(req.body.content, req.body.category || 'TRAINED_KNOWLEDGE');
+      }
       res.status(statusCode).json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -374,6 +392,46 @@ async function startServer() {
     try {
       const limit = parseInt(req.query.limit as string || '100', 10);
       res.json({ events: cell.metabolism.audit.getEvents(limit) });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/cell/metabolism/vitality', (req, res) => {
+    try {
+      res.json({
+        vitality: cell.metabolism.vitality.getSnapshot(),
+        telemetry: cell.metabolism.vitality.getTelemetry(),
+        recentSurvivalEvents: cell.metabolism.vitality.getSurvivalEvents(50)
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/cell/metabolism/survival', (req, res) => {
+    try {
+      const { action, atpAmount, pruneLowConfidence } = req.body;
+      if (action === 'CONSUME') {
+        const spent = cell.metabolism.vitality.consumeAtp(atpAmount || 10, 'MANUAL_STRESS_TEST');
+        return res.json({ success: true, action: 'CONSUME', spent, vitality: cell.metabolism.vitality.getSnapshot() });
+      }
+      if (action === 'FEED') {
+        const generated = cell.metabolism.vitality.generateAtp(atpAmount || 20, 'MANUAL_NUTRIENT_INJECTION');
+        return res.json({ success: true, action: 'FEED', generated, vitality: cell.metabolism.vitality.getSnapshot() });
+      }
+      if (action === 'CLEAR_WASTE') {
+        const cleared = cell.metabolism.vitality.glymphaticClearance(0.9);
+        return res.json({ success: true, action: 'CLEAR_WASTE', clearedWaste: cleared, vitality: cell.metabolism.vitality.getSnapshot() });
+      }
+      if (action === 'RESTRUCTURE') {
+        const resRestruct = cell.metabolism.vitality.restructureReasoningPathways({
+          hypothesisPruner: pruneLowConfidence ? () => cell.neuroSymbolic.lifelongLearning.hypothesis.pruneSpeculativeHypotheses() : undefined
+        });
+        return res.json({ success: true, action: 'RESTRUCTURE', result: resRestruct, vitality: cell.metabolism.vitality.getSnapshot() });
+      }
+      const pressure = cell.metabolism.vitality.evaluateVitality();
+      res.json({ success: true, pressure, vitality: cell.metabolism.vitality.getSnapshot() });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -492,6 +550,9 @@ async function startServer() {
         timestamp: new Date().toISOString()
       });
 
+      // Synchronize observation into sovereign Neuro-Symbolic HDC memory
+      cell.neuroSymbolic.learnConcept(observation, 'OBSERVATION');
+
       const statusCode = result.status === 'SUCCESS' ? 200 : 422;
       res.status(statusCode).json({ status: result.status.toLowerCase(), result });
     } catch (err: any) {
@@ -501,50 +562,25 @@ async function startServer() {
 
   app.post('/api/chat', async (req, res) => {
     try {
-      const { message, model } = req.body;
-      if (!message) {
-        return res.status(400).json({ error: 'message required' });
-      }
-      
-      const isNative = !model || model === 'red-queen-native' || (!process.env.GEMINI_API_KEY && !process.env.OPENROUTER_API_KEY);
-      
-      if (isNative) {
-        logger.info('api', 'chat_request_native_neuro_symbolic', { messageLength: message.length });
-        const nativeResult = await cell.neuroSymbolic.processChat(message, { tonePreference: req.body?.tonePreference });
-        return res.json({
-          response: nativeResult.statement,
-          telemetry: nativeResult.telemetry,
-          confidence: nativeResult.confidence,
-          reasoningSteps: nativeResult.reasoningSteps,
-          fluidSynthesis: nativeResult.fluidSynthesis,
-          model: 'red-queen-native'
-        });
+      const { message } = req.body;
+      if (!message || typeof message !== 'string') {
+        return res.status(400).json({ error: 'message string required' });
       }
 
-      logger.info('api', 'chat_request_external', { model });
-      const aiResult = await cell.aiProvider.generate({
-        systemPrompt: 'You are Red Queen, an advanced, autonomous cyber-research AI. You analyze threats, manage distributed nodes, and speak with a precise, analytical, and slightly cold professional tone. Be concise and highly technical. Do not break character.',
-        userPrompt: message,
-        model: model || 'gemini-3.8-flash',
-      });
-      if (!aiResult.success) {
-        // Graceful fallback to native neuro-symbolic engine if external fails
-        logger.warn('api', 'external_llm_failed_falling_back_to_native', { error: aiResult.error });
-        const fallbackResult = await cell.neuroSymbolic.processChat(message, { tonePreference: req.body?.tonePreference });
-        return res.json({
-          response: fallbackResult.statement,
-          telemetry: fallbackResult.telemetry,
-          confidence: fallbackResult.confidence,
-          reasoningSteps: fallbackResult.reasoningSteps,
-          fluidSynthesis: fallbackResult.fluidSynthesis,
-          model: 'red-queen-native (fallback)'
-        });
-      }
+      logger.info('api', 'chat_request_sovereign_neuro_symbolic', { messageLength: message.length });
+      const nativeResult = await cell.neuroSymbolic.processChat(message, { tonePreference: req.body?.tonePreference });
 
-      // Run background HDC assimilation so cell retains episodic learning
+      // Continuously assimilate user interaction into local HDC associative memory
       cell.neuroSymbolic.learnConcept(message, 'USER_QUERY');
 
-      res.json({ response: aiResult.rawText, model });
+      return res.json({
+        response: nativeResult.statement,
+        telemetry: nativeResult.telemetry,
+        confidence: nativeResult.confidence,
+        reasoningSteps: nativeResult.reasoningSteps,
+        fluidSynthesis: nativeResult.fluidSynthesis,
+        model: 'red-queen-native-sovereign'
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -820,6 +856,70 @@ async function startServer() {
         cell.neuroSymbolic.lifelongLearning.startAutonomousDaemon(15000);
       }
       res.json(cell.neuroSymbolic.lifelongLearning.getTelemetry());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/lifelong/cycle/run', (req, res) => {
+    try {
+      const result = cell.neuroSymbolic.lifelongLearning.runLearningCycle();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/lifelong/telemetry', (req, res) => {
+    try {
+      res.json(cell.neuroSymbolic.lifelongLearning.getTelemetry());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/p2p/status', (req, res) => {
+    try {
+      const peers = cell.transport.getPeers();
+      const authenticatedPeers = peers.filter(p => p.getState() === 'AUTHENTICATED');
+      const actualPort = cell.transport.getPort();
+      res.json({
+        nodeId: cell.nodeId,
+        p2pPort: actualPort,
+        publicEndpoint: cell.transport.publicEndpoint || (actualPort > 0 ? `ws://127.0.0.1:${actualPort}` : null),
+        isListening: actualPort > 0,
+        totalPeers: peers.length,
+        authenticatedPeersCount: authenticatedPeers.length,
+        routingTableEntries: cell.routing.getTotalPeerCount()
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/p2p/peers', (req, res) => {
+    try {
+      const peers = cell.transport.getPeers().map(p => ({
+        remoteNodeId: p.remoteNodeId,
+        remoteEndpoint: p.remoteEndpoint,
+        state: p.getState(),
+        isInitiator: p.isInitiator,
+        lastSeen: p.lastSeen
+      }));
+      res.json({ peers, count: peers.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/p2p/connect', async (req, res) => {
+    try {
+      const { endpoint } = req.body;
+      if (!endpoint || typeof endpoint !== 'string') {
+        return res.status(400).json({ error: 'endpoint ws:// or wss:// URL required' });
+      }
+      await cell.connectToPeer(endpoint);
+      res.json({ success: true, connectedEndpoint: endpoint });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

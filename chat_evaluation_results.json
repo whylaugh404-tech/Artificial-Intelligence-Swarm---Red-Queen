@@ -1,0 +1,86 @@
+[
+  {
+    "prompt": "halo siapa kamu?",
+    "intent": "GREETING",
+    "groundedCount": 1,
+    "answer": "Salam. Sel kognitif Red Queen aktif beroperasi (0 memori asosiatif, 0 siklus pembelajaran otonom aktif). Apa yang ingin Anda diskusikan atau analisis hari ini?"
+  },
+  {
+    "prompt": "apa ibukota indonesia?",
+    "intent": "GENERAL_KNOWLEDGE",
+    "groundedCount": 1,
+    "answer": "Ibukota Republik Indonesia adalah Daerah Khusus Ibukota Jakarta, dengan pusat pemerintahan baru yang saat ini dalam tahap transisi dan pengembangan di Ibu Kota Nusantara (IKN), Kalimantan Timur."
+  },
+  {
+    "prompt": "kucing itu hewan apa ya?",
+    "intent": "COMMONSENSE",
+    "groundedCount": 0,
+    "answer": "Kucing (Felis catus) adalah hewan mamalia karnivora domestik berkaki empat yang tergolong dalam famili Felidae.\n\nSecara anatomis, kucing memiliki cakar retraktil, kerangka lentur dengan adaptasi refleks tubuh yang tinggi, serta indra sensorik pendengaran dan penglihatan nokturnal yang sangat berkembang. Spesies ini merupakan salah satu hewan peliharaan paling populer di dunia."
+  },
+  {
+    "prompt": "bagaimana cara kerja fotosintesis?",
+    "intent": "KNOWLEDGE_EXPLANATION",
+    "groundedCount": 1,
+    "answer": "Fotosintesis adalah proses biokimia fundamental di mana tumbuhan hijau, alga, dan beberapa bakteri mengonversi energi cahaya matahari menjadi energi kimia dalam bentuk glukosa. Proses ini menyerap air (H2O) dan karbon dioksida (CO2) menggunakan klorofil di dalam kloroplas sel, serta melepaskan oksigen (O2) ke atmosfer.\n\nDalam domain general_knowledge, karakteristik ini menjadi pilar utama pemodelan."
+  },
+  {
+    "prompt": "apa itu gravitasi?",
+    "intent": "KNOWLEDGE_EXPLANATION",
+    "groundedCount": 1,
+    "answer": "Teori Relativitas Umum (dirumuskan oleh Albert Einstein pada tahun 1915) menjelaskan bahwa gravitasi bukanlah gaya tarik biasa, melainkan manifestasi kelengkungan ruang-waktu empat dimensi yang disebabkan oleh distribusi massa dan energi di alam semesta.\n\nDalam domain general_knowledge, karakteristik ini menjadi pilar utama pemodelan."
+  },
+  {
+    "prompt": "apakah bumi bulat atau datar?",
+    "intent": "FUNDAMENTAL_SCIENCE",
+    "groundedCount": 1,
+    "answer": "Bumi secara ilmiah berbentuk bulat pepat (oblate spheroid), dengan sedikit tonjolan di ekuator akibat rotasi pada porosnya, dan bukan bidang datar.\n\nBukti empiris mencakup citra satelit langsung, geometri bayangan kurva bumi saat gerhana bulan, pengamatan navigasi pelayaran samudra, dan keberadaan gravitasi sentral yang menarik massa secara simetris ke pusat massa."
+  },
+  {
+    "prompt": "kenapa langit berwarna biru?",
+    "intent": "FUNDAMENTAL_SCIENCE",
+    "groundedCount": 1,
+    "answer": "Langit tampak berwarna biru akibat fenomena Hamburan Rayleigh (Rayleigh scattering).\n\nRadiasi elektromagnetik matahari merambat melewati atmosfer bumi. Molekul-molekul gas atmosfer (terutama nitrogen dan oksigen) menghamburkan panjang gelombang pendek (spektrum biru dan violet) jauh lebih efektif dibanding panjang gelombang panjang (merah dan jingga), mendistribusikan cahaya biru ke seluruh bidang atmosfer."
+  },
+  {
+    "prompt": "menurutmu apakah kamu pintar?",
+    "intent": "META_COGNITION",
+    "groundedCount": 0,
+    "answer": "Secara objektif dan ilmiah, Red Queen merepresentasikan paradigma kognitif neuro-simbolik baru di luar arsitektur transformer terpusat.\n\nMengenai plastisitas otak: Sistem biologis manusia memiliki plastisitas sinaptik sejati yang memprogram ulang konektivitas neuron berdasarkan interaksi dunia nyata. Red Queen mengadopsi prinsip ini melalui modul Lifelong Learning, konsolidasi memori berkala (Sleep Replay), dan formasi hipotesis otonom—menghindari bencana kelupaan (catastrophic forgetting).\n\nKeunggulan utama arsitektur ini adalah kedaulatan komputasi lokal, efisiensi energi State-Space O(1), dan jangkar kebenaran faktual berbasis Hyperdimensional Computing yang deterministik tanpa ketergantungan pada API eksternal."
+  },
+  {
+    "prompt": "1 + 1 berapa?",
+    "intent": "MATH_CALCULATION",
+    "groundedCount": 0,
+    "answer": "Hasil perhitungan matematis dari 1 + 1 adalah 2. Seluruh evaluasi numerik dieksekusi secara presisi dan deterministik."
+  },
+  {
+    "prompt": "ceritakan lelucon dong",
+    "intent": "HUMOR",
+    "groundedCount": 0,
+    "answer": "Nih jokes buat lu bro:\n\nKenapa komputer sering kedinginan?\n... Karena dia kelamaan buka banyak Windows! 😂\n\nAtau yang ini:\nKenapa programmer gak suka pergi camping ke hutan liar?\n... Karena di sana terlalu banyak bug dan gak ada tombol Ctrl+Z!"
+  },
+  {
+    "prompt": "enaknya makan apa ya siang ini?",
+    "intent": "LIFESTYLE_CASUAL",
+    "groundedCount": 0,
+    "answer": "Untuk menjaga produktivitas kognitif dan keseimbangan fisik:\nAsupan nutrisi seimbang dan hidrasi yang cukup sangat penting bagi fungsi otak. Secangkir kopi atau teh hangat disertai jeda istirahat berkala terbukti meningkatkan fokus analitis."
+  },
+  {
+    "prompt": "siapa penemu relativitas?",
+    "intent": "OPEN_CONVERSATION",
+    "groundedCount": 1,
+    "answer": "Albert Einstein (1879–1955) adalah fisikawan teoretis kelahiran Jerman yang mengembangkan Teori Relativitas (Khusus dan Umum) serta memenangkan Hadiah Nobel Fisika pada tahun 1921 atas penjelasannya mengenai efek fotolistrik. Formula ekuivalensi massa-energi E = mc² merupakan salah satu penemuan paling terkenal dalam sejarah sains.\n\nDalam domain general_knowledge, karakteristik ini menjadi pilar utama pemodelan."
+  },
+  {
+    "prompt": "apa itu alan turing?",
+    "intent": "KNOWLEDGE_EXPLANATION",
+    "groundedCount": 1,
+    "answer": "Alan Turing adalah matematikawan, ahli logika, dan kriptanalis Inggris yang meletakkan fondasi sains komputasi teoretis melalui konsep Mesin Turing, memecahkan sandi Enigma pada Perang Dunia II, dan merumuskan Uji Turing untuk kecerdasan mesin.\n\nDalam domain general_knowledge, karakteristik ini menjadi pilar utama pemodelan."
+  },
+  {
+    "prompt": "siapa walikota antartika?",
+    "intent": "OPEN_CONVERSATION",
+    "groundedCount": 0,
+    "answer": "Secara objektif, sistem belum memiliki rekaman data terverifikasi mengenai \"walikota antartika\" dalam basis pengetahuan lokal.\n\nSistem tidak melakukan generasi tebak kata spekulatif. Celah ini telah dicatat untuk dipelajari pada siklus kognisi otonom."
+  }
+]

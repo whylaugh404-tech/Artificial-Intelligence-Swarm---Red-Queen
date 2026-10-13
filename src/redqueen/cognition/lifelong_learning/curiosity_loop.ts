@@ -38,6 +38,8 @@ export interface CuriosityInvestigationResult {
 
 export class AutonomousCuriosityEngine {
   private knownGaps: Map<string, KnowledgeGap> = new Map();
+  private resolvedGapIds: Set<string> = new Set();
+  private scanPage: number = 1;
   private investigationHistory: CuriosityInvestigationResult[] = [];
   private totalCyclesRun: number = 0;
 
@@ -52,8 +54,10 @@ export class AutonomousCuriosityEngine {
   public scanForGaps(maxGaps: number = 5): KnowledgeGap[] {
     const gaps: KnowledgeGap[] = [];
 
-    // Analyze Wikipedia real facts for missing causal consequences
-    const wikiFacts = this.wikiPipeline ? (this.wikiPipeline.getFacts(1, 150)?.facts || []) : [];
+    // Analyze Wikipedia real facts across rotating pages to cover entire 10,000 corpus
+    const pageToScan = this.scanPage;
+    this.scanPage = (this.scanPage % 50) + 1;
+    const wikiFacts = this.wikiPipeline ? (this.wikiPipeline.getFacts(pageToScan, 150)?.facts || []) : [];
     
     // Group facts by subject to detect degree centrality
     const subjectDegree = new Map<string, any[]>();
@@ -68,7 +72,7 @@ export class AutonomousCuriosityEngine {
       if (facts.length === 1 && gaps.length < maxGaps) {
         const singleFact = facts[0];
         const gapId = `gap_island_${encodeURIComponent(subject.toLowerCase().replace(/\s+/g, '_'))}`;
-        if (!this.knownGaps.has(gapId)) {
+        if (!this.knownGaps.has(gapId) && !this.resolvedGapIds.has(gapId)) {
           const gap: KnowledgeGap = {
             gapId,
             targetEntity: subject,
@@ -197,7 +201,45 @@ export class AutonomousCuriosityEngine {
       this.investigationHistory.pop();
     }
 
+    // Mark as resolved and remove from active known gaps
+    this.resolvedGapIds.add(gap.gapId);
+    this.knownGaps.delete(gap.gapId);
+
     return result;
+  }
+
+  /**
+   * Registers an external knowledge gap observed during interaction or reasoning
+   */
+  public recordExternalGap(targetEntity: string, contextPrompt?: string): KnowledgeGap {
+    const cleanEntity = targetEntity.trim();
+    const gapId = `gap_obs_${encodeURIComponent(cleanEntity.toLowerCase().replace(/\s+/g, '_'))}`;
+    
+    if (this.knownGaps.has(gapId)) {
+      return this.knownGaps.get(gapId)!;
+    }
+
+    const gap: KnowledgeGap = {
+      gapId,
+      targetEntity: cleanEntity,
+      domain: 'UNRESOLVED_INQUIRY',
+      gapType: 'MISSING_LINK',
+      priority: 0.95,
+      description: `Entitas '${cleanEntity}' belum memiliki jangkar fakta terverifikasi di memori lokal.`,
+      formulatedInquiry: `Bagaimana struktur konseptual, relasi kausal, atau definisi ilmiah dari ${cleanEntity}?`,
+      suggestedKeywords: [cleanEntity],
+      detectedAt: new Date().toISOString()
+    };
+
+    this.knownGaps.set(gapId, gap);
+
+    // Bounded memory protection for known gaps
+    if (this.knownGaps.size > 80) {
+      const oldestKey = this.knownGaps.keys().next().value;
+      if (oldestKey) this.knownGaps.delete(oldestKey);
+    }
+
+    return gap;
   }
 
   public getActiveGaps(): KnowledgeGap[] {

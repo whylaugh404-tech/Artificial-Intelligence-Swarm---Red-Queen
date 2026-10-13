@@ -317,6 +317,99 @@ export class CognitiveGraph {
   }
 
   /**
+   * Removes a concept and all incident relations from graph and memory store.
+   */
+  public async removeConcept(conceptId: string): Promise<boolean> {
+    const c = this.concepts.get(conceptId);
+    if (!c) return false;
+    this.concepts.delete(conceptId);
+
+    // Clean outgoing relations
+    const outIds = this.outgoingRelations.get(conceptId);
+    if (outIds) {
+      for (const relId of outIds) {
+        this.relations.delete(relId);
+        await this.memory.delete(relId).catch(() => undefined);
+      }
+      this.outgoingRelations.delete(conceptId);
+    }
+
+    // Clean incoming relations
+    const inIds = this.incomingRelations.get(conceptId);
+    if (inIds) {
+      for (const relId of inIds) {
+        this.relations.delete(relId);
+        await this.memory.delete(relId).catch(() => undefined);
+      }
+      this.incomingRelations.delete(conceptId);
+    }
+
+    // Double check any relations mentioning this concept
+    for (const [relId, rel] of Array.from(this.relations.entries())) {
+      if (rel.subjectConceptId === conceptId || rel.objectConceptId === conceptId) {
+        this.relations.delete(relId);
+        await this.memory.delete(relId).catch(() => undefined);
+      }
+    }
+
+    await this.memory.delete(conceptId).catch(() => undefined);
+    logger.debug(this.component, 'concept_pruned_synapse_atrophy', {
+      cellId: this.cellId,
+      conceptId,
+      canonicalName: c.canonicalName
+    });
+    return true;
+  }
+
+  /**
+   * Synaptic Degradation: Atrophies and prunes low-confidence, contradicted, or stale concepts
+   * and relation synapses under cellular metabolic energy pressure to conserve ATP.
+   */
+  public async pruneAtrophiedSynapses(options?: {
+    confidenceThreshold?: number;
+    maxPruneCount?: number;
+  }): Promise<{ prunedConcepts: string[]; prunedRelations: string[]; energySaved: number }> {
+    const threshold = options?.confidenceThreshold ?? 0.35;
+    const maxPrune = options?.maxPruneCount ?? 20;
+
+    const prunedConcepts: string[] = [];
+    const prunedRelations: string[] = [];
+
+    // 1. Identify contradicted or low-confidence concepts
+    for (const [conceptId, concept] of Array.from(this.concepts.entries())) {
+      if (prunedConcepts.length >= maxPrune) break;
+      const isLowConfidence = concept.confidence <= threshold;
+      const isContradicted = concept.verificationStatus === ('CONTRADICTED' as any) || concept.verificationStatus === ('REJECTED' as any);
+      if (isLowConfidence || isContradicted) {
+        prunedConcepts.push(conceptId);
+        await this.removeConcept(conceptId);
+      }
+    }
+
+    // 2. Identify orphaned or low-confidence relations
+    for (const [relId, rel] of Array.from(this.relations.entries())) {
+      if (prunedRelations.length >= maxPrune) break;
+      if (rel.confidence <= threshold || !this.concepts.has(rel.subjectConceptId) || !this.concepts.has(rel.objectConceptId)) {
+        this.relations.delete(relId);
+        await this.memory.delete(relId).catch(() => undefined);
+        prunedRelations.push(relId);
+      }
+    }
+
+    // Energy saved: 0.5 ATP retention cost per pruned concept + 0.2 per relation
+    const energySaved = parseFloat((prunedConcepts.length * 0.5 + prunedRelations.length * 0.2).toFixed(3));
+
+    logger.info(this.component, 'synaptic_atrophy_pruning_completed', {
+      cellId: this.cellId,
+      prunedConceptsCount: prunedConcepts.length,
+      prunedRelationsCount: prunedRelations.length,
+      energySaved
+    });
+
+    return { prunedConcepts, prunedRelations, energySaved };
+  }
+
+  /**
    * Inserts an abstraction pattern into the cognitive graph.
    * Enforces self-abstraction rejection and structural validation.
    */
@@ -832,6 +925,81 @@ export class CognitiveGraph {
     const start = this.getConcept(startConceptId);
     const neighbors = this.getNeighbors(startConceptId, options);
     return start ? [start, ...neighbors] : neighbors;
+  }
+
+  /**
+   * Spreading Activation driven directly by the Linear SSM continuous hidden state vector.
+   * Couples temporal continuous recurrent dynamics (O(1) SSM) with symbolic graph topology.
+   */
+  public spreadActivationFromStateVector(
+    ssmState: Float32Array,
+    options?: {
+      decay?: number;
+      activationThreshold?: number;
+      maxHops?: number;
+      topK?: number;
+    }
+  ): Array<{ concept: CognitiveConcept; activationEnergy: number }> {
+    const decay = options?.decay ?? 0.72;
+    const threshold = options?.activationThreshold ?? 0.05;
+    const maxHops = options?.maxHops ?? 2;
+    const topK = options?.topK ?? 10;
+
+    if (!ssmState || ssmState.length === 0 || this.concepts.size === 0) {
+      return [];
+    }
+
+    const activationMap = new Map<string, number>();
+
+    for (const [conceptId, concept] of this.concepts.entries()) {
+      let dot = 0;
+      let normSq = 0;
+      const str = `${concept.canonicalName}:${concept.description || ''}`;
+      for (let i = 0; i < ssmState.length; i++) {
+        const charCode = str.charCodeAt(i % str.length) || 1;
+        const projVal = ((charCode * 31 + i * 17) % 100) / 50.0 - 1.0;
+        dot += ssmState[i] * projVal;
+        normSq += ssmState[i] * ssmState[i];
+      }
+      const ssmNorm = Math.sqrt(normSq) || 1;
+      const resonance = Math.max(0, dot / ssmNorm);
+      if (resonance >= threshold) {
+        activationMap.set(conceptId, resonance);
+      }
+    }
+
+    let currentFrontier = new Map(activationMap);
+    for (let hop = 0; hop < maxHops; hop++) {
+      const nextFrontier = new Map<string, number>();
+      for (const [srcId, energy] of currentFrontier.entries()) {
+        const outRels = this.outgoingRelations.get(srcId) || new Set<string>();
+        for (const relId of outRels) {
+          const rel = this.relations.get(relId);
+          if (!rel) continue;
+          const targetId = rel.objectConceptId;
+          const transmitted = energy * (rel.confidence || 0.8) * decay;
+          if (transmitted >= threshold) {
+            const currentTotal = (activationMap.get(targetId) || 0) + transmitted;
+            activationMap.set(targetId, currentTotal);
+            nextFrontier.set(targetId, Math.max(nextFrontier.get(targetId) || 0, transmitted));
+          }
+        }
+      }
+      currentFrontier = nextFrontier;
+      if (currentFrontier.size === 0) break;
+    }
+
+    const results: Array<{ concept: CognitiveConcept; activationEnergy: number }> = [];
+    for (const [conceptId, energy] of activationMap.entries()) {
+      const c = this.concepts.get(conceptId);
+      if (c && energy >= threshold) {
+        results.push({ concept: c, activationEnergy: parseFloat(energy.toFixed(4)) });
+      }
+    }
+
+    return results
+      .sort((a, b) => b.activationEnergy - a.activationEnergy)
+      .slice(0, topK);
   }
 
   /**
@@ -1771,7 +1939,7 @@ export class CognitiveGraph {
       version: 1
     };
 
-    await this.memory.put(memoryEntry);
+    if (this.memory) { await this.memory.put(memoryEntry); }
   }
 }
 

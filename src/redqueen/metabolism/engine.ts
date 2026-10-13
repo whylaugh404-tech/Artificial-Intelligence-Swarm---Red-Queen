@@ -20,6 +20,7 @@ import { CognitiveStateManager } from '../cognition/state';
 import { logger } from '../core/logger';
 import { v4 as uuidv4 } from 'uuid';
 import { CognitiveGraph, CognitiveRepresentationEngine } from '../cognition/representation';
+import { CellMetabolismController } from './cellular_vitality';
 
 export interface MetabolismEngineOptions {
   readonly budget?: Partial<MetabolismBudget>;
@@ -28,6 +29,7 @@ export interface MetabolismEngineOptions {
   readonly extractor?: KnowledgeExtractor;
   readonly graph?: CognitiveGraph;
   readonly representationEngine?: CognitiveRepresentationEngine;
+  readonly vitality?: CellMetabolismController;
 }
 
 export class MetabolismEngine {
@@ -40,6 +42,7 @@ export class MetabolismEngine {
   public readonly audit: MetabolismAuditTrail;
   public readonly graph?: CognitiveGraph;
   public readonly representationEngine?: CognitiveRepresentationEngine;
+  public readonly vitality: CellMetabolismController;
 
   constructor(
     public readonly cellId: string,
@@ -58,6 +61,7 @@ export class MetabolismEngine {
     this.audit = new MetabolismAuditTrail(this.cellId, this.budget);
     this.graph = options?.graph;
     this.representationEngine = options?.representationEngine;
+    this.vitality = options?.vitality || new CellMetabolismController(this.cellId, this.audit, this.memoryStore);
   }
 
   /**
@@ -110,6 +114,13 @@ export class MetabolismEngine {
 
     try {
       checkDeadline();
+
+      // Stage 3.5: Dynamic Metabolic ATP Expenditure
+      const atpCost = Math.max(0.1, Math.min(2.0, record.content.length / 1000));
+      this.vitality.consumeAtp(atpCost, 'INFORMATION_INGESTION_METABOLISM', {
+        informationId: record.informationId,
+        sourceType: record.sourceType
+      });
 
       // Stage 4: Early Exact Duplicate Check
       const earlyDupCheck = await this.deduplicator.evaluateNovelty(record, this.memoryStore);
@@ -344,6 +355,13 @@ export class MetabolismEngine {
           knowledge.knowledgeId
         );
         
+        // High-confidence knowledge synthesis yields metabolic ATP energy
+        const yieldAmount = parseFloat(Math.max(0.2, (quality.confidence * 1.5)).toFixed(2));
+        this.vitality.generateAtp(yieldAmount, 'KNOWLEDGE_SYNTHESIS_ATP_YIELD', {
+          knowledgeId: knowledge.knowledgeId,
+          confidence: quality.confidence
+        });
+
         checkDeadline();
 
         // Stage 11: Create Experience record

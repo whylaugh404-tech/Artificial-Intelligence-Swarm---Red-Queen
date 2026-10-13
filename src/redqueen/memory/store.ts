@@ -90,6 +90,8 @@ export class JsonFileMemoryStore implements MemoryStore {
   private memoryMap: Map<string, MemoryEntry> = new Map();
   private readonly component = 'memory_store';
   private readonly normalizedOwningCellId?: string;
+  private isInitialized = false;
+  private initPromise: Promise<void> | null = null;
 
   constructor(
     private readonly storagePath: string,
@@ -104,8 +106,19 @@ export class JsonFileMemoryStore implements MemoryStore {
     return this.owningCellId;
   }
 
+  private async ensureInitialized(): Promise<void> {
+    if (this.isInitialized || this.storagePath === ':memory:') {
+      return;
+    }
+    if (!this.initPromise) {
+      this.initPromise = this.initialize();
+    }
+    await this.initPromise;
+  }
+
   async initialize(): Promise<void> {
     if (this.storagePath === ':memory:') {
+      this.isInitialized = true;
       return;
     }
     try {
@@ -149,15 +162,18 @@ export class JsonFileMemoryStore implements MemoryStore {
           }
         }
         logger.info(this.component, 'memory_loaded', { count: this.memoryMap.size, cellId: this.owningCellId });
+        this.isInitialized = true;
       } catch (err: any) {
         if (err.code === 'ENOENT') {
           logger.info(this.component, 'memory_store_created', { path: this.storagePath });
+          this.isInitialized = true;
           await this.persist();
         } else {
           throw err;
         }
       }
     } catch (err) {
+      this.initPromise = null;
       logger.error(this.component, 'memory_init_failed', err);
       throw err;
     }
@@ -230,6 +246,7 @@ export class JsonFileMemoryStore implements MemoryStore {
   }
 
   async put(entry: MemoryEntry): Promise<void> {
+    await this.ensureInitialized();
     const validId = validateMemoryId(entry.id);
     entry.id = validId;
 
@@ -282,6 +299,7 @@ export class JsonFileMemoryStore implements MemoryStore {
   }
 
   async get(id: string): Promise<MemoryEntry | null> {
+    await this.ensureInitialized();
     const validId = validateMemoryId(id);
     const entry = this.memoryMap.get(validId);
     if (!entry) return null;
@@ -295,6 +313,7 @@ export class JsonFileMemoryStore implements MemoryStore {
   }
 
   async search(query: Partial<MemoryEntry>): Promise<MemoryEntry[]> {
+    await this.ensureInitialized();
     if (query.cellId) {
       const normalizedQueryCell = validateCellId(query.cellId);
       if (this.normalizedOwningCellId && normalizedQueryCell !== this.normalizedOwningCellId) {
@@ -331,6 +350,7 @@ export class JsonFileMemoryStore implements MemoryStore {
   }
 
   async delete(id: string): Promise<boolean> {
+    await this.ensureInitialized();
     const validId = validateMemoryId(id);
     const entry = this.memoryMap.get(validId);
     if (!entry) return false;

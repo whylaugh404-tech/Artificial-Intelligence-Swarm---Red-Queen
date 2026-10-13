@@ -7,3 +7,4 @@ export * from './extractor';
 export * from './deduplicator';
 export * from './audit';
 export * from './engine';
+export * from './cellular_vitality';

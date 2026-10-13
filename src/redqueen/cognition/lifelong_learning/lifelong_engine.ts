@@ -14,6 +14,7 @@ import { HypothesisVerificationEngine, CandidateHypothesis, EpistemicDiscovery }
 import { SleepPhaseConsolidator, SleepConsolidationReport } from './sleep_consolidator';
 import { KnowledgeDistillationEngine } from '../knowledge_distillation';
 import { WikipediaIngestionPipeline } from '../wiki_pipeline';
+import { CellMetabolismController } from '../../metabolism/cellular_vitality';
 
 export interface LifelongTelemetry {
   isDaemonActive: boolean;
@@ -29,6 +30,7 @@ export interface LifelongTelemetry {
     totalStaked: number;
     totalRewarded: number;
     netYield: number;
+    vitalityTelemetry?: any;
   };
   lastDiscovery?: EpistemicDiscovery;
   lastSleepReport?: SleepConsolidationReport;
@@ -39,6 +41,7 @@ export class LifelongLearningEngine {
   public readonly analogy: CrossDomainAnalogyEngine;
   public readonly hypothesis: HypothesisVerificationEngine;
   public readonly sleepConsolidator: SleepPhaseConsolidator;
+  public vitality?: CellMetabolismController;
 
   private isDaemonActive: boolean = false;
   private daemonTimer: NodeJS.Timeout | null = null;
@@ -46,8 +49,10 @@ export class LifelongLearningEngine {
 
   constructor(
     private readonly knowledgeBase?: KnowledgeDistillationEngine,
-    private readonly wikiPipeline?: WikipediaIngestionPipeline
+    private readonly wikiPipeline?: WikipediaIngestionPipeline,
+    vitality?: CellMetabolismController
   ) {
+    this.vitality = vitality;
     this.curiosity = new AutonomousCuriosityEngine(this.knowledgeBase, this.wikiPipeline);
     this.analogy = new CrossDomainAnalogyEngine();
     this.hypothesis = new HypothesisVerificationEngine(this.knowledgeBase, this.wikiPipeline);
@@ -55,6 +60,10 @@ export class LifelongLearningEngine {
 
     // Bootstrap initial discovery scans
     this.curiosity.scanForGaps(3);
+  }
+
+  public setVitality(vitality: CellMetabolismController): void {
+    this.vitality = vitality;
   }
 
   /**
@@ -66,18 +75,52 @@ export class LifelongLearningEngine {
   } {
     this.totalLifelongCyclesRun++;
 
+    // Consume Basal Metabolic Rate per learning cycle
+    this.vitality?.applyBasalMetabolism();
+
     // 1. Scan and investigate an existing knowledge gap
     const investigation = this.curiosity.investigateGap();
+    if (this.vitality) {
+      this.vitality.consumeAtp(investigation.atpConsumed || 1.0, 'CURIOSITY_INVESTIGATION', { target: investigation.targetEntity });
+    }
 
-    // 2. Formulate and verify an epistemic hypothesis with ATP staking
-    const candidate = this.hypothesis.generateHypothesis(investigation.deducedTriplet?.category || 'Cybersecurity', 10);
+    // 2. Formulate and verify an epistemic hypothesis with real ATP staking
+    const stakeAmount = 10;
+    const candidate = this.hypothesis.generateHypothesis(investigation.deducedTriplet?.category || 'Cybersecurity', stakeAmount);
+    if (this.vitality) {
+      this.vitality.consumeAtp(candidate.atpStake, 'HYPOTHESIS_STAKE', { hypothesisId: candidate.hypothesisId });
+    }
+
     const discovery = this.hypothesis.verifyHypothesis(candidate.hypothesisId);
+    if (discovery && this.vitality) {
+      this.vitality.generateAtp(discovery.atpYieldReward, 'HYPOTHESIS_DISCOVERY_YIELD', { discoveryId: discovery.discoveryId });
+    }
 
-    // 3. Record trace into sleep replay buffer
+    // 3. Autonomous Evolutionary Survival Pressure Check:
+    // If vitality drops into STARVATION or CRITICAL_APOPTOSIS_RISK, trigger pathway restructuring
+    if (this.vitality) {
+      const vState = this.vitality.getVitalityState();
+      if (vState === 'STARVATION' || vState === 'CRITICAL_APOPTOSIS_RISK') {
+        this.vitality.restructureReasoningPathways({
+          hypothesisPruner: () => this.hypothesis.pruneSpeculativeHypotheses()
+        });
+      }
+    }
+
+    // 4. Record trace into sleep replay buffer
     this.sleepConsolidator.recordExperience(
       `Autonomous Learning Cycle #${this.totalLifelongCyclesRun}: Target ${investigation.targetEntity} -> Status ${investigation.status}`,
       'INFERENCE'
     );
+
+    // 5. Periodically execute Slow-Wave Sleep Consolidation every 5 cycles
+    if (this.totalLifelongCyclesRun % 5 === 0) {
+      try {
+        this.triggerSleepConsolidation();
+      } catch (e) {
+        // Safe continuation
+      }
+    }
 
     return {
       investigation,
@@ -89,6 +132,9 @@ export class LifelongLearningEngine {
    * Synthesizes cross-domain analogy between two selected domains
    */
   public synthesizeAnalogy(sourceDomain?: string, targetDomain?: string): AnalogySynthesisResult {
+    if (this.vitality) {
+      this.vitality.consumeAtp(0.5, 'ANALOGY_SYNTHESIS', { sourceDomain, targetDomain });
+    }
     const res = this.analogy.synthesizeAnalogy(sourceDomain, targetDomain);
     this.sleepConsolidator.recordExperience(
       `Cross-Domain Analogy: ${res.sourceDomain} <-> ${res.targetDomain} with resonance ${(res.isomorphismScore * 100).toFixed(1)}%`,
@@ -104,15 +150,23 @@ export class LifelongLearningEngine {
     candidate: CandidateHypothesis;
     discovery: EpistemicDiscovery | null;
   } {
+    if (this.vitality) {
+      this.vitality.consumeAtp(atpStake, 'HYPOTHESIS_STAKE_MANUAL', { topic });
+    }
     const candidate = this.hypothesis.generateHypothesis(topic, atpStake);
     const discovery = this.hypothesis.verifyHypothesis(candidate.hypothesisId);
+    if (discovery && this.vitality) {
+      this.vitality.generateAtp(discovery.atpYieldReward, 'HYPOTHESIS_DISCOVERY_YIELD_MANUAL', { discoveryId: discovery.discoveryId });
+    }
     return { candidate, discovery };
   }
 
   /**
-   * Triggers biological Slow-Wave Sleep Memory Consolidation
+   * Triggers biological Slow-Wave Sleep Memory Consolidation and Glymphatic Clearance
    */
   public triggerSleepConsolidation(): SleepConsolidationReport {
+    // Flush toxic catabolic waste during sleep phase
+    this.vitality?.glymphaticClearance(0.85);
     return this.sleepConsolidator.executeSleepCycle();
   }
 
@@ -168,7 +222,8 @@ export class LifelongLearningEngine {
       atpStakeBalance: {
         totalStaked: hypStats.totalAtpStaked,
         totalRewarded: hypStats.totalAtpRewarded,
-        netYield: hypStats.netAtpYield
+        netYield: hypStats.netAtpYield,
+        vitalityTelemetry: this.vitality?.getTelemetry()
       },
       lastDiscovery: discoveries[0],
       lastSleepReport: lastSleep || undefined

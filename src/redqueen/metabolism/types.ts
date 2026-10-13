@@ -366,7 +366,61 @@ export enum MetabolismEventType {
   REPRESENTATION_EXTRACTED = 'REPRESENTATION_EXTRACTED',
   REPRESENTATION_STORED = 'REPRESENTATION_STORED',
   METABOLISM_FAILED = 'METABOLISM_FAILED',
-  METABOLISM_FAILED_ROLLED_BACK = 'METABOLISM_FAILED_ROLLED_BACK'
+  METABOLISM_FAILED_ROLLED_BACK = 'METABOLISM_FAILED_ROLLED_BACK',
+  ATP_CONSUMED = 'ATP_CONSUMED',
+  ATP_GENERATED = 'ATP_GENERATED',
+  CATABOLIC_WASTE_ACCUMULATED = 'CATABOLIC_WASTE_ACCUMULATED',
+  METABOLIC_PRESSURE_TRIGGERED = 'METABOLIC_PRESSURE_TRIGGERED',
+  PATHWAY_RESTRUCTURED = 'PATHWAY_RESTRUCTURED',
+  AUTOPHAGIC_PRUNING = 'AUTOPHAGIC_PRUNING',
+  GLYMPHATIC_CLEARANCE = 'GLYMPHATIC_CLEARANCE',
+  CELLULAR_DORMANCY_ENTERED = 'CELLULAR_DORMANCY_ENTERED',
+  SYNAPTIC_PRUNING = 'SYNAPTIC_PRUNING',
+  SYNAPTIC_RETENTION_DEGRADED = 'SYNAPTIC_RETENTION_DEGRADED',
+  CONTRADICTION_PENALTY = 'CONTRADICTION_PENALTY'
+}
+
+/**
+ * Biological Cell Vitality States for Evolutionary Survival Pressure
+ */
+export enum CellVitalityState {
+  OPTIMAL = 'OPTIMAL',
+  STRESSED = 'STRESSED',
+  STARVATION = 'STARVATION',
+  CRITICAL_APOPTOSIS_RISK = 'CRITICAL_APOPTOSIS_RISK'
+}
+
+export const CellVitalityStateSchema = z.nativeEnum(CellVitalityState);
+
+export type CognitiveReasoningMode = 'EXPLORATION_HEAVY' | 'BALANCED' | 'CONSERVATIVE_HEURISTIC' | 'EMERGENCY_MINIMAL';
+
+export interface CellVitalityTelemetry {
+  readonly cellId: string;
+  readonly atpPool: number;
+  readonly maxAtpPool: number;
+  readonly catabolicWaste: number;
+  readonly toxicityThreshold: number;
+  readonly basalMetabolicRate: number;
+  readonly vitalityState: CellVitalityState;
+  readonly totalAtpConsumed: number;
+  readonly totalAtpGenerated: number;
+  readonly survivalPressureEventsCount: number;
+  readonly pathwaysRestructuredCount: number;
+  readonly autophagicPruningCount: number;
+  readonly autophagicSalvagedAtp: number;
+  readonly activeReasoningMode: CognitiveReasoningMode;
+  readonly lastEvaluatedAt: string;
+}
+
+export interface RestructureReasoningReport {
+  readonly timestamp: string;
+  readonly priorVitalityState: CellVitalityState;
+  readonly resultingVitalityState: CellVitalityState;
+  readonly targetReasoningMode: CognitiveReasoningMode;
+  readonly hypothesesPrunedCount: number;
+  readonly catabolicWasteRecycled: number;
+  readonly salvagedAtp: number;
+  readonly actionsExecuted: readonly string[];
 }
 
 /**

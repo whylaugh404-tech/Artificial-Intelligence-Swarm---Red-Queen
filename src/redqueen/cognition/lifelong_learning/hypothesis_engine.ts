@@ -95,11 +95,43 @@ export class HypothesisVerificationEngine {
       f1 = { subject: 'Mitochondria Organelle', predicate: 'synthesizes', object: 'Adenosine Triphosphate', category: 'Cellular Metabolism', confidence: 0.99 };
       f2 = { subject: 'Adenosine Triphosphate', predicate: 'powers', object: 'Actin Myosin Cellular Motility', category: 'Biomechanics', confidence: 0.97 };
     } else if (availableWiki.length >= 2) {
-      const idx = Math.floor(Math.random() * (availableWiki.length - 1));
-      const w1 = availableWiki[idx];
-      const w2 = availableWiki[idx + 1];
-      f1 = { subject: w1.subject, predicate: w1.predicate, object: w1.object, category: w1.domain || 'Science', confidence: 0.95 };
-      f2 = { subject: w2.subject, predicate: w2.predicate, object: w2.object, category: w2.domain || 'Science', confidence: 0.95 };
+      // Search for genuine syllogistic chaining where f1.object overlaps with f2.subject
+      let chainedPair: [RealWikiFact, RealWikiFact] | null = null;
+      
+      for (let i = 0; i < availableWiki.length; i++) {
+        const candidate1 = availableWiki[i];
+        const obj1Words = candidate1.object.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+        
+        for (let j = 0; j < availableWiki.length; j++) {
+          if (i === j) continue;
+          const candidate2 = availableWiki[j];
+          const subj2Lower = candidate2.subject.toLowerCase();
+          
+          // Check if candidate1's object is the subject of candidate2 or has strong overlap
+          const hasBridge = obj1Words.some(w => subj2Lower.includes(w)) || 
+                            subj2Lower.includes(candidate1.object.toLowerCase()) ||
+                            candidate1.object.toLowerCase().includes(subj2Lower);
+          
+          if (hasBridge) {
+            chainedPair = [candidate1, candidate2];
+            break;
+          }
+        }
+        if (chainedPair) break;
+      }
+
+      if (chainedPair) {
+        const [w1, w2] = chainedPair;
+        f1 = { subject: w1.subject, predicate: w1.predicate, object: w1.object, category: w1.domain || 'Science', confidence: 0.96 };
+        f2 = { subject: w2.subject, predicate: w2.predicate, object: w2.object, category: w2.domain || 'Science', confidence: 0.96 };
+      } else {
+        // Coherent domain pairing when transitive bridge is absent
+        const sameDomainFacts = availableWiki.filter(f => f.domain === availableWiki[0].domain);
+        const w1 = sameDomainFacts[0] || availableWiki[0];
+        const w2 = sameDomainFacts[1] || availableWiki[1];
+        f1 = { subject: w1.subject, predicate: w1.predicate, object: w1.object, category: w1.domain || 'Science', confidence: 0.94 };
+        f2 = { subject: w2.subject, predicate: w2.predicate, object: w2.object, category: w2.domain || 'Science', confidence: 0.94 };
+      }
     } else {
       f1 = { subject: 'Zero-Trust Architecture', predicate: 'enforces', object: 'Continuous Authentication', category: 'Cybersecurity', confidence: 0.98 };
       f2 = { subject: 'Continuous Authentication', predicate: 'mitigates', object: 'Session Hijacking Attacks', category: 'Cybersecurity', confidence: 0.96 };
@@ -245,6 +277,16 @@ export class HypothesisVerificationEngine {
 
   public getCandidateQueue(): CandidateHypothesis[] {
     return [...this.candidateQueue];
+  }
+
+  /**
+   * Metabolic Evolutionary Survival Action:
+   * Prunes low-confidence or speculative pending candidate hypotheses to prevent ATP drain
+   */
+  public pruneSpeculativeHypotheses(): number {
+    const initialCount = this.candidateQueue.length;
+    this.candidateQueue = this.candidateQueue.filter(h => h.confidence >= 0.85);
+    return initialCount - this.candidateQueue.length;
   }
 
   public getStats() {

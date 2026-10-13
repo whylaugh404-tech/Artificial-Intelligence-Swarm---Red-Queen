@@ -142,6 +142,9 @@ export class OrganicExperienceTransitionEngine {
       if (rawObservation.observedSubject !== undefined && (typeof rawObservation.observedSubject !== 'string' || rawObservation.observedSubject.trim().length === 0)) {
         throw new Error('Observation missing mandatory observedSubject: observedSubject cannot be an empty string');
       }
+      if (rawObservation.source !== undefined && (typeof rawObservation.source !== 'string' || rawObservation.source.trim().length === 0)) {
+        throw new Error('Observation missing mandatory valid source: source cannot be an empty string');
+      }
       observedSubject = rawObservation.observedSubject || (rawObservation.payload as any)?.observedSubject;
       source = rawObservation.source || (rawObservation.payload as any)?.sourceIdentifier || (rawObservation.payload as any)?.source;
       timestamp = rawObservation.timestamp || (rawObservation.payload as any)?.timestamp;
@@ -149,6 +152,9 @@ export class OrganicExperienceTransitionEngine {
       content = rawObservation.payload ?? rawObservation.content ?? rawObservation;
       observationId = rawObservation.deterministicId || rawObservation.observationId;
     } else {
+      if (rawObservation.source !== undefined && (typeof rawObservation.source !== 'string' || rawObservation.source.trim().length === 0)) {
+        throw new Error('Observation missing mandatory valid source: source cannot be an empty string');
+      }
       observedSubject = rawObservation.observedSubject || rawObservation.subject || rawObservation.type;
       source = rawObservation.source || rawObservation.sourceId || rawObservation.sourceIdentifier;
       timestamp = rawObservation.timestamp || rawObservation.createdAt;

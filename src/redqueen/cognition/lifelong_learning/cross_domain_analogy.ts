@@ -7,6 +7,9 @@
  */
 
 import { Hypervector, bundle } from '../hdc';
+import { CognitiveGraph } from '../representation/graph';
+import { InformationCategory } from '../../metabolism/types';
+import { logger } from '../../core/logger';
 
 export interface DomainConceptMapping {
   role: string;
@@ -25,12 +28,18 @@ export interface AnalogySynthesisResult {
   actionableComputationalInsight: string;
   formalHypothesisTheorem: string;
   hdcStructuralSignature: string; // Hex representation of bound hypervector signature
+  crystallizedConceptId?: string; // Long-term Cognitive Graph node created from analogy
   createdAt: string;
 }
 
 export class CrossDomainAnalogyEngine {
   private analogyVault: AnalogySynthesisResult[] = [];
   private readonly hdcDimension: number = 4096;
+  private readonly cognitiveGraph?: CognitiveGraph;
+
+  constructor(cognitiveGraph?: CognitiveGraph) {
+    this.cognitiveGraph = cognitiveGraph;
+  }
 
   // Pre-configured canonical domain archetypes
   private readonly canonicalTemplates: Record<string, { role: string; concept: string; invariant: string }[]> = {
@@ -142,7 +151,65 @@ export class CrossDomainAnalogyEngine {
       this.analogyVault.pop();
     }
 
+    // Auto-crystallize into Cognitive Graph if graph is wired
+    if (this.cognitiveGraph) {
+      this.crystallizeConcept(result).catch(err => {
+        logger.warn('cross_domain_analogy', 'auto_crystallization_failed', { error: err.message });
+      });
+    }
+
     return result;
+  }
+
+  /**
+   * Concept Crystallization:
+   * Permanently transforms transient HDC cross-domain structural isomorphism
+   * into a persistent long-term conceptual node in the Cognitive Graph.
+   */
+  public async crystallizeConcept(
+    result: AnalogySynthesisResult,
+    targetGraph?: CognitiveGraph
+  ): Promise<string> {
+    const graph = targetGraph || this.cognitiveGraph;
+    if (!graph) {
+      return '';
+    }
+
+    const conceptId = `con_cryst_${result.analogyId}`;
+    const canonicalName = `Isomorphism_${result.sourceDomain}_${result.targetDomain}`;
+    const description = `${result.derivedPrinciple} | Computational Insight: ${result.actionableComputationalInsight} | Formal Theorem: ${result.formalHypothesisTheorem}`;
+
+    await graph.insertConcept({
+      conceptId,
+      canonicalName,
+      category: InformationCategory.GENERAL_TECHNOLOGY,
+      description,
+      confidence: Math.min(0.99, parseFloat(result.isomorphismScore.toFixed(4))),
+      sourceKnowledgeIds: [result.analogyId],
+      sourceExperienceIds: [],
+      originatingCellId: 'cross_domain_analogy_engine',
+      verificationStatus: 'SUPPORTED' as any,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      version: 1,
+      provenance: ['hdc_analogy_engine', result.sourceDomain, result.targetDomain],
+      metadata: {
+        sourceDomain: result.sourceDomain,
+        targetDomain: result.targetDomain,
+        isomorphismScore: result.isomorphismScore,
+        hdcStructuralSignature: result.hdcStructuralSignature
+      }
+    });
+
+    result.crystallizedConceptId = conceptId;
+
+    logger.info('cross_domain_analogy', 'concept_crystallized_in_cognitive_graph', {
+      conceptId,
+      canonicalName,
+      isomorphismScore: result.isomorphismScore
+    });
+
+    return conceptId;
   }
 
   public getAvailableDomains(): string[] {

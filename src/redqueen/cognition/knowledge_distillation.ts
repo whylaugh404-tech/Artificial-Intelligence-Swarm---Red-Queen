@@ -88,11 +88,11 @@ export class CompactHdcIndex {
   }
 
   public get size(): number {
-    return this.count;
+    return Math.min(this.count, this.capacity);
   }
 
   public get memoryFootprintBytes(): number {
-    return (this.count * this.bytesPerVector) + (this.facts.length * 48);
+    return (this.size * this.bytesPerVector) + (this.facts.length * 48);
   }
 
   /**
@@ -103,6 +103,15 @@ export class CompactHdcIndex {
     if (this.count >= this.capacity) {
       // Ring-buffer recycle: overwrites ephemeral slots when capacity is reached
       index = this.count % this.capacity;
+      // Remove stale index from previous cluster list
+      for (let c = 0; c < this.numClusters; c++) {
+        const arr = this.clusterFactIndices[c];
+        const stalePos = arr.indexOf(index);
+        if (stalePos !== -1) {
+          arr.splice(stalePos, 1);
+          break;
+        }
+      }
       this.count++;
     } else {
       index = this.count;
@@ -139,7 +148,7 @@ export class CompactHdcIndex {
    * Retrieves the hypervector for a given index from the slab
    */
   public getVector(index: number): Hypervector {
-    if (index < 0 || index >= this.count) {
+    if (index < 0 || index >= this.size) {
       throw new Error(`Index out of bounds: ${index}`);
     }
     const offset = index * this.wordsPerVector;
@@ -151,47 +160,61 @@ export class CompactHdcIndex {
   }
 
   /**
-   * Fast two-tier nearest neighbor search across 100,000 facts
+   * Fast cache-friendly nearest neighbor search across knowledge slab
+   * Maintains a bounded top-K priority set without massive array heap allocations.
    */
   public searchNearest(queryVector: Hypervector, topK: number = 5, domainFilter?: string): KnowledgeSearchMatch[] {
+    const total = this.size;
+    if (total === 0 || topK <= 0) return [];
+
     const qWords = queryVector.words;
-    const candidates: { index: number; similarity: number }[] = [];
+    const normDomain = domainFilter ? domainFilter.trim().toUpperCase() : undefined;
 
-    // Filter clusters or scan candidate partitions
-    for (let c = 0; c < this.numClusters; c++) {
-      const indices = this.clusterFactIndices[c];
-      if (indices.length === 0) continue;
+    // Bounded top-K candidates sorted descending by similarity
+    const topCandidates: { index: number; similarity: number }[] = [];
+    let minThreshold = -1.0;
 
-      for (let j = 0; j < indices.length; j++) {
-        const idx = indices[j];
-        const fact = this.facts[idx];
-        if (domainFilter && fact.domain !== domainFilter) continue;
+    // Sequential contiguous memory scan for maximum CPU cache prefetching
+    for (let idx = 0; idx < total; idx++) {
+      const fact = this.facts[idx];
+      if (!fact) continue;
 
-        const offset = idx * this.wordsPerVector;
-        let diffBits = 0;
+      // Filter domain before performing 32-word vector Hamming distance
+      if (normDomain && fact.domain.toUpperCase() !== normDomain) continue;
 
-        for (let w = 0; w < this.wordsPerVector; w++) {
-          const xor = (this.slab[offset + w] ^ qWords[w]) >>> 0;
-          // Inlined popcount32 for maximum loop throughput
-          let v = xor - ((xor >>> 1) & 0x55555555);
-          v = (v & 0x33333333) + ((v >>> 2) & 0x33333333);
-          v = (v + (v >>> 4)) & 0x0f0f0f0f;
-          v = (v + (v >>> 8));
-          v = (v + (v >>> 16));
-          diffBits += (v & 0x0000003f);
+      const offset = idx * this.wordsPerVector;
+      let diffBits = 0;
+
+      for (let w = 0; w < this.wordsPerVector; w++) {
+        const xor = (this.slab[offset + w] ^ qWords[w]) >>> 0;
+        // Inlined popcount32 for maximum loop throughput
+        let v = xor - ((xor >>> 1) & 0x55555555);
+        v = (v & 0x33333333) + ((v >>> 2) & 0x33333333);
+        v = (v + (v >>> 4)) & 0x0f0f0f0f;
+        v = (v + (v >>> 8));
+        v = (v + (v >>> 16));
+        diffBits += (v & 0x0000003f);
+      }
+
+      const similarity = 1.0 - (diffBits / this.dimension);
+
+      if (topCandidates.length < topK) {
+        topCandidates.push({ index: idx, similarity });
+        topCandidates.sort((a, b) => b.similarity - a.similarity);
+        minThreshold = topCandidates[topCandidates.length - 1].similarity;
+      } else if (similarity > minThreshold) {
+        // Replace lowest candidate and sift up
+        topCandidates[topK - 1] = { index: idx, similarity };
+        for (let k = topK - 1; k > 0 && topCandidates[k].similarity > topCandidates[k - 1].similarity; k--) {
+          const temp = topCandidates[k];
+          topCandidates[k] = topCandidates[k - 1];
+          topCandidates[k - 1] = temp;
         }
-
-        const similarity = 1.0 - (diffBits / this.dimension);
-        if (similarity > 0.48) {
-          candidates.push({ index: idx, similarity });
-        }
+        minThreshold = topCandidates[topK - 1].similarity;
       }
     }
 
-    candidates.sort((a, b) => b.similarity - a.similarity);
-    const topMatches = candidates.slice(0, topK);
-
-    return topMatches.map(m => ({
+    return topCandidates.map(m => ({
       fact: this.facts[m.index],
       similarity: parseFloat(m.similarity.toFixed(4)),
       domain: this.facts[m.index].domain
@@ -362,16 +385,59 @@ export class KnowledgeDistillationEngine {
   }
 
   /**
-   * Search knowledge base
+   * Search knowledge base using role-aligned HDC probes and semantic reranking
    */
   public search(query: string, topK: number = 5, domain?: string): KnowledgeSearchMatch[] {
     const dim = this.index.dimension;
-    // Encode query words into hypervector
-    const words = query.toLowerCase().match(/\w+/g) || ['general'];
-    const hvs = words.map(w => Hypervector.fromLabel(`subj:${w}`, dim));
-    const queryVector = bundle(hvs);
+    const rawWords = (query || '').toLowerCase().match(/[a-z0-9_-]+/g) || ['general'];
+    
+    // Filter common English & Indonesian conversational fillers
+    const stopWords = new Set([
+      'what', 'is', 'the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'how', 'why', 'who', 'does',
+      'apa', 'yang', 'dan', 'di', 'dari', 'itu', 'ini', 'adalah', 'apakah', 'siapa'
+    ]);
+    const words = rawWords.filter(w => w.length > 2 && !stopWords.has(w));
+    const activeWords = words.length > 0 ? words : rawWords;
 
-    return this.index.searchNearest(queryVector, topK, domain);
+    // Role keys identical to encodeTriplet
+    const kSubj = Hypervector.fromLabel('role:subject', dim);
+    const kObj = Hypervector.fromLabel('role:object', dim);
+    const kPred = Hypervector.fromLabel('role:predicate', dim);
+
+    // Build role-aligned probes so query vectors match bound facts
+    const hvs: Hypervector[] = [];
+    for (const w of activeWords) {
+      const vSubj = Hypervector.fromLabel(`subj:${w}`, dim);
+      const vObj = Hypervector.fromLabel(`obj:${w}`, dim);
+      const vPred = Hypervector.fromLabel(`pred:${w}`, dim);
+
+      hvs.push(vSubj.bind(kSubj));
+      hvs.push(vObj.bind(kObj));
+      hvs.push(vPred.bind(kPred));
+    }
+
+    const queryVector = bundle(hvs);
+    const nearest = this.index.searchNearest(queryVector, Math.max(topK * 3, 10), domain);
+
+    // Hybrid re-ranking: combine HDC cosine similarity with lexical overlap
+    const reranked = nearest.map(m => {
+      let lexicalBonus = 0;
+      const s = m.fact.subject.toLowerCase();
+      const o = m.fact.object.toLowerCase();
+
+      for (const w of activeWords) {
+        if (s.includes(w)) lexicalBonus += 0.15;
+        if (o.includes(w)) lexicalBonus += 0.10;
+      }
+
+      return {
+        ...m,
+        similarity: parseFloat(Math.min(1.0, m.similarity + lexicalBonus).toFixed(4))
+      };
+    });
+
+    reranked.sort((a, b) => b.similarity - a.similarity);
+    return reranked.slice(0, topK);
   }
 
   public ingestRawTriplets(triplets: KnowledgeTriplet[]): number {

@@ -28,8 +28,22 @@ import { WikipediaIngestionPipeline } from './wiki_pipeline';
 import { GenerativeLanguageSynthesizer, RetrievedFactItem } from './generative_synthesizer';
 import { LifelongLearningEngine, LifelongTelemetry } from './lifelong_learning';
 import { CognitiveGraph } from './representation/graph';
+import { RepresentationVerificationStatus } from './representation/types';
+import { InformationCategory } from '../metabolism/types';
 import { MemoryStore } from '../memory/store';
 import { logger } from '../core/logger';
+import { CellMetabolismController, VitalityTelemetry } from '../metabolism/cellular_vitality';
+import { 
+  ContradictionFeedbackLoop, 
+  ContradictionAuditEntry, 
+  ReasoningEpisode, 
+  ContradictionDetectionResult 
+} from './reasoning/contradiction_loop';
+import { 
+  PerceptualStreamIngestor, 
+  PerceptualIngestionReport, 
+  PerceptualStreamTelemetry 
+} from './perceptual_stream';
 
 export interface NeuroSymbolicTelemetry {
   executionTimeMs: number;
@@ -49,6 +63,7 @@ export interface NeuroSymbolicTelemetry {
   energyEfficiencyAtp: number;
   mode: 'NEURO_SYMBOLIC_EDGE';
   lifelongTelemetry?: LifelongTelemetry;
+  vitality?: VitalityTelemetry;
 }
 
 export interface NeuroSymbolicResponse {
@@ -135,21 +150,47 @@ export class MetabolicCellExpert implements CellularExpert {
   public readonly name = 'MetabolicCellExpert';
   public readonly domain = 'cellular_metabolism_and_resource_vitality';
   public readonly specialization = 'Metabolic State & Invariant Maintenance';
+  private vitalityController?: CellMetabolismController;
+
+  constructor(vitality?: CellMetabolismController) {
+    this.vitalityController = vitality;
+  }
+
+  public setVitalityController(vitality: CellMetabolismController): void {
+    this.vitalityController = vitality;
+  }
 
   public canHandle(context: ExpertContext | string): number {
     const promptStr = typeof context === 'string' ? context : (context?.prompt || '');
     const lower = promptStr.toLowerCase();
-    if (lower.includes('energi') || lower.includes('energy') || lower.includes('atp') || lower.includes('metabol') || lower.includes('health') || lower.includes('status')) {
+    if (lower.includes('energi') || lower.includes('energy') || lower.includes('atp') || lower.includes('metabol') || lower.includes('health') || lower.includes('status') || lower.includes('vitalitas') || lower.includes('survival')) {
       return 0.85;
     }
     return 0.1;
   }
 
   public process(context: ExpertContext): ExpertOutput {
+    if (this.vitalityController) {
+      const snap = this.vitalityController.getSnapshot();
+      return {
+        expertName: this.name,
+        confidence: 0.98,
+        data: {
+          atpPool: snap.atpPool,
+          atpCapacity: snap.atpCapacity,
+          catabolicWaste: snap.catabolicWaste,
+          vitalityState: snap.vitalityState,
+          activeMode: snap.activeMode,
+          survivalRestructuringCount: snap.survivalRestructuringCount,
+          autophagicPruningCount: snap.autophagicPruningCount
+        },
+        summary: `Cellular vitality state is ${snap.vitalityState}. ATP: ${snap.atpPool.toFixed(2)}/${snap.atpCapacity}, Waste: ${snap.catabolicWaste.toFixed(2)}. Mode: ${snap.activeMode}.`
+      };
+    }
     return {
       expertName: this.name,
       confidence: 0.95,
-      data: { atpPool: 98.4, catabolicWaste: 1.2 },
+      data: { atpPool: 100.0, catabolicWaste: 0.0, vitalityState: 'OPTIMAL' },
       summary: 'Cellular metabolism optimal. ATP generation stable, catabolic waste within bounds, homeostatic equilibrium maintained.'
     };
   }
@@ -159,7 +200,11 @@ export class MetabolicCellExpert implements CellularExpert {
     return {
       score: out.confidence,
       conclusion: out.summary,
-      evidence: ['Metabolic pool balanced', 'No nutrient starvation detected']
+      evidence: [
+        `Vitality state: ${(out.data as any).vitalityState || 'OPTIMAL'}`,
+        `ATP pool: ${(out.data as any).atpPool || 100}`,
+        `Catabolic waste: ${(out.data as any).catabolicWaste || 0}`
+      ]
     };
   }
 }
@@ -177,6 +222,10 @@ export class NeuroSymbolicEngine {
   public readonly languageSynthesizer: GenerativeLanguageSynthesizer;
   public readonly lifelongLearning: LifelongLearningEngine;
   public readonly hdcDimension: number;
+  public readonly metabolicExpert: MetabolicCellExpert;
+  public readonly contradictionLoop: ContradictionFeedbackLoop;
+  public readonly perceptualStream: PerceptualStreamIngestor;
+  public vitality?: CellMetabolismController;
 
   private ssmHiddenState: Float32Array;
   private cognitiveGraph?: CognitiveGraph;
@@ -187,16 +236,19 @@ export class NeuroSymbolicEngine {
     hiddenDim?: number;
     cognitiveGraph?: CognitiveGraph;
     memoryStore?: MemoryStore;
+    vitality?: CellMetabolismController;
   }) {
     this.hdcDimension = options?.dimension ?? 4096;
     const hiddenDim = options?.hiddenDim ?? 64;
+    this.vitality = options?.vitality;
 
     this.tokenizer = new MicroTokenizer();
     this.associativeMemory = new AssociativeItemMemory(this.hdcDimension);
     this.knowledgeBase = new KnowledgeDistillationEngine(100000, 1024);
-    this.wikiPipeline = new WikipediaIngestionPipeline(this.knowledgeBase.index);
+    this.cognitiveGraph = options?.cognitiveGraph;
+    this.wikiPipeline = new WikipediaIngestionPipeline(this.knowledgeBase.index, './data', this.cognitiveGraph);
     this.languageSynthesizer = new GenerativeLanguageSynthesizer('AUTO');
-    this.lifelongLearning = new LifelongLearningEngine(this.knowledgeBase, this.wikiPipeline);
+    this.lifelongLearning = new LifelongLearningEngine(this.knowledgeBase, this.wikiPipeline, this.vitality);
     this.ssmCell = new LinearSSMCell({
       inputDim: hiddenDim,
       stateDim: hiddenDim,
@@ -204,8 +256,18 @@ export class NeuroSymbolicEngine {
       useTernaryWeights: true
     });
     this.ssmHiddenState = new Float32Array(hiddenDim);
-    this.cognitiveGraph = options?.cognitiveGraph;
     this.memoryStore = options?.memoryStore;
+
+    // Autonomous Contradiction Feedback Loop & Perceptual Streaming
+    this.contradictionLoop = new ContradictionFeedbackLoop({
+      cognitiveGraph: this.cognitiveGraph,
+      vitality: this.vitality
+    });
+    this.perceptualStream = new PerceptualStreamIngestor({
+      hdcIndex: this.knowledgeBase.index,
+      cognitiveGraph: this.cognitiveGraph,
+      ssmCell: this.ssmCell
+    });
 
     // Seed base vocabulary in micro-tokenizer
     this.tokenizer.train([
@@ -219,10 +281,18 @@ export class NeuroSymbolicEngine {
     // Initialize Cellular MoE Router
     this.moeRouter = new CellularMoERouter(2);
     this.moeRouter.registerExpert(new CyberSecurityExpert());
-    this.moeRouter.registerExpert(new MetabolicCellExpert());
+    this.metabolicExpert = new MetabolicCellExpert(this.vitality);
+    this.moeRouter.registerExpert(this.metabolicExpert);
 
     // Seed core foundational concepts into HDC Associative Memory
     this.seedFoundationalConcepts();
+  }
+
+  public setVitality(vitality: CellMetabolismController): void {
+    this.vitality = vitality;
+    this.metabolicExpert.setVitalityController(vitality);
+    this.lifelongLearning.setVitality(vitality);
+    this.contradictionLoop.setVitality(vitality);
   }
 
   private seedFoundationalConcepts(): void {
@@ -237,12 +307,18 @@ export class NeuroSymbolicEngine {
     ];
 
     for (const concept of foundations) {
-      this.learnConcept(concept, 'FOUNDATION_SEED');
+      const tokens = this.tokenizer.encode(concept);
+      const tokenHVs: Hypervector[] = tokens.map((tok, idx) => {
+        const base = Hypervector.fromSeed(`tok_${tok}`, this.hdcDimension);
+        return base.permute(idx);
+      });
+      const compositeHV = bundle(tokenHVs);
+      this.associativeMemory.store(concept, compositeHV, { category: 'FOUNDATION_SEED', timestamp: Date.now() });
     }
   }
 
   /**
-   * One-Shot Learns a concept or fact directly into HDC Memory
+   * One-Shot Learns a concept or fact directly into HDC Memory and Cognitive Graph
    */
   public learnConcept(text: string, category: string = 'EPISODIC'): Hypervector {
     const tokens = this.tokenizer.encode(text);
@@ -253,6 +329,43 @@ export class NeuroSymbolicEngine {
 
     const compositeHV = bundle(tokenHVs);
     this.associativeMemory.store(text, compositeHV, { category, timestamp: Date.now() });
+
+    // Bidirectional sync with Symbolic Cognitive Graph if connected
+    if (this.cognitiveGraph && text.trim().length > 3) {
+      try {
+        const canonicalName = text.slice(0, 48).trim();
+        const existing = this.cognitiveGraph.findConceptByName(canonicalName);
+        if (!existing) {
+          const now = new Date().toISOString();
+          const validCategories = Object.values(InformationCategory);
+          const mappedCategory = (validCategories.includes(category as any)
+            ? (category as InformationCategory)
+            : InformationCategory.GENERAL_TECHNOLOGY);
+
+          this.cognitiveGraph.insertConcept({
+            conceptId: `con_ns_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+            canonicalName,
+            category: mappedCategory,
+            description: text,
+            confidence: 0.92,
+            sourceKnowledgeIds: [`kn_ns_${Date.now().toString(36)}`],
+            sourceExperienceIds: [],
+            originatingCellId: 'cell_native',
+            verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+            createdAt: now,
+            updatedAt: now,
+            version: 1,
+            provenance: ['neuro_symbolic_engine'],
+            metadata: { hdcCategory: category }
+          }).catch(() => {
+            // Non-blocking symbolic persistence
+          });
+        }
+      } catch (err: any) {
+        // Non-blocking symbolic sync
+      }
+    }
+
     return compositeHV;
   }
 
@@ -286,6 +399,14 @@ export class NeuroSymbolicEngine {
     const tokenIds = this.tokenizer.encode(input);
     const tokenCount = tokenIds.length;
 
+    // Dynamic Metabolic ATP Consumption per cognitive inference
+    if (this.vitality) {
+      this.vitality.consumeAtp(Math.max(0.05, tokenCount * 0.02), 'NEURO_SYMBOLIC_INFERENCE', {
+        inputLength: input.length,
+        tokens: tokenCount
+      });
+    }
+
     // 2. Linear SSM Recurrent Evolution: O(1) per token
     const inputVec = new Float32Array(this.ssmCell.inputDim);
     for (let i = 0; i < tokenIds.length; i++) {
@@ -302,6 +423,55 @@ export class NeuroSymbolicEngine {
     }
     const hiddenStateNorm = Math.sqrt(hiddenNormSq);
 
+    // 0. Intercept Autonomous Contradiction Feedback Loop ("bukan, jawabanmu salah")
+    const contraDetect = this.contradictionLoop.detectContradiction(input);
+    if (contraDetect.isContradiction && this.contradictionLoop.getLatestEpisode()) {
+      const contraResult = await this.contradictionLoop.executeContradictionCorrection(input, contraDetect);
+      const t1 = performance.now();
+      const executionTimeMs = parseFloat((t1 - t0).toFixed(2));
+
+      const reasoningSteps: string[] = [
+        `Contradiction feedback intercepted: "${contraDetect.detectedSignal}" (Confidence: ${contraDetect.confidence}).`,
+        `Slashed synaptic confidence of ${contraResult.penalizedConceptsCount} concepts and ${contraResult.penalizedRelationsCount} relations in Cognitive Graph.`,
+        `Drained ${contraResult.atpDrained} ATP from cellular pool due to erroneous hypothesis penalty.`,
+        `Logged immutable correction audit record: #${contraResult.audit.auditId}.`
+      ];
+
+      const telemetry: NeuroSymbolicTelemetry = {
+        executionTimeMs,
+        tokensProcessed: tokenCount,
+        tokensGenerated: this.tokenizer.encode(contraResult.correctiveResponseText).length,
+        activeExperts: [],
+        hdcStats: {
+          activeDimensions: this.hdcDimension,
+          memoryItemCount: this.associativeMemory.size,
+          topMatches: []
+        },
+        ssmStats: {
+          sequenceSteps: tokenCount,
+          hiddenStateNorm: parseFloat(hiddenStateNorm.toFixed(4)),
+          memoryFootprintKb: parseFloat((((this.hdcDimension / 8) * this.associativeMemory.size + this.ssmCell.stateDim * 4) / 1024).toFixed(2))
+        },
+        energyEfficiencyAtp: 1.0,
+        mode: 'NEURO_SYMBOLIC_EDGE',
+        lifelongTelemetry: this.lifelongLearning.getTelemetry(),
+        vitality: this.vitality?.getTelemetry()
+      };
+
+      return {
+        statement: contraResult.correctiveResponseText,
+        telemetry,
+        confidence: 0.99,
+        reasoningSteps,
+        fluidSynthesis: {
+          intent: 'CONTRADICTION_CORRECTION',
+          detectedTone: 'CORRECTIVE',
+          fluencyScore: 0.99,
+          groundedFactsCount: 0
+        }
+      };
+    }
+
     // 3. HDC Associative Memory Recall
     const topMatches = this.queryAssociativeMemory(input, 3);
 
@@ -312,46 +482,92 @@ export class NeuroSymbolicEngine {
       metadata: context
     });
 
-    // 5. Query Cognitive Graph if available
+    // 5. Bidirectional SSM-to-Graph Spreading Activation & Factual Grounding
     const graphConcepts: string[] = [];
+    const groundedFacts: RetrievedFactItem[] = [];
+    const lowerInput = input.toLowerCase();
+    const inputWords = lowerInput.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+
     if (this.cognitiveGraph) {
+      // Direct temporal-topological coupling: SSM hidden state drives spreading activation in Cognitive Graph
+      const activatedGraphNodes = this.cognitiveGraph.spreadActivationFromStateVector(this.ssmHiddenState, {
+        activationThreshold: 0.05,
+        decay: 0.72,
+        topK: 5
+      });
+
+      for (const node of activatedGraphNodes) {
+        const c = node.concept;
+        const canLower = c.canonicalName.toLowerCase();
+        graphConcepts.push(`${c.canonicalName} (activation: ${node.activationEnergy})`);
+        if (!groundedFacts.some(f => f.subject.toLowerCase() === canLower)) {
+          groundedFacts.push({
+            subject: c.canonicalName,
+            predicate: 'merupakan',
+            object: c.description,
+            domain: c.category || 'COGNITIVE_GRAPH',
+            confidence: Math.min(0.99, c.confidence * (1 + node.activationEnergy * 0.1)),
+            summary: `${c.canonicalName}: ${c.description}`
+          });
+        }
+      }
+
+      // Also incorporate exact lexical matches if not yet in grounded facts
       const concepts = this.cognitiveGraph.getAllConcepts();
-      const lower = input.toLowerCase();
       for (const c of concepts) {
-        if (lower.includes(c.canonicalName.toLowerCase()) || c.description.toLowerCase().includes(lower)) {
+        const canLower = c.canonicalName.toLowerCase();
+        const descLower = c.description.toLowerCase();
+        const isMatched = lowerInput.includes(canLower) || 
+          inputWords.some(w => (w.length >= 3 && (canLower.includes(w) || descLower.includes(w))));
+        if (isMatched && !groundedFacts.some(f => f.subject.toLowerCase() === canLower)) {
           graphConcepts.push(`${c.canonicalName}: ${c.description}`);
+          groundedFacts.push({
+            subject: c.canonicalName,
+            predicate: 'merupakan',
+            object: c.description,
+            domain: c.category || 'COGNITIVE_GRAPH',
+            confidence: c.confidence,
+            summary: `${c.canonicalName}: ${c.description}`
+          });
         }
       }
     }
 
-    // 6. Multi-Tier Factual Grounding (100k Mesh & 10k Wikipedia Facts)
+    // 6. Multi-Tier Factual Grounding (Dynamic Incremental Ingestion & 10k Facts)
     const reasoningSteps: string[] = [];
     reasoningSteps.push(`Tokenized ${tokenCount} subwords via Micro-Tokenizer.`);
     reasoningSteps.push(`Updated Linear SSM recurrent state (norm: ${hiddenStateNorm.toFixed(3)}) with O(1) memory complexity.`);
+    if (graphConcepts.length > 0) {
+      reasoningSteps.push(`SSM-Coupled Graph Activation: [${graphConcepts.slice(0, 3).join(', ')}]`);
+    }
     reasoningSteps.push(`HDC Associative recall identified ${topMatches.length} related cognitive vectors.`);
     reasoningSteps.push(`MoE Router activated ${moeResult.activeExperts.length} micro-experts: [${moeResult.activeExperts.join(', ')}].`);
 
-    const groundedFacts: RetrievedFactItem[] = [];
-
-    // Search Wikipedia Real Facts first
+    // Search Wikipedia Real Facts first (multi-token relevance and bilingual grounding)
     const wikiMatches = this.wikiPipeline.searchFacts(input, undefined, 2);
     for (const wf of wikiMatches) {
-      groundedFacts.push({
-        subject: wf.subject,
-        predicate: wf.predicate,
-        object: wf.object,
-        domain: wf.domain,
-        confidence: wf.confidence ?? 0.99,
-        summary: wf.summary,
-        sourceUrl: wf.sourceUrl
-      });
-      reasoningSteps.push(`Retrieved real Wikipedia ground truth: [${wf.domain}] ${wf.subject} (${wf.sourceUrl})`);
+      const subjLower = wf.subject.toLowerCase();
+      if (!groundedFacts.some(f => f.subject.toLowerCase() === subjLower)) {
+        groundedFacts.push({
+          subject: wf.subject,
+          predicate: wf.predicate,
+          object: wf.object,
+          domain: wf.domain,
+          confidence: wf.confidence ?? 0.99,
+          summary: wf.summary,
+          sourceUrl: wf.sourceUrl
+        });
+        reasoningSteps.push(`Retrieved real Wikipedia ground truth: [${wf.domain}] ${wf.subject} (${wf.sourceUrl})`);
+      }
     }
 
-    // Search 100k Knowledge Base Mesh
+    // Search 100k Knowledge Base Mesh (require authentic semantic similarity >= 0.65 and keyword overlap)
     const kbMatches = this.knowledgeBase.search(input, 2);
     for (const km of kbMatches) {
-      if (km.similarity > 0.45 && !groundedFacts.some(f => f.subject.toLowerCase() === km.fact.subject.toLowerCase())) {
+      const subjLower = km.fact.subject.toLowerCase();
+      const objLower = km.fact.object.toLowerCase();
+      const hasOverlap = inputWords.some(w => subjLower.includes(w) || objLower.includes(w));
+      if (km.similarity >= 0.65 && hasOverlap && !groundedFacts.some(f => f.subject.toLowerCase() === subjLower)) {
         groundedFacts.push({
           subject: km.fact.subject,
           predicate: km.fact.predicate,
@@ -394,7 +610,15 @@ export class NeuroSymbolicEngine {
       matchedConcepts: topMatches,
       retrievedFacts: groundedFacts,
       expertInsights: moeResult.expertOutputs.map(e => ({ expertName: e.expertName, summary: e.summary || '' })),
-      tonePreference: context?.tonePreference || 'AUTO'
+      tonePreference: context?.tonePreference || 'AUTO',
+      systemStatus: {
+        associativeCount: this.associativeMemory.size,
+        lifelongCyclesRun: this.lifelongLearning.getTelemetry().totalLifelongCyclesRun,
+        activeGapsCount: this.lifelongLearning.curiosity.getActiveGaps().length,
+        epistemicDiscoveriesCount: this.lifelongLearning.hypothesis.getDiscoveries().length,
+        vitalityState: this.vitality?.getVitalityState(),
+        atpPool: this.vitality?.getSnapshot().atpPool
+      }
     });
 
     const statement = synthesisResult.text;
@@ -404,6 +628,20 @@ export class NeuroSymbolicEngine {
     this.lifelongLearning.sleepConsolidator.recordExperience(input, 'CONVERSATION');
     if (input.length > 10 && !input.startsWith('/')) {
       this.learnConcept(input, 'USER_INTERACTION');
+      try {
+        this.wikiPipeline.ingestFromText(input, 'USER_INTERACTION');
+      } catch {
+        // Non-blocking dynamic ingestion
+      }
+    }
+
+    // If query represents ungrounded knowledge, queue into autonomous curiosity engine for 24/7 background resolution
+    if (groundedFacts.length === 0 && (!topMatches[0] || topMatches[0].similarity < 0.65) && input.length >= 8 && !input.startsWith('/')) {
+      try {
+        this.lifelongLearning.curiosity.recordExternalGap(input, input);
+      } catch {
+        // Safe continuation
+      }
     }
 
     const t1 = performance.now();
@@ -430,8 +668,30 @@ export class NeuroSymbolicEngine {
       },
       energyEfficiencyAtp: parseFloat((100 / Math.max(1, executionTimeMs)).toFixed(2)),
       mode: 'NEURO_SYMBOLIC_EDGE',
-      lifelongTelemetry: this.lifelongLearning.getTelemetry()
+      lifelongTelemetry: this.lifelongLearning.getTelemetry(),
+      vitality: this.vitality?.getTelemetry()
     };
+
+    // Record episode for retroactive contradiction & self-correction tracking
+    const activatedConceptIds: string[] = [];
+    if (this.cognitiveGraph) {
+      for (const gc of graphConcepts) {
+        const name = gc.split(/[:(]/)[0].trim();
+        const found = this.cognitiveGraph.findConceptByName(name);
+        if (found) activatedConceptIds.push(found.conceptId);
+      }
+    }
+    this.contradictionLoop.recordEpisode({
+      episodeId: `ep_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      prompt: input,
+      statement,
+      activatedConceptIds,
+      activatedRelationIds: [],
+      groundedFacts: groundedFacts.map(f => ({ subject: f.subject, predicate: f.predicate, object: f.object })),
+      timestamp: Date.now(),
+      confidence: synthesisResult.fluencyScore,
+      ssmNorm: hiddenStateNorm
+    });
 
     return {
       statement,
@@ -445,6 +705,20 @@ export class NeuroSymbolicEngine {
         groundedFactsCount: synthesisResult.groundedFactsCount
       }
     };
+  }
+
+  /**
+   * Ingests a continuous stream of unstructured data autonomously
+   */
+  public async ingestPerceptualStream(rawText: string, domain?: string): Promise<PerceptualIngestionReport> {
+    return this.perceptualStream.ingestRawStream(rawText, { domain });
+  }
+
+  /**
+   * Retrieves contradiction self-correction audits
+   */
+  public getCorrectionAudits(): ContradictionAuditEntry[] {
+    return this.contradictionLoop.getAuditTrail();
   }
 
   /**
