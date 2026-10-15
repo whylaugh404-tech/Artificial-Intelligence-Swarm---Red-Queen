@@ -844,3 +844,44 @@ Kematian sel dalam arsitektur Red Queen terbagi menjadi 3 tahapan biomimetik:
   - `test/p9_3_population_cycle.test.ts` (5 tests - survival culling generasi): PASS
 * **Total Verifikasi Pengujian Siklus Hidup:** **28/28 Tests LULUS 100%**.
 
+---
+
+## 18. Perbaikan Anomali Integritas: Referential Consistency & Eliminasi Orphaned Relations pada Perceptual Stream & Cognitive Graph
+
+*Dokumentasi analisis akar masalah (root-cause forensics), rekayasa perbaikan integritas referensial, dan verifikasi empiris audit berkode lokasi `src/redqueen/cognition/representation/graph.ts:150` terkait anomali "Orphaned relation rel_stream_... subjectConceptId does not exist in graph".*
+
+### 18.1 Akar Masalah (Root-Cause Analysis)
+- **Lokasi Terjadinya Anomali:** `src/redqueen/cognition/perceptual_stream.ts` (baris 186–241) dan `src/redqueen/cognition/representation/graph.ts` (baris 275–320).
+- **Mekanisme Pemicu Anomali:**
+  1. Pada saat audit sistem atau pengaliran teks mentah dijalankan, `PerceptualStreamIngestor` mengekstraksi proposisi semantik dan menyuntikkannya ke `CognitiveGraph.insertConcept({ conceptId, canonicalName: prop.subject, ... })`.
+  2. Apabila subjek/objek yang sama sudah ada di dalam graf (misalnya dari siklus audit CHECK 7 sebelumnya), metode `insertConcept` mengeksekusi *duplicate detection* (`detectDuplicateConcept`). Karena konsep sudah terdaftar, metode mengembalikan konsep eksisting dengan ID lama miliknya (`existing.conceptId`). ID kandidat baru (`con_stream_<factId>`) **tidak dimasukkan ke dalam graf**.
+  3. Namun, pada baris pembentukan relasi (`this.cognitiveGraph.insertRelation`), kode secara keliru menyuntikkan ID kandidat lokal `conceptId` (`con_stream_<factId>`) alih-alih membaca ID aktual yang dikembalikan oleh graf (`insertedSubject.conceptId`).
+  4. Dampaknya, relasi `rel_stream_<factId>` terdaftar di graf dengan atribut `subjectConceptId` yang tidak pernah ada di `this.concepts` (*orphaned relation*).
+  5. Ketika audit CHECK 3 (`Cognitive Graph Referential Consistency & Bounded Confidence`) memverifikasi `conceptMap.has(rel.subjectConceptId)`, sistem mendeteksi inkonsistensi referensial dan seketika mengunci sistem (*fail-fast lockdown*).
+
+### 18.2 Rekayasa Perbaikan Sistem
+1. **Pengikatan ID Kanonikal Riil (`src/redqueen/cognition/perceptual_stream.ts`):**
+   - Menangkap objek hasil `insertConcept`: `const insertedSubject = await this.cognitiveGraph.insertConcept(...)` dan `const insertedObject = await this.cognitiveGraph.insertConcept(...)`.
+   - Mengambil ID aktual yang valid di memori graf: `const actualSubjectId = insertedSubject?.conceptId` dan `const actualObjectId = insertedObject?.conceptId`.
+   - Memastikan `actualSubjectId !== actualObjectId` sebelum membentuk relasi berarah untuk mencegah self-loop.
+2. **Penjagaan Integritas Referensial Tegas (`src/redqueen/cognition/representation/graph.ts`):**
+   - Menambahkan *guard assertion* wajib di dalam `CognitiveGraph.insertRelation`:
+     $$\text{assert}(this.concepts.has(\text{subjectConceptId}) \land this.concepts.has(\text{objectConceptId}))$$
+     Setiap upaya penambahan relasi dengan subjek atau objek yang tidak terdaftar akan langsung ditolak, sehingga *orphaned relation* secara matematis mustahil masuk ke graf.
+3. **Pembersihan Mandiri (*Self-Healing Orphan Pruner*):**
+   - Menambahkan metode `CognitiveGraph.pruneOrphanedRelations()` yang secara otomatis memindai dan memangkas relasi tak bertuan dari memori dan indeks adjacency.
+   - Mengintegrasikan pembersihan ini ke dalam `CognitiveGraph.restore()` saat memuat dari disk, serta pada endpoint `POST /api/integrity/reset` dan `POST /api/integrity/audit` di `server.ts`.
+4. **Pembaruan Antarmuka UI (`src/components/SystemIntegrityGuard.tsx`):**
+   - Menyelaraskan teks header dan checklist dari "9 Subsistem" menjadi "11 Subsistem" lengkap dengan CHECK 10 (Linear SSM Recurrent Dynamics) dan CHECK 11 (Macro-Neural Synapses).
+
+### 18.3 Hasil Verifikasi Empiris
+1. **Suite Uji Integritas Sistem (`test/system_integrity.test.ts`):**
+   - Ditambahkan kasus uji regresi: `guarantees cognitive graph referential consistency and zero orphaned relations under repeated stream ingestions` (PASS).
+   - **Hasil Total:** **6/6 Tests LULUS 100% (PASS).**
+2. **Pengujian Live Server (`POST /api/integrity/audit`):**
+   - **11/11 Checks Lulus 100% (0 failed, 0 anomalies, status: OPERATIONAL).**
+   - Dipanggil berulang kali secara sekuensial tanpa ada satupun relasi orphaned yang lolos.
+3. **Pemeriksaan Tipe & Linter (`tsc --noEmit` via `lint_applet`):** **0 Error (100% Bersih).**
+4. **Kompilasi Frontend & Backend (`compile_applet`):** **Build Succeeded.**
+
+

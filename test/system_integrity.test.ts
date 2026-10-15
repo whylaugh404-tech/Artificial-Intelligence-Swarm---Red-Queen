@@ -138,4 +138,33 @@ describe('Red Queen Deep System Integrity Sentry & Fail-Fast Tracker', () => {
     // Clean up
     cell.integrity.resetLockdownAfterRepair();
   });
+
+  it('guarantees cognitive graph referential consistency and zero orphaned relations under repeated stream ingestions', async () => {
+    const cellStateFile = path.join(tmpDir, 'cell_stream_integrity.json');
+    const cell = new Cell(cellStateFile, 'secret_stream_integrity');
+
+    // Run repeated ingestions with duplicate subjects and concepts
+    const stream = cell.neuroSymbolic.perceptualStream;
+    await stream.ingestRawStream('Integritas sistem memverifikasi validitas data secara real-time', { domain: 'SYSTEM_AUDIT' });
+    await stream.ingestRawStream('Integritas sistem memverifikasi validitas data secara real-time', { domain: 'SYSTEM_AUDIT' });
+    await stream.ingestRawStream('Sistem kognitif menjaga kestabilan memori tanpa kompromi', { domain: 'SYSTEM_AUDIT' });
+
+    // Referential consistency audit must pass with 0 errors
+    const auditReport = await cell.integrity.runDeepSystemAudit(cell);
+    expect(auditReport.failedChecks).toBe(0);
+    expect(auditReport.passed).toBe(true);
+
+    const graphCheck = auditReport.checks.find(c => c.subsystem === SubsystemCategory.COGNITIVE_GRAPH);
+    expect(graphCheck?.passed).toBe(true);
+    expect(graphCheck?.error).toBeUndefined();
+
+    // Verify all relations in graph have valid subject and object
+    const graph = cell.cognitiveGraph;
+    const concepts = new Set(graph.getAllConcepts().map(c => c.conceptId));
+    for (const rel of graph.getAllRelations()) {
+      expect(concepts.has(rel.subjectConceptId)).toBe(true);
+      expect(concepts.has(rel.objectConceptId)).toBe(true);
+    }
+  });
 });
+

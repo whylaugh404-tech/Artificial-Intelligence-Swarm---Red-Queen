@@ -263,7 +263,7 @@ export function SystemIntegrityGuard({ onStatusChange }: Props) {
               <div className="p-3 bg-neutral-950/80 border border-neutral-800/80 rounded-lg">
                 <span className="text-neutral-500 block text-[10px] uppercase">Pemeriksaan Subsubsistem</span>
                 <span className="text-lg font-bold text-neutral-200">
-                  {auditResult ? `${auditResult.passedChecks}/${auditResult.totalChecks} Lulus` : '9 Modul Inti'}
+                  {auditResult ? `${auditResult.passedChecks}/${auditResult.totalChecks} Lulus` : '11 Modul Inti'}
                 </span>
               </div>
             </div>
@@ -295,7 +295,7 @@ export function SystemIntegrityGuard({ onStatusChange }: Props) {
           <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl p-5 flex flex-col gap-3">
             <h4 className="text-xs font-bold uppercase tracking-widest text-neutral-300 flex items-center gap-2">
               <Layers className="w-3.5 h-3.5 text-indigo-400" />
-              Verifikasi Invariant 9 Subsistem
+              Verifikasi Invariant 11 Subsistem
             </h4>
 
             <div className="flex flex-col gap-2 max-h-96 overflow-y-auto pr-1">
@@ -516,5 +516,19 @@ const defaultSubsystemChecks: SubsystemAuditCheck[] = [
     passed: true,
     durationMs: 2,
     location: { file: 'src/redqueen/dht/routing.ts', line: 60, functionOrClass: 'RoutingTable' }
+  },
+  {
+    name: 'Linear SSM Recurrent Dynamics & Stability Invariants',
+    subsystem: 'NEURAL_SSM',
+    passed: true,
+    durationMs: 4,
+    location: { file: 'src/redqueen/learning/linear_ssm.ts', line: 120, functionOrClass: 'LinearSSMCell' }
+  },
+  {
+    name: 'Inter-Cell Synaptic Network STDP & Conductance Invariants',
+    subsystem: 'MACRO_NEURAL_SYNAPSES',
+    passed: true,
+    durationMs: 3,
+    location: { file: 'src/redqueen/network/synaptic_network.ts', line: 80, functionOrClass: 'InterCellSynapticNetwork' }
   }
 ];

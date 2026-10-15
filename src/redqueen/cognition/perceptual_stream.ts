@@ -187,7 +187,7 @@ export class PerceptualStreamIngestor {
       if (this.cognitiveGraph) {
         const conceptId = `con_stream_${factId}`;
         try {
-          await this.cognitiveGraph.insertConcept({
+          const insertedSubject = await this.cognitiveGraph.insertConcept({
             conceptId,
             canonicalName: prop.subject,
             category: InformationCategory.GENERAL_TECHNOLOGY,
@@ -208,7 +208,7 @@ export class PerceptualStreamIngestor {
           // For multi-token objects, also create an object concept & relational edge
           if (prop.object.length > 3 && prop.object.length < 50) {
             const targetConceptId = `con_stream_obj_${factId}`;
-            await this.cognitiveGraph.insertConcept({
+            const insertedObject = await this.cognitiveGraph.insertConcept({
               conceptId: targetConceptId,
               canonicalName: prop.object,
               category: InformationCategory.GENERAL_TECHNOLOGY,
@@ -225,19 +225,25 @@ export class PerceptualStreamIngestor {
               metadata: {}
             });
 
-            await this.cognitiveGraph.insertRelation({
-              relationId: `rel_stream_${factId}`,
-              subjectConceptId: conceptId,
-              predicate: CognitiveRelationPredicate.SUPPORTS,
-              objectConceptId: targetConceptId,
-              confidence: prop.confidence,
-              provenance: ['perceptual_stream_ingestion', sourceUri],
-              verificationStatus: RepresentationVerificationStatus.SUPPORTED,
-              createdAt: new Date().toISOString(),
-              originatingCellId: 'perceptual_stream',
-              metadata: { weight: 0.85, directed: true }
-            });
-            relationsCreated++;
+            // Use the actual concept IDs returned from insertConcept (handles deduplication and canonical existing IDs)
+            const actualSubjectId = insertedSubject?.conceptId;
+            const actualObjectId = insertedObject?.conceptId;
+
+            if (actualSubjectId && actualObjectId && actualSubjectId !== actualObjectId) {
+              await this.cognitiveGraph.insertRelation({
+                relationId: `rel_stream_${factId}`,
+                subjectConceptId: actualSubjectId,
+                predicate: CognitiveRelationPredicate.SUPPORTS,
+                objectConceptId: actualObjectId,
+                confidence: prop.confidence,
+                provenance: ['perceptual_stream_ingestion', sourceUri],
+                verificationStatus: RepresentationVerificationStatus.SUPPORTED,
+                createdAt: new Date().toISOString(),
+                originatingCellId: 'perceptual_stream',
+                metadata: { weight: 0.85, directed: true }
+              });
+              relationsCreated++;
+            }
           }
         } catch (err: any) {
           logger.debug('perceptual_stream', 'deferred_concept_insertion', { error: err.message });

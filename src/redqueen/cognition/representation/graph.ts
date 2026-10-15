@@ -280,6 +280,14 @@ export class CognitiveGraph {
       throw new Error(`Self-loop relation rejected: concept '${validated.subjectConceptId}' cannot relate to itself via '${validated.predicate}'`);
     }
 
+    // Referential integrity check: Subject and object concepts MUST exist in the graph!
+    if (!this.concepts.has(validated.subjectConceptId)) {
+      throw new Error(`Referential integrity violation: subject concept '${validated.subjectConceptId}' does not exist in graph`);
+    }
+    if (!this.concepts.has(validated.objectConceptId)) {
+      throw new Error(`Referential integrity violation: object concept '${validated.objectConceptId}' does not exist in graph`);
+    }
+
     // Duplicate relation check
     for (const rel of this.relations.values()) {
       if (
@@ -317,6 +325,26 @@ export class CognitiveGraph {
     await this.persistEntry(validated.relationId, 'COGNITIVE_RELATION', validated, validated.confidence, validated.provenance);
 
     return validated;
+  }
+
+  /**
+   * Prunes orphaned relations whose subject or object concept does not exist in the graph.
+   */
+  public async pruneOrphanedRelations(): Promise<string[]> {
+    const pruned: string[] = [];
+    for (const [relId, rel] of Array.from(this.relations.entries())) {
+      if (!this.concepts.has(rel.subjectConceptId) || !this.concepts.has(rel.objectConceptId)) {
+        this.relations.delete(relId);
+        await this.memory.delete(relId).catch(() => undefined);
+        this.outgoingRelations.get(rel.subjectConceptId)?.delete(relId);
+        this.incomingRelations.get(rel.objectConceptId)?.delete(relId);
+        pruned.push(relId);
+      }
+    }
+    if (pruned.length > 0) {
+      logger.info(this.component, 'orphaned_relations_pruned', { count: pruned.length, pruned });
+    }
+    return pruned;
   }
 
   /**
@@ -1785,6 +1813,11 @@ export class CognitiveGraph {
             const parsed = CognitiveRelationSchema.safeParse(entry.content);
             if (parsed.success) {
               const rel = { ...parsed.data };
+              // Referential consistency guard: if either subject or object does not exist in restored concepts, purge orphaned relation
+              if (!this.concepts.has(rel.subjectConceptId) || !this.concepts.has(rel.objectConceptId)) {
+                await this.memory.delete(entry.id).catch(() => undefined);
+                break;
+              }
               if (entry.provenance && entry.provenance.length > 0) {
                 rel.provenance = Array.from(new Set([...rel.provenance, ...entry.provenance]));
               }
@@ -1896,6 +1929,8 @@ export class CognitiveGraph {
           }
         }
       }
+
+      await this.pruneOrphanedRelations();
 
       logger.info(this.component, 'cognitive_graph_restored', {
         cellId: this.cellId,

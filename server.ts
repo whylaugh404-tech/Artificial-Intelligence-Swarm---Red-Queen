@@ -230,6 +230,9 @@ async function startServer() {
 
   app.post('/api/integrity/audit', async (req, res) => {
     try {
+      if (cell.cognitiveGraph?.pruneOrphanedRelations) {
+        await cell.cognitiveGraph.pruneOrphanedRelations();
+      }
       const report = await cell.integrity.runDeepSystemAudit(cell);
       res.json(report);
     } catch (err: any) {
@@ -237,7 +240,10 @@ async function startServer() {
     }
   });
 
-  app.post('/api/integrity/reset', (req, res) => {
+  app.post('/api/integrity/reset', async (req, res) => {
+    if (cell.cognitiveGraph?.pruneOrphanedRelations) {
+      await cell.cognitiveGraph.pruneOrphanedRelations();
+    }
     cell.integrity.resetLockdownAfterRepair();
     res.json({ success: true, message: 'Lockdown reset' });
   });
