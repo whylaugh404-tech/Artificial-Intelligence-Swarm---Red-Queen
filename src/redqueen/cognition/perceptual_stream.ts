@@ -1,5 +1,6 @@
 import { CompactHdcIndex } from './knowledge_distillation';
 import { CognitiveGraph } from './representation/graph';
+import { CognitiveRelationPredicate, RepresentationVerificationStatus } from './representation/types';
 import { LinearSSMCell } from '../learning/linear_ssm';
 import { MicroTokenizer } from './tokenizer';
 import { Hypervector, bundle } from './hdc';
@@ -195,11 +196,12 @@ export class PerceptualStreamIngestor {
             sourceKnowledgeIds: [`stream_${factId}`],
             sourceExperienceIds: [],
             originatingCellId: 'perceptual_stream',
-            verificationStatus: 'SUPPORTED' as any,
+            verificationStatus: RepresentationVerificationStatus.SUPPORTED,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             version: 1,
-            provenance: ['perceptual_stream_ingestion', sourceUri]
+            provenance: ['perceptual_stream_ingestion', sourceUri],
+            metadata: {}
           });
           conceptsCreated++;
 
@@ -215,26 +217,25 @@ export class PerceptualStreamIngestor {
               sourceKnowledgeIds: [`stream_${factId}`],
               sourceExperienceIds: [],
               originatingCellId: 'perceptual_stream',
-              verificationStatus: 'SUPPORTED' as any,
+              verificationStatus: RepresentationVerificationStatus.SUPPORTED,
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
               version: 1,
-              provenance: ['perceptual_stream_ingestion', sourceUri]
+              provenance: ['perceptual_stream_ingestion', sourceUri],
+              metadata: {}
             });
 
             await this.cognitiveGraph.insertRelation({
               relationId: `rel_stream_${factId}`,
-              sourceConceptId: conceptId,
-              targetConceptId,
-              predicate: 'SUPPORTS' as any,
+              subjectConceptId: conceptId,
+              predicate: CognitiveRelationPredicate.SUPPORTS,
+              objectConceptId: targetConceptId,
               confidence: prop.confidence,
-              weight: 0.85,
-              directed: true,
-              originatingCellId: 'perceptual_stream',
-              provenance: ['perceptual_stream_ingestion'],
-              version: 1,
+              provenance: ['perceptual_stream_ingestion', sourceUri],
+              verificationStatus: RepresentationVerificationStatus.SUPPORTED,
               createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
+              originatingCellId: 'perceptual_stream',
+              metadata: { weight: 0.85, directed: true }
             });
             relationsCreated++;
           }

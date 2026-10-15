@@ -79,7 +79,7 @@ export class CellMetabolismController {
 
   constructor(
     cellIdOrConfig?: string | CellularVitalityConfig,
-    audit?: MetabolismAuditTrail,
+    audit?: MetabolismAuditTrail | CellularVitalityConfig,
     memoryStore?: MemoryStore,
     config?: CellularVitalityConfig
   ) {
@@ -87,7 +87,7 @@ export class CellMetabolismController {
     if (typeof cellIdOrConfig === 'string') {
       this.cellId = cellIdOrConfig;
       if (audit && typeof (audit as any).recordEvent === 'function') {
-        this.audit = audit;
+        this.audit = audit as MetabolismAuditTrail;
         this.memoryStore = memoryStore;
         resolvedConfig = config;
       } else if (audit && typeof audit === 'object') {

@@ -69,6 +69,15 @@ export class LogicExpert implements CellularExpert {
 export class KnowledgeExpert implements CellularExpert {
   readonly name = 'KnowledgeExpert';
   readonly domain = 'semantic_retrieval';
+  private graph?: any;
+
+  constructor(graph?: any) {
+    this.graph = graph;
+  }
+
+  setCognitiveGraph(graph: any): void {
+    this.graph = graph;
+  }
 
   canHandle(context: ExpertContext): number {
     const p = context.prompt.toLowerCase();
@@ -80,15 +89,49 @@ export class KnowledgeExpert implements CellularExpert {
   }
 
   process(context: ExpertContext): ExpertOutput {
+    // If graph with search is attached, inspect concepts matching prompt
+    if (this.graph && typeof this.graph.findConceptsByQuery === 'function') {
+      const concepts = this.graph.findConceptsByQuery(context.prompt);
+      if (concepts && concepts.length > 0) {
+        const entities = concepts.map((c: any) => c.canonicalName || c.name || String(c));
+        return {
+          expertName: this.name,
+          confidence: 0.88,
+          data: {
+            retrievalDomain: 'symbolic_graph',
+            entitiesFound: entities,
+            tripletMatches: concepts.length
+          },
+          summary: `Knowledge retrieved: ${entities.slice(0, 3).join(', ')}.`
+        };
+      }
+    }
+
+    // Inspect if entities are provided in context metadata
+    const ctxEntities = Array.isArray(context.metadata?.entities) ? context.metadata.entities : [];
+    if (ctxEntities.length > 0) {
+      return {
+        expertName: this.name,
+        confidence: 0.85,
+        data: {
+          retrievalDomain: 'context_entities',
+          entitiesFound: ctxEntities,
+          tripletMatches: ctxEntities.length
+        },
+        summary: `Context entities matched: ${ctxEntities.slice(0, 3).join(', ')}.`
+      };
+    }
+
+    // Honest fallback: zero mock entities
     return {
       expertName: this.name,
-      confidence: 0.88,
+      confidence: 0.35,
       data: {
         retrievalDomain: 'symbolic_graph',
-        entitiesFound: ['RedQueen', 'AutonomousCell'],
-        tripletMatches: 2
+        entitiesFound: [],
+        tripletMatches: 0
       },
-      summary: `Knowledge retrieved from local semantic graph.`
+      summary: `No local graph propositions or verified entities matched the query.`
     };
   }
 }

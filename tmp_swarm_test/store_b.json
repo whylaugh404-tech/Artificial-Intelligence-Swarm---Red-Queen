@@ -1,0 +1,136 @@
+[
+  {
+    "id": "cell_identity_a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971",
+    "cellId": "a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971",
+    "category": "PROCEDURAL",
+    "content": {
+      "nodeId": "a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEApdqYs+5MISWtu/e1Wn7Jp0E6u4jynxVmnX4MEq+Z6BA=\n-----END PUBLIC KEY-----",
+      "encryptedPrivateKey": {
+        "ciphertext": "gfk4ZNKTsz7OKwDQwxBvNMooSTWtmxNq6P6+DLHZYLRbMFkltyNpd5KMIb/0vJff92YKnAVmzQVwsEGbNujjZaiiXZzf/ZvqP+TCTRUddgFskcWaG4Fa0E94nIFUgpLeyCtC/4Pka15Qqi+1ifI0dZ4f8awyzA==",
+        "iv": "/5ZlnLQ0TX2kYk2F",
+        "authTag": "lKzWDQ1znbA3aNoEubENeA==",
+        "aad": "a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971"
+      }
+    },
+    "source": "cell_initialization",
+    "createdAt": "2026-10-14T18:51:17.018Z",
+    "updatedAt": "2026-10-14T18:51:17.018Z",
+    "confidence": 1,
+    "hash": "6bc65abcd858f14285cfb7601d3e08aacf16fd99f0a4174790084cf8aefc47a1",
+    "provenance": [
+      "a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971"
+    ],
+    "version": 1
+  },
+  {
+    "id": "cell_genome_a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971",
+    "cellId": "a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971",
+    "category": "SEMANTIC",
+    "content": {
+      "genomeId": "502f6a5675a04a4d8df9726b2dd80435",
+      "parentGenomeId": null,
+      "parentCellId": null,
+      "generation": 0,
+      "lineageId": "dc1bc2a901b8472b991f9d66af8e55b1",
+      "createdAt": "2026-10-14T18:51:16.245Z",
+      "logicVersion": "1.0.0",
+      "traits": {
+        "mutationRate": 0.05,
+        "riskTolerance": 0.2,
+        "explorationVsExploitation": 0.5,
+        "maxCognitiveCycleDepth": 5,
+        "executionParallelism": 1
+      },
+      "capabilities": [
+        "OSINT_SCAN",
+        "INFO_PROCESSING",
+        "KNOWLEDGE_QUERY",
+        "COGNITIVE_REASONING",
+        "SWARM_COORDINATION",
+        "NEURAL_INFERENCE",
+        "NEURAL_TRAINING"
+      ],
+      "specialization": null,
+      "genomeVersion": 1,
+      "ancestorGenomeIds": [],
+      "ancestorCellIds": []
+    },
+    "source": "cell_initialization",
+    "createdAt": "2026-10-14T18:51:17.020Z",
+    "updatedAt": "2026-10-14T18:51:17.020Z",
+    "confidence": 1,
+    "hash": "ae0223afe3094d8bf26f9ef2ea996d4298039481d55d2797a9b04443dfc6bfe2",
+    "provenance": [
+      "a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971"
+    ],
+    "version": 1
+  },
+  {
+    "id": "cognitive_state_a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971",
+    "cellId": "a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971",
+    "category": "SEMANTIC",
+    "content": {
+      "cellId": "a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971",
+      "lifecycleState": "ACTIVE",
+      "specialization": null,
+      "activeGoals": [],
+      "knowledgeReferences": [],
+      "conceptReferences": [],
+      "experienceReferences": [],
+      "knowledgeGaps": [],
+      "operationalConfidence": 1,
+      "lastCognitiveUpdate": "2026-10-14T18:51:17.023Z",
+      "memoryStats": {
+        "total": 2,
+        "episodic": 0,
+        "semantic": 1,
+        "procedural": 1
+      },
+      "metadata": {}
+    },
+    "source": "cognitive_state_manager",
+    "createdAt": "2026-10-14T18:51:17.023Z",
+    "updatedAt": "2026-10-14T18:51:17.023Z",
+    "confidence": 1,
+    "hash": "3a2fb32bf676976cd30b87ba4f07be4ba753cb04584b9bd296d720fe3d986b7e",
+    "provenance": [
+      "a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971"
+    ],
+    "version": 1
+  },
+  {
+    "id": "membership_cert_a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971",
+    "content": {
+      "certificateId": "88722836-6242-4172-9aaf-9cce8ed4096e",
+      "swarmId": "redqueen-swarm-e2e",
+      "memberNodeId": "a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971",
+      "memberPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEApdqYs+5MISWtu/e1Wn7Jp0E6u4jynxVmnX4MEq+Z6BA=\n-----END PUBLIC KEY-----",
+      "issuerId": "01cd323a9371880cf051142efe6f04f81681fd0360a82960aa1b0d26473fa693",
+      "issuerPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA8o6fESsyK9l4upn/KwxQANaANb5cS2ekN19C2Oc//yU=\n-----END PUBLIC KEY-----",
+      "issuedAt": 1792003877031,
+      "expiresAt": 1792007477031,
+      "membershipVersion": 1,
+      "protocolVersion": 1,
+      "capabilities": [
+        "discovery",
+        "routing",
+        "computation",
+        "memory"
+      ],
+      "revocationEpoch": 0,
+      "signature": "d9100403b15ef144635f7bbe9628f17085336ec84cb782a9b8f04cade983359be3dbf9293351e0c4fcf1f6e0468c3bbc99f944d73102f4160ee8a5194eb4100f"
+    },
+    "source": "swarm_membership",
+    "createdAt": "2026-10-14T18:51:17.031Z",
+    "updatedAt": "2026-10-14T18:51:17.047Z",
+    "confidence": 1,
+    "hash": "d9100403b15ef144635f7bbe9628f17085336ec84cb782a9b8f04cade983359be3dbf9293351e0c4fcf1f6e0468c3bbc99f944d73102f4160ee8a5194eb4100f",
+    "provenance": [
+      "01cd323a9371880cf051142efe6f04f81681fd0360a82960aa1b0d26473fa693"
+    ],
+    "cellId": "a2e79e512481a027820e982238abcbc75fed001bc082c80dc9adc84dd8910971",
+    "category": "SEMANTIC",
+    "version": 1
+  }
+]

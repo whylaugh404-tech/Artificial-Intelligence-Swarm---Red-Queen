@@ -199,8 +199,8 @@ export class ContradictionFeedbackLoop {
           await this.cognitiveGraph.insertRelation({
             ...rel,
             confidence: Math.max(0.10, newWeight),
-            updatedAt: now,
-            provenance: [...rel.provenance, `contradiction_slashed:${auditId}`]
+            provenance: [...rel.provenance, `contradiction_slashed:${auditId}`],
+            metadata: { ...rel.metadata, updatedAt: now }
           });
           penalizedRelations.push(`${relId} (${oldWeight.toFixed(2)} -> ${newWeight.toFixed(2)})`);
         }
@@ -318,8 +318,8 @@ export class ContradictionFeedbackLoop {
           this.cognitiveGraph.insertRelation({
             ...rel,
             confidence: Math.max(0.10, newWeight),
-            updatedAt: now,
-            provenance: [...rel.provenance, `contradiction_slashed:${auditId}`]
+            provenance: [...rel.provenance, `contradiction_slashed:${auditId}`],
+            metadata: { ...rel.metadata, updatedAt: now }
           }).catch(() => undefined);
           penalizedRelations.push(`${relId} (${oldWeight.toFixed(2)} -> ${newWeight.toFixed(2)})`);
         }

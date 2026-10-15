@@ -1,4 +1,4 @@
-import { MemoryStore, MemoryCategory, MemoryEntry } from '../../memory/store';
+import { MemoryStore, MemoryCategory, MemoryEntry, JsonFileMemoryStore } from '../../memory/store';
 import { logger } from '../../core/logger';
 import {
   CognitiveConcept,
@@ -150,11 +150,14 @@ export class CognitiveGraph {
     }
   }
 
+  private readonly memory: MemoryStore;
+
   constructor(
-    public readonly cellId: string,
-    private readonly memory: MemoryStore,
+    public readonly cellId: string = 'cell_default',
+    memory?: MemoryStore,
     budget?: Partial<CognitiveRepresentationBudget>
   ) {
+    this.memory = memory || new JsonFileMemoryStore(':memory:', this.cellId);
     this.budget = Object.freeze({
       ...DEFAULT_REPRESENTATION_BUDGET,
       ...(budget || {})

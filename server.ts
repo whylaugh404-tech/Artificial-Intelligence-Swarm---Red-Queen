@@ -224,6 +224,24 @@ async function startServer() {
     });
   });
 
+  app.get('/api/integrity/status', (req, res) => {
+    res.json(cell.integrity.getLockdownReport());
+  });
+
+  app.post('/api/integrity/audit', async (req, res) => {
+    try {
+      const report = await cell.integrity.runDeepSystemAudit(cell);
+      res.json(report);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/integrity/reset', (req, res) => {
+    cell.integrity.resetLockdownAfterRepair();
+    res.json({ success: true, message: 'Lockdown reset' });
+  });
+
   app.get('/api/benchmark/dataset', async (req, res) => {
     try {
       const memBefore = process.memoryUsage().heapUsed;
@@ -328,6 +346,12 @@ async function startServer() {
 
   app.post('/api/cell/metabolize', async (req, res) => {
     try {
+      if (!cell.integrity.isSystemOperable()) {
+        return res.status(503).json({
+          error: '[CRITICAL SYSTEM LOCKDOWN] Red Queen system is halted due to integrity anomaly.',
+          lockdown: cell.integrity.getLockdownReport()
+        });
+      }
       const result = await cell.metabolize(req.body);
       const statusCode = result.status === 'ACCEPTED' ? 200 : (result.status === 'INVALID' ? 400 : 202);
       if (result.status === 'ACCEPTED' && req.body.content) {
@@ -335,6 +359,12 @@ async function startServer() {
       }
       res.status(statusCode).json(result);
     } catch (err: any) {
+      if (err.name === 'SystemIntegrityLockdownError' || !cell.integrity.isSystemOperable()) {
+        return res.status(503).json({
+          error: err.message,
+          lockdown: cell.integrity.getLockdownReport()
+        });
+      }
       res.status(500).json({ error: err.message });
     }
   });
@@ -562,6 +592,12 @@ async function startServer() {
 
   app.post('/api/chat', async (req, res) => {
     try {
+      if (!cell.integrity.isSystemOperable()) {
+        return res.status(503).json({
+          error: '[CRITICAL SYSTEM LOCKDOWN] Red Queen system is halted due to integrity anomaly.',
+          lockdown: cell.integrity.getLockdownReport()
+        });
+      }
       const { message } = req.body;
       if (!message || typeof message !== 'string') {
         return res.status(400).json({ error: 'message string required' });
@@ -582,6 +618,12 @@ async function startServer() {
         model: 'red-queen-native-sovereign'
       });
     } catch (err: any) {
+      if (err.name === 'SystemIntegrityLockdownError' || !cell.integrity.isSystemOperable()) {
+        return res.status(503).json({
+          error: err.message,
+          lockdown: cell.integrity.getLockdownReport()
+        });
+      }
       res.status(500).json({ error: err.message });
     }
   });
@@ -920,6 +962,94 @@ async function startServer() {
       }
       await cell.connectToPeer(endpoint);
       res.json({ success: true, connectedEndpoint: endpoint });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- Macro-Neural Inter-Cell Synaptic Network Endpoints ---
+  app.get('/api/p2p/synapses', (req, res) => {
+    try {
+      res.json(cell.synapticNetwork.exportTopology());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/p2p/synapses/pulse', (req, res) => {
+    try {
+      const { targetCellId, activationVector } = req.body;
+      const results = cell.emitNeuralSynapticPulse(targetCellId, activationVector);
+      res.json({ success: true, results });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/p2p/synapses/learn', (req, res) => {
+    try {
+      const { rule, targetCellId, preTime, postTime, preVector, postVector, reward, isSuccess } = req.body;
+      if (!targetCellId) {
+        return res.status(400).json({ error: 'targetCellId is required' });
+      }
+
+      if (rule === 'STDP') {
+        const result = cell.synapticNetwork.applySTDP(targetCellId, preTime || (Date.now() - 15), postTime || Date.now());
+        return res.json({ success: true, rule: 'STDP', result, synapse: cell.synapticNetwork.getSynapse(targetCellId) });
+      }
+
+      if (rule === 'HEBBIAN') {
+        const result = cell.synapticNetwork.applyHebbianCoactivation(
+          targetCellId, 
+          preVector || cell.neuroSymbolic.ssmHiddenState, 
+          postVector || cell.neuroSymbolic.ssmHiddenState
+        );
+        return res.json({ success: true, rule: 'HEBBIAN', result, synapse: cell.synapticNetwork.getSynapse(targetCellId) });
+      }
+
+      if (rule === 'REINFORCEMENT') {
+        const result = cell.synapticNetwork.applyTaskReinforcement(targetCellId, reward || 0.8, isSuccess ?? true);
+        return res.json({ success: true, rule: 'REINFORCEMENT', result, synapse: cell.synapticNetwork.getSynapse(targetCellId) });
+      }
+
+      res.status(400).json({ error: 'Invalid rule. Supported: STDP, HEBBIAN, REINFORCEMENT' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- Linear SSM Recurrent Learning & Parameter Endpoints ---
+  app.post('/api/ssm/train', (req, res) => {
+    try {
+      const { inputs, targets, learningRate, optimizer, epochs } = req.body;
+      if (!Array.isArray(inputs) || !Array.isArray(targets) || inputs.length !== targets.length) {
+        return res.status(400).json({ error: 'inputs and targets arrays of equal length are required' });
+      }
+
+      const ssm = cell.neuroSymbolic.ssmCell;
+      let lastResult: any;
+      const numEpochs = epochs || 1;
+
+      for (let ep = 0; ep < numEpochs; ep++) {
+        lastResult = ssm.trainSequence(inputs, targets, { learningRate, optimizer });
+      }
+
+      res.json({
+        success: true,
+        epochsTrained: numEpochs,
+        loss: lastResult.loss,
+        gradNorm: lastResult.gradNorm,
+        decayMean: lastResult.decayMean,
+        invariants: ssm.assertInvariants()
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/ssm/parameters', (req, res) => {
+    try {
+      res.json(cell.neuroSymbolic.ssmCell.exportParameters());
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

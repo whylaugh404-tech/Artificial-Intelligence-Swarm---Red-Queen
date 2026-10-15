@@ -32,6 +32,7 @@ import { RepresentationVerificationStatus } from './representation/types';
 import { InformationCategory } from '../metabolism/types';
 import { MemoryStore } from '../memory/store';
 import { logger } from '../core/logger';
+import { systemIntegrity } from '../core/system_integrity';
 import { CellMetabolismController, VitalityTelemetry } from '../metabolism/cellular_vitality';
 import { 
   ContradictionFeedbackLoop, 
@@ -227,7 +228,7 @@ export class NeuroSymbolicEngine {
   public readonly perceptualStream: PerceptualStreamIngestor;
   public vitality?: CellMetabolismController;
 
-  private ssmHiddenState: Float32Array;
+  public ssmHiddenState: Float32Array;
   private cognitiveGraph?: CognitiveGraph;
   private memoryStore?: MemoryStore;
 
@@ -280,6 +281,7 @@ export class NeuroSymbolicEngine {
 
     // Initialize Cellular MoE Router
     this.moeRouter = new CellularMoERouter(2);
+    this.moeRouter.registerExpert(new KnowledgeExpert(this.cognitiveGraph));
     this.moeRouter.registerExpert(new CyberSecurityExpert());
     this.metabolicExpert = new MetabolicCellExpert(this.vitality);
     this.moeRouter.registerExpert(this.metabolicExpert);
@@ -393,6 +395,7 @@ export class NeuroSymbolicEngine {
     input: string, 
     context?: Record<string, any>
   ): Promise<NeuroSymbolicResponse> {
+    systemIntegrity.assertOperable('neuroSymbolic.processChat');
     const t0 = performance.now();
 
     // 1. Tokenization

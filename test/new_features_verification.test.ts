@@ -7,6 +7,7 @@ import { CellMetabolismController } from '../src/redqueen/metabolism/cellular_vi
 import { LinearSSMCell } from '../src/redqueen/learning/linear_ssm';
 import { CompactHdcIndex } from '../src/redqueen/cognition/knowledge_distillation';
 import { NeuroSymbolicEngine } from '../src/redqueen/cognition/neuro_symbolic_engine';
+import { InformationCategory } from '../src/redqueen/metabolism/types';
 
 describe('Verification of Newly Implemented Autonomous Features', () => {
   let graph: CognitiveGraph;
@@ -49,19 +50,21 @@ describe('Verification of Newly Implemented Autonomous Features', () => {
       conceptId: 'concept_hyp_1',
       canonicalName: 'Matahari Mengelilingi Bumi',
       description: 'Hipotesis awal pengujian kontradiksi',
-      category: 'GENERAL_KNOWLEDGE',
+      category: InformationCategory.GENERAL_TECHNOLOGY,
       confidence: 0.9,
-      originatingCellId: 'cell_test_01',
-      source: 'UNVERIFIED_HYPOTHESIS'
+      originatingCellId: 'cell_test_01'
     });
 
     // Record reasoning episode
     contradictionLoop.recordEpisode({
-      query: 'Apakah matahari mengelilingi bumi?',
-      response: 'Matahari mengelilingi bumi secara periodik.',
+      episodeId: 'ep_test_01',
+      prompt: 'Apakah matahari mengelilingi bumi?',
+      statement: 'Matahari mengelilingi bumi secara periodik.',
       activatedConceptIds: ['concept_hyp_1'],
-      synapticPathwayIds: ['concept_hyp_1'],
-      atpAllocated: 50
+      activatedRelationIds: ['concept_hyp_1'],
+      groundedFacts: [],
+      timestamp: Date.now(),
+      confidence: 0.9
     });
 
     // User provides negative feedback
@@ -108,7 +111,7 @@ describe('Verification of Newly Implemented Autonomous Features', () => {
 
   it('4. End-to-End NeuroSymbolicEngine Integration', async () => {
     const engine = new NeuroSymbolicEngine({
-      graph,
+      cognitiveGraph: graph,
       vitality
     });
 

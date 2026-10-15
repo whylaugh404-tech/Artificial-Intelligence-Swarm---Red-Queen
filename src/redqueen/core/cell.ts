@@ -91,6 +91,9 @@ import type { MembershipAuthority } from '../swarm/authority';
 import { MembershipCertificate, MembershipState } from '../swarm/types';
 import { NeuralLearningEngine } from '../learning';
 import { NeuroSymbolicEngine } from '../cognition/neuro_symbolic_engine';
+import { systemIntegrity, SystemIntegrityTracker } from './system_integrity';
+import { InterCellSynapticNetwork, SynapticPulsePayload, SynapticFeedbackPayload } from '../network/synaptic_network';
+import * as crypto from 'crypto';
 
 export interface CellOptions {
   genome?: Partial<CellGenome>;
@@ -464,8 +467,11 @@ export class Cell {
   public readonly mitosis: MitosisEngine;
   public readonly learning: NeuralLearningEngine;
   public readonly neuroSymbolic: NeuroSymbolicEngine;
+  public readonly synapticNetwork: InterCellSynapticNetwork;
+  public readonly integrity: SystemIntegrityTracker = systemIntegrity;
 
   public async inferNeuralDistributed(text: string, availableCells: Cell[] = [this]): Promise<ComputationResult> {
+    this.integrity.assertOperable('cell.inferNeuralDistributed');
     if (!text.trim()) throw new Error('Distributed neural inference requires non-empty text');
     const taskId = `neural_infer_${computeDeterministicHash({ cellId: this.nodeId, text }).slice(0, 16)}`;
     const task: ComputationTask = {
@@ -487,6 +493,7 @@ export class Cell {
     options: { epochs?: number; learningRate?: number; validationSamples?: Array<{ text: string; target: number }> } = {},
     availableCells: Cell[] = [this]
   ): Promise<ComputationResult> {
+    this.integrity.assertOperable('cell.trainNeuralDistributed');
     if (samples.length === 0) throw new Error('Distributed neural training requires samples');
     const taskId = `neural_train_${computeDeterministicHash({ cellId: this.nodeId, samples, options }).slice(0, 16)}`;
     const task: ComputationTask = {
@@ -644,6 +651,7 @@ export class Cell {
     });
 
     this.routing = new RoutingTable(this.nodeId);
+    this.synapticNetwork = new InterCellSynapticNetwork(this.nodeId);
     this.transport = new P2PTransport(this.nodeId, rawPrivateKey, this.publicKey);
     this.collectiveComputation.fabric = new DistributedComputationFabric(this, this.collectiveComputation);
     this.osint = new OsintScanner();
@@ -817,6 +825,20 @@ export class Cell {
         return;
       }
 
+      if (msg.type === MessageType.NEURAL_SYNAPTIC_PULSE) {
+        this.handleNeuralSynapticPulse(msg).catch(err => {
+          logger.warn(this.component, 'failed_handling_neural_synaptic_pulse', { error: err.message });
+        });
+        return;
+      }
+
+      if (msg.type === MessageType.NEURAL_SYNAPSE_FEEDBACK) {
+        this.handleNeuralSynapseFeedback(msg).catch(err => {
+          logger.warn(this.component, 'failed_handling_neural_synapse_feedback', { error: err.message });
+        });
+        return;
+      }
+
       logger.info(this.component, 'app_message_received', { type: msg.type, sender: msg.senderId });
     });
     
@@ -828,6 +850,8 @@ export class Cell {
           endpoint: peer.remoteEndpoint,
           lastSeen: peer.lastSeen
         });
+        // Register inter-cell macro-neural synapse
+        this.synapticNetwork.registerSynapse(peer.remoteNodeId);
       }
     });
 
@@ -1217,6 +1241,7 @@ export class Cell {
    * Metabolizes an incoming InformationRecord through the Cell's metabolism engine.
    */
   async metabolize(input: InformationRecordInput): Promise<MetabolismResult> {
+    this.integrity.assertOperable('cell.metabolize');
     const state = this.lifecycle.getState();
     if (state === CellState.RETIRED) {
       throw new Error('Cell is retired and cannot metabolize information');
@@ -1333,6 +1358,7 @@ export class Cell {
     return {
       nodeId: this.nodeId,
       state: this.lifecycle.getState(),
+      integrity: this.integrity.getLockdownReport(),
       peers: this.transport.getActivePeerCount(),
       dhtBucketsActive: this.routing.getActiveBucketCount(),
       swarmState: this.swarm.getMembershipState(this.nodeId),
@@ -1488,12 +1514,132 @@ export class Cell {
         hypothesisId: payload.hypothesisId,
         verifier: msg.senderId
       });
+      // Strengthen macro-neural synapse to the confirming verifier
+      this.synapticNetwork.applyTaskReinforcement(msg.senderId, payload.yieldScore, true);
+    } else {
+      // Weaken synapse if hypothesis failed consensus
+      this.synapticNetwork.applyTaskReinforcement(msg.senderId, 0.5, false);
     }
 
     logger.info(this.component, 'epistemic_proof_verdict_received', {
       hypothesisId: payload.hypothesisId,
       verifier: msg.senderId,
       verdictCount: verdicts.length
+    });
+  }
+
+  /**
+   * Broadcasts or directs a neural synaptic action potential / pulse across inter-cell synapses
+   */
+  public emitNeuralSynapticPulse(
+    targetCellId?: string,
+    activationVector?: Float32Array | number[]
+  ): Array<{
+    targetCellId: string;
+    synapseId: string;
+    weight: number;
+    conductance: number;
+    signalMagnitude: number;
+    fired: boolean;
+  }> {
+    this.integrity.assertOperable('cell.emitNeuralSynapticPulse');
+
+    // Default to the current recurrent state vector of the cell
+    const actVec = activationVector 
+      ? (activationVector instanceof Float32Array ? activationVector : new Float32Array(activationVector))
+      : this.neuroSymbolic.ssmHiddenState;
+
+    if (targetCellId) {
+      this.synapticNetwork.registerSynapse(targetCellId);
+    }
+
+    const propagationResults = this.synapticNetwork.propagateActivationPulse(actVec);
+
+    for (const res of propagationResults) {
+      if (targetCellId && res.targetCellId !== targetCellId) continue;
+
+      if (res.fired || targetCellId) {
+        const pulsePayload: SynapticPulsePayload = {
+          sourceCellId: this.nodeId,
+          targetCellId: res.targetCellId,
+          activationVector: Array.from(res.transmittedSignal),
+          timestamp: Date.now(),
+          pulseId: `pulse_${crypto.randomUUID().slice(0, 8)}`,
+          conductance: res.conductance
+        };
+
+        this.transport.sendTo(res.targetCellId, MessageType.NEURAL_SYNAPTIC_PULSE, pulsePayload);
+        logger.info(this.component, 'neural_synaptic_pulse_emitted', {
+          targetCellId: res.targetCellId,
+          weight: res.weight,
+          magnitude: res.signalMagnitude,
+          fired: res.fired
+        });
+      }
+    }
+
+    return propagationResults.map(r => ({
+      targetCellId: r.targetCellId,
+      synapseId: r.synapseId,
+      weight: r.weight,
+      conductance: r.conductance,
+      signalMagnitude: r.signalMagnitude,
+      fired: r.fired
+    }));
+  }
+
+  /**
+   * Handles an incoming neural synaptic pulse from another peer cell
+   */
+  private async handleNeuralSynapticPulse(msg: NetworkMessage): Promise<void> {
+    const payload = msg.payload as SynapticPulsePayload;
+    if (!payload || !payload.sourceCellId || !Array.isArray(payload.activationVector)) return;
+
+    // 1. Process STDP and anti-runaway Hebbian plasticity
+    const localPostState = this.neuroSymbolic.ssmHiddenState;
+    const feedback = this.synapticNetwork.handleIncomingPulse(payload, localPostState);
+
+    // 2. Transmitted signal excites the local cell's Linear SSM recurrent state!
+    if (this.neuroSymbolic?.ssmCell) {
+      const inputDim = this.neuroSymbolic.ssmCell.inputDim;
+      const pulseSlice = new Float32Array(inputDim);
+      for (let i = 0; i < inputDim; i++) {
+        pulseSlice[i] = payload.activationVector[i] || 0;
+      }
+      this.neuroSymbolic.ssmCell.step(pulseSlice);
+    }
+
+    // 3. Return synaptic feedback to sender cell
+    this.transport.sendTo(msg.senderId, MessageType.NEURAL_SYNAPSE_FEEDBACK, feedback, msg.messageId);
+
+    logger.info(this.component, 'incoming_synaptic_pulse_integrated', {
+      fromCell: msg.senderId,
+      pulseId: payload.pulseId,
+      deltaT: feedback.deltaT,
+      deltaWeight: feedback.deltaWeight,
+      newWeight: feedback.newWeight
+    });
+  }
+
+  /**
+   * Handles feedback on synaptic plasticity returned by the target cell
+   */
+  private async handleNeuralSynapseFeedback(msg: NetworkMessage): Promise<void> {
+    const feedback = msg.payload as SynapticFeedbackPayload;
+    if (!feedback || !feedback.sourceCellId) return;
+
+    const syn = this.synapticNetwork.getSynapse(msg.senderId);
+    if (syn) {
+      // Synchronize weight with confirmation from peer
+      syn.weight = Math.max(-1.0, Math.min(1.0, feedback.newWeight));
+      if (feedback.isPotentiated) syn.potentiationCount++;
+      else syn.depressionCount++;
+    }
+
+    logger.info(this.component, 'synapse_feedback_synchronized', {
+      peerCellId: msg.senderId,
+      pulseId: feedback.pulseId,
+      newWeight: syn?.weight
     });
   }
 

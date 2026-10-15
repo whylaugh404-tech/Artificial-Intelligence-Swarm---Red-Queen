@@ -588,15 +588,45 @@ export class LatentEnergyTokenProjector {
    * Assembles an organic sentence token-by-token purely by following the minimum-energy
    * trajectory on the manifold of SSM activation and semantic anchors.
    */
-  public decodeSequence(options: {
-    ssmHiddenState: Float32Array;
-    anchorConcepts?: string[];
-    maxTokens?: number;
-    targetLanguage?: 'ID' | 'EN';
-  }): { text: string; tokens: string[]; energyTrajectory: number[] } {
-    const maxLen = options.maxTokens ?? 12;
-    const lang = options.targetLanguage ?? 'ID';
-    const anchors = (options.anchorConcepts || []).map(a => a.trim()).filter(a => a.length > 0);
+  public decodeSequence(
+    optionsOrState: Float32Array | {
+      ssmHiddenState: Float32Array;
+      anchorConcepts?: string[];
+      maxTokens?: number;
+      targetLanguage?: 'ID' | 'EN';
+      temperature?: number;
+      minEnergyThreshold?: number;
+    },
+    optionalOptions?: {
+      anchorConcepts?: string[];
+      maxTokens?: number;
+      targetLanguage?: 'ID' | 'EN';
+      temperature?: number;
+      minEnergyThreshold?: number;
+    }
+  ): { text: string; tokens: string[]; energyTrajectory: number[] } {
+    let ssmState: Float32Array;
+    let maxLen = 12;
+    let lang: 'ID' | 'EN' = 'ID';
+    let anchors: string[] = [];
+
+    if (optionsOrState instanceof Float32Array) {
+      ssmState = optionsOrState;
+      if (optionalOptions) {
+        if (optionalOptions.maxTokens !== undefined) maxLen = optionalOptions.maxTokens;
+        if (optionalOptions.targetLanguage !== undefined) lang = optionalOptions.targetLanguage;
+        if (optionalOptions.anchorConcepts) {
+          anchors = optionalOptions.anchorConcepts.map(a => a.trim()).filter(a => a.length > 0);
+        }
+      }
+    } else {
+      ssmState = optionsOrState.ssmHiddenState;
+      if (optionsOrState.maxTokens !== undefined) maxLen = optionsOrState.maxTokens;
+      if (optionsOrState.targetLanguage !== undefined) lang = optionsOrState.targetLanguage;
+      if (optionsOrState.anchorConcepts) {
+        anchors = optionsOrState.anchorConcepts.map(a => a.trim()).filter(a => a.length > 0);
+      }
+    }
 
     // Dynamic vocabulary pool: micro-vocab + anchor concept words
     const candidatePool = new Set<string>(this.microVocabulary);
@@ -627,7 +657,7 @@ export class LatentEnergyTokenProjector {
       for (const candidate of pool) {
         if (candidate === '.' && emittedTokens.length < 3) continue; // Don't terminate too early
 
-        let energy = this.computeEnergy(options.ssmHiddenState, candidate);
+        let energy = this.computeEnergy(ssmState, candidate);
 
         // Repetition penalty
         if (recentTokens.includes(candidate.toLowerCase())) {

@@ -7,6 +7,7 @@ import { CognitiveGraphPanel } from './components/CognitiveGraphPanel';
 import { MetabolismHub } from './components/MetabolismHub';
 import { GenomeLineagePanel } from './components/GenomeLineagePanel';
 import { NeuroSymbolicPanel } from './components/NeuroSymbolicPanel';
+import { SystemIntegrityGuard } from './components/SystemIntegrityGuard';
 import {
   Database,
   GitBranch,
@@ -17,6 +18,7 @@ import {
   MessageSquare,
   LayoutDashboard,
   Shield,
+  ShieldAlert,
   Zap,
   Cpu
 } from 'lucide-react';
@@ -29,7 +31,8 @@ type NavigationTab =
   | 'metabolism'
   | 'genome'
   | 'benchmark'
-  | 'terminal';
+  | 'terminal'
+  | 'integrity';
 
 export default function App() {
   const [health, setHealth] = useState<any>(null);
@@ -100,6 +103,25 @@ export default function App() {
               <span className="text-neutral-200 font-bold">{health?.cell?.swarmState || 'AUTHENTICATED'}</span>
             </div>
 
+            <div 
+              onClick={() => setActiveTab('integrity')}
+              className={`flex items-center gap-2 px-3 py-1.5 border rounded-md text-xs font-mono cursor-pointer transition-all ${
+                health?.cell?.integrity?.isOperable === false
+                  ? 'bg-red-950/80 border-red-700 text-red-300 animate-pulse'
+                  : 'bg-neutral-900/60 border-neutral-800 text-neutral-300 hover:border-neutral-700'
+              }`}
+            >
+              {health?.cell?.integrity?.isOperable === false ? (
+                <ShieldAlert className="w-3.5 h-3.5 text-red-500 animate-bounce" />
+              ) : (
+                <Shield className="w-3.5 h-3.5 text-emerald-400" />
+              )}
+              <span className="text-neutral-400">Integrity:</span>
+              <span className={`font-bold ${health?.cell?.integrity?.isOperable === false ? 'text-red-400' : 'text-emerald-400'}`}>
+                {health?.cell?.integrity?.isOperable === false ? 'HALTED (LOCKDOWN)' : 'ZERO BUG (OPERABLE)'}
+              </span>
+            </div>
+
             <div className="flex items-center gap-2 px-3 py-1.5 bg-neutral-900/60 border border-neutral-800 rounded-md text-xs font-mono">
               <Zap className="w-3.5 h-3.5 text-indigo-400" />
               <span className="text-neutral-400">Node:</span>
@@ -108,8 +130,37 @@ export default function App() {
           </div>
         </header>
 
+        {/* Real-time Lockdown Alert Banner (visible whenever system is halted) */}
+        {health?.cell?.integrity?.isOperable === false && (
+          <div 
+            onClick={() => setActiveTab('integrity')}
+            className="flex items-center justify-between p-3.5 bg-red-950/90 border border-red-600/80 rounded-xl cursor-pointer hover:bg-red-900/90 transition-all text-xs font-mono shadow-lg shadow-red-950/50 shrink-0"
+          >
+            <div className="flex items-center gap-3">
+              <ShieldAlert className="w-5 h-5 text-red-400 shrink-0 animate-pulse" />
+              <div>
+                <p className="font-bold text-red-200 uppercase tracking-wider">
+                  ⚠️ RED QUEEN HALTED: Invariant / Bug Detected & System Locked Down
+                </p>
+                <p className="text-red-400/90 text-[11px]">
+                  {health.cell.integrity.lockdownReason || 'Critical runtime discrepancy triggered instant lockdown. Click to view bug details and location.'}
+                </p>
+              </div>
+            </div>
+            <span className="px-3 py-1 bg-red-850 hover:bg-red-800 border border-red-600 rounded text-red-200 font-bold uppercase text-[10px] shrink-0">
+              Inspect Bug Location →
+            </span>
+          </div>
+        )}
+
         {/* Global Navigation Tabs (Clean segmented control) */}
         <nav className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar p-1.5 bg-neutral-900/50 border border-neutral-800/80 rounded-xl shrink-0">
+          <NavTabItem
+            active={activeTab === 'integrity'}
+            onClick={() => setActiveTab('integrity')}
+            icon={<ShieldAlert className={`w-4 h-4 ${health?.cell?.integrity?.isOperable === false ? 'text-red-500 animate-pulse' : 'text-emerald-400'}`} />}
+            label="Bug Sentry & Integrity"
+          />
           <NavTabItem
             active={activeTab === 'neuro-symbolic'}
             onClick={() => setActiveTab('neuro-symbolic')}
@@ -162,6 +213,7 @@ export default function App() {
 
         {/* Main Stage Viewport */}
         <main className="flex-1 min-h-0 w-full">
+          {activeTab === 'integrity' && <SystemIntegrityGuard onStatusChange={() => fetchState()} />}
           {activeTab === 'neuro-symbolic' && <NeuroSymbolicPanel />}
           {activeTab === 'reasoning' && <CognitiveReasoningPanel />}
           {activeTab === 'graph' && <CognitiveGraphPanel />}

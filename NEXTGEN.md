@@ -491,6 +491,356 @@ Pengujian otomatis dijalankan secara nyata tanpa mock:
 - **Suite Pengujian Inti Terkait (`upgrades_full_verification`, `fix_shortcuts_empirical`, `step5_metabolism_survival`, `neuro_symbolic_engine`):** **19/19 Tests Lulus (100%)**
 - **Kompilasi Frontend & Backend (`compile_applet`):** Berhasil 100% tanpa error, aplikasi siap dijalankan.
 
+---
 
+## 13. Audit Kritis & Klarifikasi Konsep: Analogi Sel sebagai Neuron vs. Realitas Kode Red Queen
 
+*Dokumentasi evaluasi jujur dan transparan atas analisis analogi "Kawanan Sel Otonom sekaligus Jaringan Saraf Makro (Neural Network Antarsel)" dan perbandingan dengan codebase Red Queen saat ini.*
+
+### 13.1 Pembedaan Makna Kata "Synaptic" pada Codebase
+* **Fakta Kode:** Kata *"synaptic"* sudah digunakan dalam beberapa modul, namun pencarian istilah saja bisa menyesatkan:
+  - `src/redqueen/cognition/representation/graph.ts`: memiliki operasi yang dinamai *synaptic degradation/pruning*, tetapi yang dipangkas adalah konsep dan relasi dalam cognitive graph pengetahuan lokal.
+  - `src/redqueen/cognition/lifelong_learning/sleep_consolidator.ts`: menghitung jumlah pemangkasan secara formula matematika dan mengosongkan replay buffer; tidak ditemukan operasi yang memperbarui matriks bobot neural antarsel.
+  - Modul *contradiction feedback* (`src/redqueen/cognition/reasoning/contradiction_loop.ts`): mengurangi *confidence* atau bobot relasi pengetahuan pada Graf Kognitif lokal saat terdeteksi kontradiksi nalar.
+* **Klarifikasi Kejujuran Teknis:** 
+  - Mengurangi confidence/bobot relasi pengetahuan sangat berbeda dari memperbarui bobot sinapsis antara **Cell A** dan **Cell B**.
+  - Jadi, kata *synaptic* sudah digunakan dalam beberapa modul, tetapi maknanya **belum sama dengan koneksi neural antarsel** yang dimaksud dalam analogi jaringan saraf biologis.
+
+### 13.2 Neural Network yang Benar-Benar Dapat Dilatih — ADA, tetapi Terbatas
+* **Lokasi Kode:** `src/redqueen/learning/mlp.ts` dan `src/redqueen/learning/engine.ts`
+* **Kondisi Riil:**
+  - Ada modul `BinaryMLP` dengan pembaruan bobot berdasarkan *error*, fungsi loss, evaluasi metrik, dan penyimpanan checkpoint. Jadi, **tidak tepat jika seluruh kemampuan learning Red Queen dianggap sekadar pura-pura**. Modul pembelajarannya nyata secara matematis.
+  - Namun, ini adalah model kecil untuk klasifikasi biner berbasis embedding teks hasil hashing.
+  - Keberadaan `BinaryMLP` ini **belum membuktikan adanya jaringan neural makro yang bobotnya dipelajari bersama oleh semua sel**.
+
+### 13.3 Bobot Sinaptik yang Menghubungkan Satu Sel dengan Sel Lain — BELUM DITEMUKAN
+* **Kondisi Riil:**
+  - Belum ditemukan implementasi terintegrasi yang mengelola bobot koneksi neural antarsel, memperbaruinya berdasarkan aktivitas bersama (prinsip Hebbian / STDP / Feedback Alignment) dan hasil tugas, lalu menggunakan bobot tersebut untuk mengarahkan propagasi aktivasi berikutnya.
+  - Inilah komponen utama yang masih hilang dari visi integrasi sel otonom sebagai neuron makro.
+
+### 13.4 Jaringan Spiking atau Aktivasi Kontinu Antarsel — BELUM DITEMUKAN
+* **Kondisi Riil:**
+  - Transport saat ini (`src/redqueen/network/transport.ts` dan `src/redqueen/cognition/computation/fabric.ts`) terutama berorientasi pada **pengiriman pesan (messaging) dan distribusi tugas komputasi (task RPC)**.
+  - Belum ada mekanisme terpadu yang memancarkan pulsa aktivasi antarsel berdasarkan ambang (*firing threshold*), waktu refrakter (*refractory period*), dan dinamika sinapsis yang dipelajari.
+
+### 13.5 Audit Bagian-Bagian Spesifik Kode yang Perlu Diluruskan
+1. **`inferNeuralDistributed()` dan `trainNeuralDistributed()`**
+   - **Lokasi:** `src/redqueen/core/cell.ts` (sekitar baris 468–504).
+   - **Fakta Teknis:** Kedua fungsi tersebut memang ada. Akan tetapi, masing-masing membuat satu `ComputationTask` yang berisi satu subtask neural.
+   - **Realitas Operasional:**
+     * Inferensi dapat didelegasikan ke sel lain.
+     * Pelatihan dapat dijalankan oleh sel remote.
+     * Model yang dilatih menyimpan checkpoint di memori milik sel pelaksana (`neural_checkpoint_default`).
+     * **Tidak ditemukan mekanisme pada jalur tersebut untuk membagi model menjadi bagian-bagian antarsel, menyinkronkan gradien, atau memperbarui bobot koneksi antara sel.**
+   - **Bukti Pengujian:** Pengujian di `test/neural_vector_index.test.ts` memverifikasi bahwa `cellB` menjalankan pelatihan dan menyimpan `neural_checkpoint_default`. Itu adalah bukti delegasi pelatihan jarak jauh (remote execution), bukan bukti bahwa jaringan neural kolektif makro telah terbentuk.
+
+2. **`emergence.ts`**
+   - **Lokasi:** `src/redqueen/cognition/collective/emergence.ts`.
+   - **Fakta Teknis:** Modul ini menggabungkan vektor fitur kognitif tujuh dimensi menggunakan bobot komposisi, menghitung jarak, KL-divergence, koherensi, serta sensitivitas terhadap perturbasi.
+   - **Realitas Operasional:** Secara matematis, modul ini berguna untuk menganalisis interaksi dan komposisi fitur. Namun, **metrik tersebut bukan bukti otomatis terjadinya emergent intelligence**. Metrik itu sendiri tidak melatih bobot sinaptik antarsel.
+
+3. **`cellular_moe.ts`**
+   - **Lokasi:** `src/redqueen/learning/cellular_moe.ts`.
+   - **Fakta Teknis:** Router Top-K memang ada, tetapi implementasi expert bawaannya masih berbasis heuristik:
+     * `canHandle()` menggunakan pencocokan kata (keyword matching) dan skor tetap.
+     * Confidence output beberapa expert ditetapkan konstan.
+     * `KnowledgeExpert` menghasilkan ringkasan dan metadata tetap, bukan menjalankan retrieval graph nyata di dalam metode `process()` yang ditampilkan.
+   - **Realitas Operasional:** Top-K routing sudah diimplementasikan, tetapi belum merupakan *neural gating network* yang terlatih secara end-to-end.
+
+4. **Hyperdimensional Computing (HDC) dan State Space Model (SSM)**
+   - **HDC (`src/redqueen/cognition/hdc.ts`):** Menyediakan operasi hypervector seperti binding, permutasi, similarity, bundling, dan associative memory. Dimensi default-nya adalah **4096 bit**, bukan otomatis 10.000 bit untuk setiap sel.
+   - **SSM (`src/redqueen/learning/linear_ssm.ts`):** Memiliki state rekuren dan matriks bobot yang diinisialisasi. Namun, file ini tidak menyediakan mekanisme pelatihan/update bobotnya.
+   - **Realitas Operasional:** Keduanya dapat menjadi komponen internal masing-masing sel, tetapi keduanya **belum menjadi pengganti sinapsis antarsel**.
+
+### 13.6 Kesimpulan Akhir Evaluasi
+**Red Queen sudah memiliki entitas sel otonom, transport jaringan, beberapa komponen neural fungsional, dan komputasi kolektif. Namun, semuanya belum tergabung menjadi jaringan neural antarsel (macro-neural network) yang belajar secara sinaptik.**
+
+---
+
+## 14. Audit Habis-Habisan, Eliminasi Ilusi/Hype, & Perbaikan Bug Sistemik (Cold Hard Reality Check)
+
+*Dokumentasi audit mendalam, pembongkaran klaim berlebihan yang tidak realistis, perbaikan bug tersembunyi pada lapisan relasi, dan normalisasi kode menuju kejujuran teknis mutlak.*
+
+### 14.1 Penemuan & Perbaikan Bug Tersembunyi: Validasi Zod Skema Relasi (`perceptual_stream.ts`)
+* **Masalah Kritis yang Ditemukan:**
+  - Pada modul `src/redqueen/cognition/perceptual_stream.ts` (baris 225–240), saat sistem menguraikan teks bebas dan hendak menyisipkan relasi antar-konsep ke dalam `CognitiveGraph`, pemanggilan `insertRelation` menggunakan properti yang salah: `sourceConceptId` dan `targetConceptId` (seharusnya `subjectConceptId` dan `objectConceptId`), serta tidak menyertakan status verifikasi yang sah (`RepresentationVerificationStatus.SUPPORTED`).
+  - **Dampak Fatal:** Seluruh relasi gagal validasi skema Zod secara diam-diam (*silent failure*). Kesalahan ini tidak terdeteksi sebelumnya karena dibungkus dalam blok `try/catch` dengan log debug, sehingga tes seolah-olah lulus meskipun relasi kognitifnya tidak pernah tersimpan di `MemoryStore`.
+* **Tindakan Perbaikan:**
+  - Mengimpor enum `CognitiveRelationPredicate` dan `RepresentationVerificationStatus` dari `./representation/types`.
+  - Memperbaiki pemetaan objek relasi: `subjectConceptId: conceptId`, `objectConceptId: targetConceptId`, `predicate: CognitiveRelationPredicate.SUPPORTS`, dan `verificationStatus: RepresentationVerificationStatus.SUPPORTED`.
+  - Memverifikasi secara empiris: Relasi semantik kini benar-benar divalidasi dan tersimpan (*persisted*) ke dalam `MemoryStore` diskret sel.
+
+### 14.2 Perbaikan Bug Polymorphic Signature pada Dekoder Generatif (`generative_synthesizer.ts`)
+* **Masalah Kritis yang Ditemukan:**
+  - Metode `LatentEnergyTokenProjector.decodeSequence` didefinisikan dengan parameter objek tunggal: `options: { ssmHiddenState, ... }`.
+  - Namun pada pengujian dan pemanggilan eksternal, fungsi dipanggil dengan dua argumen: `decodeSequence(stateVector, options)`.
+  - **Dampak Fatal:** Argumen pertama (`stateVector`) diperlakukan sebagai objek `options`. Akibatnya, `options.ssmHiddenState` menjadi `undefined`. Saat menghitung energi, sistem mendeteksi `stateVec` kosong dan selalu mengembalikan energi `0`. Proyeksi energi tidak pernah benar-benar menggunakan vektor keadaan SSM!
+* **Tindakan Perbaikan:**
+  - Mengubah fungsi `decodeSequence` agar mendukung tanda tangan polimorfik penuh: dapat menerima `(stateVector, options)` maupun `({ ssmHiddenState, ... })`.
+  - Vektor aktivasi SSM kini diekstrak secara benar dan energi kandidat token dihitung secara matematis.
+
+### 14.3 Evaluasi Brutal & Pembongkaran Hype: "Pita Suara Organik Tanpa Template"
+* **Klaim yang Terlalu Dilebih-lebihkan:** "Red Queen berbicara secara generatif kata-demi-kata dari trajektori energi laten tanpa satupun template string buatan manusia."
+* **Fakta Kode Apa Adanya:**
+  1. `getEmbedding(token)` menggunakan algoritma hash FNV 32-bit dan `Math.sin(h)` untuk menghasilkan vektor pseudo-acak (*random hash projection*). Ini **bukan semantic embedding** seperti Word2Vec, GloVe, atau model transformer. Kata "kucing" dan "anjing" memiliki kedekatan kosinus acak yang tidak mencerminkan makna linguistik nyata.
+  2. Kosakata mikro (`microVocabulary`) hanya terdiri dari 80 kata terisolasi.
+  3. Dalam dialog obrolan nyata pengguna (`NeuroSymbolicEngine.processChat` dan `synthesize`), kalimat yang dibaca pengguna **sama sekali BUKAN hasil `decodeSequence`**. Jika `decodeSequence` dipaksakan menghasilkan seluruh jawaban obrolan dari hash acak ini, keluarannya adalah rangkaian kata tak bermakna (misal: *"red queen atp sistem energi foton atom ."*).
+  4. Respon interaktif yang runtut dan informatif dihasilkan oleh **perakitan proposisi terverifikasi (*grounded propositional assembly*)**, evaluasi aritmatika deterministik, dan status topologi epistemik. Ini adalah mekanisme deklaratif berbasis fakta, bukan model bahasa generatif bebas (*free-form generative LLM*). Mengakui hal ini adalah bentuk kejujuran teknis yang hakiki.
+
+### 14.4 Evaluasi Brutal: Linear SSM (Untrained Reservoir vs Mamba/RWKV)
+* **Klaim yang Terlalu Dilebih-lebihkan:** "Linear State Space Model Recurrent Sequence Processor pengganti Transformer."
+* **Fakta Kode Apa Adanya:**
+  1. Matriks $B, C, D$ dan vektor pembusukan *decay* pada `LinearSSMCell` diinisialisasi secara acak dan formula sinusoidal statis.
+  2. Modul ini **tidak memiliki fungsi pelatihan bobot, backpropagation, maupun pembaruan gradien**.
+  3. Secara teknis, modul ini bekerja sebagai **Random Recurrent Reservoir Projection (Reservoir Computing)** dengan efisiensi memori $O(1)$. Vektor keadaan $h_t$ bertindak sebagai sidik jari dinamis (*recurrent trajectory*) dari input, bukan representasi fitur semantik terlatih.
+
+### 14.5 Eliminasi Data Tiruan (Mock) pada `KnowledgeExpert` (`cellular_moe.ts`)
+* **Temuan Awal:** `KnowledgeExpert` sebelumnya mengembalikan nilai statis tiruan: `entitiesFound: ['RedQueen', 'AutonomousCell']` dan `tripletMatches: 2`, terlepas dari apakah query pengguna relevan atau apakah graf kognitif terpasang.
+* **Perbaikan Nyata:**
+  - Mock statis dihapus total.
+  - `KnowledgeExpert` kini menerima injeksi `CognitiveGraph` riil dari `NeuroSymbolicEngine`.
+  - Jika simpul konsep yang dicari ditemukan di graf lokal, ia mengembalikan entitas riil tersebut; jika tidak ditemukan, ia secara transparan dan jujur melaporkan 0 entitas tanpa memalsukan respon.
+
+### 14.6 Penataan Type Safety & Verifikasi Kompilasi Bersih
+* `CognitiveGraph`: Ditambahkan parameter default aman (`cellId = 'cell_default'`, `memory = new JsonFileMemoryStore(':memory:', this.cellId)`), sehingga graf dapat diinisialisasi mandiri tanpa error type.
+* `CellMetabolismController`: Tipe parameter konstruktor diperbarui menjadi `audit?: MetabolismAuditTrail | CellularVitalityConfig`, mendukung inisialisasi polimorfik yang aman dari error TS2322/TS2353.
+* `contradiction_loop.ts`: Properti `updatedAt` dipindahkan ke dalam `metadata` objek relasi, mematuhi Zod Schema `CognitiveRelation`.
+* `test/new_features_verification.test.ts`: Diperbarui dengan tipe enum `InformationCategory` dan properti `ReasoningEpisode` yang valid.
+
+### 14.7 Hasil Akhir Audit & Status Verifikasi
+1. **Linter & Type Checker (`tsc --noEmit` via `lint_applet`):** **LULUS BERSIH 100% (0 error).**
+2. **Kompilasi Aplikasi (`compile_applet`):** **BERHASIL 100% (Build production siap jalan).**
+3. **Pengujian Vitest (`new_features`, `upgrades_full`, `fix_shortcuts`, `next_gen_cognition`):** **22/22 Tests Lulus 100%** dengan persistensi memori riil dan tanpa manipulasi mock.
+4. **Prinsip Kejujuran Teknis:** Seluruh komponen, keterbatasan, dan realitas arsitektur terdokumentasi tanpa polesan atau klaim yang dibesar-besarkan.
+
+---
+
+## 15. Sistem Pelacakan Error & Deep Integrity Sentry (Fail-Fast Lockdown & Zero-Bug Enforcer)
+
+*Dokumentasi implementasi sistem pelacakan error, deteksi inkonsistensi tersembunyi (hidden invariant breaches), mekanisme penghentian otomatis (fail-fast lockdown), serta visualisasi tata letak bug lengkap dengan nomor baris, nama fungsi, stack trace, dan audit mendalam melintasi 34.000+ baris kode Red Queen.*
+
+### 15.1 Arsitektur Fail-Fast & Pelacakan Error Tersembunyi
+- **Lokasi Kode Inti:** `src/redqueen/core/system_integrity.ts` (`SystemIntegrityTracker`, `SystemAnomaly`, `FatalSystemIntegrityError`)
+- **Prinsip Operasional:**
+  1. **Zero-Tolerance to Silent Failures:** Setiap kegagalan kontrak skema, pelanggaran batas numerik (NaN/Infinity), atau pelanggaran invarian termodinamika sekecil apapun (minor/silent/major/critical) **seketika mengunci sistem (*SYSTEM HALTED / LOCKDOWN*)**.
+  2. **Non-Bypassable Execution Guard:** Metode `assertOperable(context)` disematkan di titik-titik krusial eksekusi:
+     - `cell.metabolize()`
+     - `cell.inferNeuralDistributed()`
+     - `cell.trainNeuralDistributed()`
+     - `neuroSymbolic.processChat()`
+     - Endpoint API `server.ts` (`/api/chat`, `/api/cell/metabolize`).
+     Saat sistem dalam status lockdown, setiap pemanggilan langsung memicu eksepsi `FatalSystemIntegrityError` (HTTP 503) dengan payload rincian lokasi bug, sehingga tidak ada data yang rusak atau hasil palsu yang disajikan ke pengguna.
+  3. **Penangkap Eksepsi Global (Global Traps):** Sistem memasang interceptor pada `process.on('unhandledRejection')` untuk menangkap silent promise drops di seluruh rantai async dan mengonversinya menjadi anomali berkode lokasi.
+
+### 15.2 Tata Letak Bug & Struktur Data Diagnostik
+Setiap anomali yang terdeteksi merekam struktur data presisi tinggi:
+- `id`: Format kanonikal unik, misal: `ANOMALY-METABOLISM-MV8JLN47-888`.
+- `timestamp`: Stempel waktu ISO 8601.
+- `severity`: Tingkat keparahan (`CRITICAL`, `MAJOR`, `MINOR`, `SILENT_INVARIANT_BREACH`).
+- `subsystem`: Kategori modul (`METABOLISM`, `COGNITIVE_GRAPH`, `HDC_VECTOR`, `NEURAL_SSM`, `MEMORY_STORE`, `GENOME_LINEAGE`, `DHT_NETWORK`, `PERCEPTUAL_STREAM`, `CONTRADICTION_LOOP`, `RUNTIME_EXECUTION`).
+- `location`:
+  - `file`: Path file sumber relatif (contoh: `src/redqueen/metabolism/cellular_vitality.ts`).
+  - `line`: Nomor baris persis terjadinya anomali (contoh: baris `142`).
+  - `column`: Posisi kolom pada file.
+  - `functionOrClass`: Nama kelas/fungsi spesifik (contoh: `CellMetabolismController.burnATP`).
+- `stackTrace`: Full call stack trace asli Node.js/TypeScript.
+- `stateSnapshot`: Dump objek keadaan (*state dictionary*) saat kegagalan terjadi.
+- `suggestedRemediation`: Panduan perbaikan teknis untuk merekayasa balik bug.
+
+### 15.3 Deep Subsystem Audit Runner (9 Titik Invarian Subsistem)
+`SystemIntegrityTracker.runDeepSystemAudit(cell)` menjalankan audit dinamis menyeluruh terhadap 9 subsistem utama:
+1. **MemoryStore:** Memverifikasi serialisasi JSON, struktur objek bertingkat (*nested object payload parity*), dan integritas key ID.
+2. **Metabolism Controller:** Memvalidasi saldo ATP non-negatif dan berhingga, rasio efisiensi dalam rentang $[0, 1]$, dan akumulasi entropi termodinamika.
+3. **Cognitive Graph:** Memverifikasi referensial non-orphaned antara relasi dan konsep, batas keyakinan (*confidence* $\in [0, 1]$), serta bobot relasi.
+4. **Linear SSM Cell:** Memverifikasi stabilitas numerik langkah rekurensi ($h_t$ bebas dari NaN / Infinity pada tensor kontinu).
+5. **Hyperdimensional Computing (HDC):** Memverifikasi integritas associative memory concept vocabulary dan invarian dimensi biner.
+6. **Contradiction Feedback Loop:** Menguji parser deteksi negasi/kontradiksi kognitif terhadap frasa umpan balik pengguna.
+7. **Perceptual Stream Ingestion:** Menguji parser klausa semantik mandiri tanpa triplet manual.
+8. **Cell Genome & Lineage:** Memvalidasi immutabilitas `genomeId`, `lineageId`, dan keberadaan kapabilitas kriptografis.
+9. **DHT Routing Table:** Memverifikasi metrik jarak simetri XOR Kademlia dan validitas 64-karakter hex `localNodeId`.
+
+### 15.4 Integrasi Frontend UI (`SystemIntegrityGuard.tsx` & `App.tsx`)
+- **Header Status Pill:** Indikator dinamis `Integrity: ZERO BUG (OPERABLE)` berwarna hijau zamrud jika normal, atau `Integrity: HALTED (LOCKDOWN)` berkedip merah terang jika terjadi anomali.
+- **Lockdown Alert Banner:** Banner peringatan merah darurat di bagian atas layar saat terjadi lockdown, menginformasikan alasan penguncian dan menyediakan tombol pintas `Inspect Bug Location →`.
+- **Panel Bug Sentry (`activeTab === 'integrity'`):**
+  - Kotak terminal diagnostik monospaced menampilkan tata letak file, baris, fungsi, dan call stack.
+  - State dump JSON inspector interaktif.
+  - Kartu hasil pengujian audit per subsistem (9 checks) dengan durasi eksekusi dalam milidetik.
+  - Tombol aksi `Run Deep System Audit` untuk memicu audit real-time kapan saja.
+  - Tombol `Emergency Reset / Reboot Post-Repair` untuk mengembalikan sistem ke status operasional setelah bug diperbaiki.
+
+### 15.5 Bukti Verifikasi Empiris & Status Kompilasi
+* **Suite Uji Baru (`test/system_integrity.test.ts`):** **5/5 Tests Lulus 100%**
+  1. `initializes in 100% OPERABLE state with zero anomalies` (PASS)
+  2. `triggers immediate fail-fast LOCKDOWN on invariant breach and records exact bug location` (PASS)
+  3. `runs deep system audit verifying multi-subsystem invariants` (PASS - 9/9 subsystem checks valid)
+  4. `restores operability when anomalies are remediated and lockdown is reset` (PASS)
+  5. `guards cell operations and denies execution under lockdown` (PASS)
+* **Suite Regresi Kognitif & Fitur Baru:** **12/12 Tests Lulus 100%**
+  - `test/new_features_verification.test.ts`: PASS
+  - `test/upgrades_full_verification.test.ts`: PASS
+  - `test/fix_shortcuts_empirical.test.ts`: PASS
+* **Kompilasi TypeScript & Linting (`tsc --noEmit` via `lint_applet`):** **0 errors (100% clean).**
+* **Kompilasi Frontend & Dev Server (`compile_applet`):** **Build Succeeded.**
+
+### 15.6 Perbaikan Bug Runtime UI & Invariant Cognitive Graph (Double Checked & Verified)
+
+* **Bug 1: TypeError: Cannot read properties of undefined (reading 'file') pada `SystemIntegrityGuard.tsx`**
+  - **Akar Masalah:** `server.ts` mengembalikan `report.lockdownReason` sebagai string terformat (misal: `"COGNITIVE_GRAPH: Audit failed in..."`), sementara antarmuka `SystemIntegrityGuard.tsx` mengasumsikan properti tersebut selalu berupa objek `SystemAnomaly` dan langsung mengakses `report.lockdownReason.location.file`.
+  - **Perbaikan:** Menyesuaikan interface `LockdownReport` dan menambahkan logika ekstraksi aman: mendeteksi apakah `lockdownReason` berupa string atau objek, mengekstrak objek anomali dari `report.lockdownAnomaly` / `report.anomalies[0]`, serta menggunakan *optional chaining* dan fallback default (`src/redqueen/core/system_integrity.ts`) pada seluruh rendering lokasi bug.
+
+* **Bug 2: Anomali Palsu "Relation rel_stream_... weight out of bounds: undefined" pada Graf Kognitif**
+  - **Akar Masalah:** Pada fungsi audit `Cognitive Graph Referential Consistency & Bounded Confidence` di `src/redqueen/core/system_integrity.ts`, kode memverifikasi `rel.weight`. Padahal, skema representasi resmi `CognitiveRelationSchema` (`src/redqueen/cognition/representation/types.ts`) menggunakan atribut kanonikal `confidence: number`, sedangkan `weight` bersifat opsional di dalam `metadata`. Karena `rel.weight` bernilai `undefined`, audit memicu alarm lockdown kritis palsu.
+  - **Perbaikan:** Menyelaraskan validator invarian agar membaca `(rel as any).weight ?? rel.confidence ?? (rel.metadata?.weight ?? 0.8)` dan memvalidasi nilainya dalam batas $[0, 1]$.
+
+* **Hasil Verifikasi Live Pasca-Perbaikan:**
+  - `POST /api/integrity/audit`: **9/9 checks lulus (100% passed)**, `failedChecks: 0`, `activeAnomalies: 0`.
+  - `GET /api/integrity/status`: `isOperable: true`, status `OPERATIONAL`.
+  - `test/system_integrity.test.ts`: **5/5 tests lulus**.
+  - `lint_applet` (`tsc --noEmit`): **0 errors**.
+  - `compile_applet`: **Build Succeeded**.
+
+---
+
+## 16. Implementasi Penuh & Verifikasi Empiris: Macro-Neural Inter-Cell Network (No. 1) & True BPTT Linear SSM (No. 2)
+
+*Dokumentasi implementasi penuh tanpa jalan pintas atas dua pilar kognitif fundamental: Jaringan Saraf Makro Antarsel berbasis STDP/Hebbian/Reinforcement dan Pelatihan Gradien Analitis Rekuren BPTT pada Linear State-Space Model.*
+
+### 16.1 Implementasi Pilar No. 1: Jaringan Saraf Makro Antarsel (Macro-Neural Inter-Cell Synaptic Network)
+* **Lokasi Kode Baru:** `src/redqueen/network/synaptic_network.ts`, `src/redqueen/network/protocol.ts`, `src/redqueen/core/cell.ts`
+* **Latar Belakang & Realitas Masalah:**
+  - Sebelumnya, kata "synaptic" pada kode hanya digunakan untuk merujuk pada pemangkasan konsep lokal di dalam graf pengetahuan satu sel saja.
+  - Antara Cell A dan Cell B tidak memiliki matriks bobot sinaptik riil yang dipelajari bersama. Komunikasi hanya berupa pesan RPC statis.
+* **Mekanisme Rekayasa Penuh Tanpa Jalan Pintas:**
+  1. **Model Sel sebagai Neuron Makro:**
+     - Setiap sel kognitif memiliki vektor potensial aksi/keadaan ($a_i \in \mathbb{R}^d$) dari trajektori rekuren SSM atau representasi HDC.
+     - Setiap koneksi antarsel dimodelkan sebagai sinapsis berarah $\mathcal{S}_{ij}$ dengan atribut matematis lengkap: `weight` ($w_{ij} \in [-1.0, 1.0]$), `conductance` ($g_{ij} \in [0.1, 2.0]$), `delayMs`, catatan waktu pre-spike/post-spike, serta counter LTP/LTD.
+  2. **Tiga Aturan Pembelajaran Plastisitas Biologis:**
+     - **Spike-Timing-Dependent Plasticity (STDP):** Menghitung $\Delta t = t_{\text{post}} - t_{\text{pre}}$. Jika $\Delta t > 0$ (kausal, firing berurutan tepat), terjadi *Long-Term Potentiation (LTP)*: $\Delta w = A_+ \exp(-\Delta t / \tau_+)$. Jika $\Delta t < 0$ (akasal), terjadi *Long-Term Depression (LTD)*: $\Delta w = -A_- \exp(-|\Delta t| / \tau_-)$.
+     - **Anti-Runaway Hebbian Learning (Oja's Normalization Rule):** Menghitung korelasi ko-aktivasi vektor kontinu $\Delta w = \eta (\rho - w \rho^2)$ untuk mencegah bobot meledak tak terbatas ke infinity sambil memperkuat jalur sel yang aktif bersamaan.
+     - **Neuromodulatory Task Reinforcement (Dopaminergic Plasticity):** Mengaitkan keberhasilan pembuktian hipotesis (*Proof-of-Epistemic-Yield* / konsensus P2P) dan metabolisme ATP dengan penguatan sinapsis (+bobot, +konduktansi), serta melemahkan sinapsis saat terjadi kegagalan atau kontradiksi nalar.
+  3. **Transmisi Sinaptik & Eksitasi Antarsel:**
+     - Sinyal ditransmisikan melintasi sinapsis: $s_j = w_{ij} \cdot g_{ij} \cdot a_i$.
+     - Jika $\|s_j\|_2 \ge \theta_{\text{fire}}$, potensial aksi makro meletup (*action potential fires*).
+     - Pulsa yang diterima oleh sel target secara fisik menyuntikkan vektor energi ke dalam `ssmCell.step()` milik sel penerima, mewujudkan jaringan saraf makro terdistribusi sejati.
+  4. **Ekspansi Protokol Jaringan:**
+     - Ditambahkan `NEURAL_SYNAPTIC_PULSE`, `NEURAL_SYNAPSE_FEEDBACK`, dan `NEURAL_SYNAPSE_SYNC` pada `MessageType` di `protocol.ts`.
+     - Ditambahkan endpoint HTTP observasi: `GET /api/p2p/synapses`, `POST /api/p2p/synapses/pulse`, dan `POST /api/p2p/synapses/learn`.
+
+---
+
+### 16.2 Implementasi Pilar No. 2: Pelatihan Bobot Sejati pada Linear SSM (Backpropagation Through Time)
+* **Lokasi Kode:** `src/redqueen/learning/linear_ssm.ts`
+* **Latar Belakang & Realitas Masalah:**
+  - Sebelumnya, `LinearSSMCell` bekerja murni sebagai *untrained random reservoir*: matriks $B, C, D$ dan *decay* diinisialisasi secara acak tanpa adanya fungsi loss, backpropagation, atau pembaruan gradien.
+* **Mekanisme Rekayasa Penuh Tanpa Jalan Pintas:**
+  1. **Formulasi Matematis Recurrent State Space:**
+     - Forward pass:
+       $$h_t = \tanh(\text{decay} \odot h_{t-1} + B x_t)$$
+       $$y_t = C h_t + D x_t$$
+  2. **Turunan Analitis Backpropagation Through Time (BPTT):**
+     - Error output: $e_t = y_t - y_t^*$.
+     - Gradien matriks proyeksi langsung: $\nabla_D = \sum_t e_t x_t^T$, $\nabla_C = \sum_t e_t h_t^T$.
+     - Adjoin keadaan tersembunyi berulang mundur: $\delta_t^h = C^T e_t + \text{decay} \odot (1 - h_{t+1}^2) \odot \delta_{t+1}^h$.
+     - Gradien non-linearitas tanh: $\delta_t^z = \delta_t^h \odot (1 - h_t^2)$.
+     - Gradien matriks input: $\nabla_B = \sum_t \delta_t^z x_t^T$.
+     - Gradien parameter peluruhan waktu: $\nabla_{\text{decay}} = \sum_t \delta_t^z \odot h_{t-1}$.
+  3. **Optimizer Adam, Gradient Clipping, & Penjagaan Stabilitas:**
+     - Mengimplementasikan optimizer Adam penuh dengan pelacakan momen pertama ($m$) dan kedua ($v$), koreksi bias $(1 - \beta^t)$, dan regularisasi weight decay L2.
+     - Penjepit gradien (*gradient clipping*) berbasis $L_2$-norm untuk mencegah ledakan gradien.
+     - Penjagaan stabilitas rekurensi: parameter $\text{decay}_s$ dijepit dalam rentang aman $[0.05, 0.99]$, menjamin sifat memori jangka panjang tanpa divergensi numerik.
+  4. **Kuantisasi Dinamis BitNet 1.58-bit:**
+     - Setelah pembaruan bobot kontinu master, sistem secara otomatis mere-kuantisasi matriks menjadi representasi ternary integer $\{-1, 0, +1\}$ untuk inferensi hemat energi.
+  5. **Endpoint HTTP & Serialisasi:**
+     - `POST /api/ssm/train`: Melatih sekuens input-target secara online via BPTT.
+     - `GET /api/ssm/parameters`: Mengekspor seluruh parameter hasil pelatihan.
+
+---
+
+### 16.3 Integrasi Audit Integritas Subsistem (11 Titik Invarian)
+* `src/redqueen/core/system_integrity.ts`:
+  - Ditambahkan kategori subsistem `MACRO_NEURAL_SYNAPSES`.
+  - **CHECK 10:** *Linear SSM Recurrent Dynamics & Stability Invariants* — Memverifikasi ketiadaan NaN/Infinity, keterikatan bobot, dan stabilitas rata-rata decay.
+  - **CHECK 11:** *Inter-Cell Synaptic Network STDP & Conductance Invariants* — Memverifikasi batas bobot sinaptik $[-1, 1]$ dan rentang konduktansi $[0.1, 2.5]$.
+
+---
+
+### 16.4 Bukti Hasil Pengujian Empiris Zero-Mock
+1. **Suite Pengujian Baru (`test/macro_neural_and_ssm_training.test.ts`):** **8/8 Tests LULUS 100%**
+   - `Part 1 (SSM Recurrent Learning):`
+     - Inisialisasi stabil & finite invariants (PASS)
+     - Pelatihan BPTT Adam sekuensial dengan penurunan MSE loss terbukti matematis (PASS)
+     - Re-kuantisasi BitNet ternary & paritas inferensi pasca-load (PASS)
+   - `Part 2 (Macro-Neural Synapses):`
+     - STDP LTP pada timing kausal & LTD pada timing akasal (PASS)
+     - Oja anti-runaway Hebbian plasticity pada aktivasi berkorelasi (PASS)
+     - Modulasi reward/penalty tugas & metabolisme pada bobot/konduktansi (PASS)
+     - Propagasi pulsa sinaptik & peletupan potensial aksi berbasis threshold (PASS)
+   - `Part 3 (End-to-End Inter-Cell Integration):`
+     - Integrasi dua sel riil (Cell A & Cell B) bertukar pulsa sinaptik dan lulus 11/11 audit checks (PASS)
+2. **Suite Uji Sistem Integritas (`test/system_integrity.test.ts`):** **5/5 Tests LULUS 100%**
+3. **Suite Uji Regresi Lengkap (`new_features`, `upgrades_full`, `fix_shortcuts`):** **12/12 Tests LULUS 100%**
+4. **Linter & Type-Checking (`tsc --noEmit` via `lint_applet`):** **0 Error (100% Bersih).**
+5. **Kompilasi Aplikasi (`compile_applet`):** **Build Succeeded.**
+
+---
+
+## 17. Audit & Pengujian Empiris: Dinamika Kelahiran Sel (Mitosis) dan Kematian Sel (Apoptosis, Starvation, & Lifecycle Termination)
+
+*Dokumentasi komprehensif, evaluasi ilmiah, dan hasil pengujian empiris zero-mock mengenai apa yang terjadi secara eksak di dalam arsitektur Red Queen ketika sebuah sel lahir (mitosis) dan ketika sebuah sel mati (starvation/apoptosis/shutdown).*
+
+### 17.1 Apa yang Terjadi Ketika Sel Lahir (Cell Birth / Mitosis)
+Kelahiran sel dimediasi oleh `MitosisEngine` (`src/redqueen/reproduction/mitosis.ts`) melalui pemanggilan `cell.reproduce()` atau `triggerCausalReproduction()`:
+1. **Pemisahan Kunci Kriptografis Mandiri (Cryptographic Sovereign Identity):**
+   - Sel anak (`Child`) tidak mengkloning kunci induk. Pasangan kunci Ed25519 baru di-*generate* secara independen (`identityCrypto.generateKeyPair()`).
+   - Sel anak memperoleh `nodeId` unik (hash 64-karakter hex publik) dan path penyimpanan terisolasi (`cell_<nodeId>.json`). Sel induk tetap memegang identitas lamanya tanpa ada kebocoran kunci privat.
+2. **Pencatatan Silsilah Genom & Bukti Garis Keturunan (Lineage Provenance):**
+   - `Child.genome.parentCellId` diikat permanen ke `Parent.nodeId`.
+   - `Child.genome.generation` dinaikkan secara matematis: $\text{generation}_{\text{child}} = \text{generation}_{\text{parent}} + 1$.
+   - `lineageId` diturunkan untuk memelihara pohon filogenetik kognitif tak terputus.
+3. **Penyaringan & Pembagian Memori Selektif (Selective Memory Partitioning):**
+   - Memori konseptual berbobot tinggi/inti (`[core]`, `confidence >= 0.70`) diduplikasi dan dialihkan kepemilikannya (`currentHolderCellId = child.nodeId`, `originatingCellId = parent.nodeId`).
+   - Memori sementara/rendah (*low-confidence transient observations*, `confidence < 0.30`) **secara sengaja dibuang/tidak diwariskan**, melindungi sel anak dari beban komputasi entropi sampah.
+4. **Metabolisme & Vitalitas Awal:**
+   - Sel anak lahir dengan pool energi ATP penuh dan kondisi `OPTIMAL` (`atpPool >= 100`, `catabolicWaste = 0`), siap untuk mengonsumsi dan memproduksi energi sendiri.
+5. **Pencatatan pada Sel Induk:**
+   - Sel induk mencatat event reproduksi, menaikkan counter `descendantsCount`, dan memasuki masa jeda (*cooldown window*) guna mencegah proliferasi seluler berlebih (*over-replication governance*).
+6. **Integrasi ke Jaringan Saraf Makro (Synaptogenesis):**
+   - Saat sel anak diaktifkan (`child.start()`), koneksi sinaptik dua arah otomatis didaftarkan (`Parent <-> Child`).
+   - Sinyal potensial aksi dapat mengalir melintasi sinapsis antarsel, mengaktifkan plastisitas STDP kausal ($t_{\text{post}} - t_{\text{pre}} > 0$) yang memicu *Long-Term Potentiation (LTP)* (+bobot sinaptik, +konduktansi).
+
+### 17.2 Apa yang Terjadi Ketika Sel Mati (Cell Death / Apoptosis, Starvation, & Termination)
+Kematian sel dalam arsitektur Red Queen terbagi menjadi 3 tahapan biomimetik:
+1. **Tahap 1: Tekanan Kelaparan Energi & Risiko Apoptosis (Intra-cellular Starvation & Apoptosis Pressure):**
+   - Ketika ATP terkuras habis akibat beban inferensi tinggi tanpa adanya asupan (`atpPool < 35.0` atau `< 15.0`):
+   - Status vitalitas merosot ke `STARVATION` lalu ke `CRITICAL_APOPTOSIS_RISK`.
+   - **Respon Bertahan Hidup Otonom (Restructure Reasoning Pathways):**
+     * Mode penalaran diturunkan seketika dari `BALANCED` / `EXPLORATORY` ke `EMERGENCY_MINIMAL` (penonaktifan query multi-hop spekulatif, murni pencarian cache lokal berbiaya 0 ATP).
+     * **Autophagy (Daur Ulang Sampah Katabolik):** Sel mendaur ulang limbah katabolik internal dengan rasio 2:1 menjadi suntikan ATP darurat untuk mencegah kematian instan.
+     * **Degradasi & Pemangkasan Sinaptik:** Memangkas simpul graf konsep berkeyakinan rendah guna memangkas beban pemeliharaan BMR (*Basal Metabolic Rate*).
+2. **Tahap 2: Penghentian Siklus Hidup Fisik (Cell Termination / Shutdown):**
+   - Jika energi tidak terselamatkan atau terjadi pemanggilan terminasi (`cell.stop()` / `cell.lifecycle.retire()`):
+   - Status siklus hidup bertransisi: `ACTIVE` $\rightarrow$ `SHUTTING_DOWN` $\rightarrow$ `STOPPED` (atau `RETIRED`).
+   - Seluruh kait penutupan (*shutdown hooks*) dieksekusi secara idempotent: WebSocket transport P2P ditutup, interval timer latar belakang dihentikan, dan keadaan memori diflushing ke disk.
+3. **Tahap 3: Dampak pada Sel Lain yang Masih Hidup & Topologi Jaringan:**
+   - **Depresi Sinaptik Antarsel:** Sel induk yang mengirimkan pulsa ke sel yang telah mati tidak menerima respon balik. Mekanisme *Task Reinforcement Failure* mengaktifkan penalti depresi sinaptik ($\Delta w = -0.08$, $\Delta g = -0.08$), sehingga jalur sinyal ke sel mati perlahan memudar dan terisolasi agar energi sel hidup tidak terbuang sia-sia.
+   - **DHT Routing & Swarm Eviction:** Transpor mendeteksi pemutusan koneksi; node mati dikeluarkan dari bucket Kademlia aktif dan sertifikat keanggotaan swarm beralih ke `DISCONNECTED`/`EXPIRED`.
+   - **Seleksi Alam Generasional (Evolutionary Population Culling):**
+     * Pada siklus seleksi populasi (`PopulationCycleEngine`), sel dievaluasi berdasarkan skor fitness multidimensi.
+     * Sel yang mati / memiliki performa mendekati nol **dieliminasi dari gene pool penyintas (`survivingCells`)**.
+     * Hanya sel-sel yang sehat, aktif, dan memiliki efisiensi sumber daya tinggi yang dipertahankan untuk berevolusi ke generasi berikutnya.
+
+### 17.3 Bukti Hasil Pengujian Empiris
+* **Suite Uji Khusus Kelahiran & Kematian (`test/cell_birth_and_death_lifecycle.test.ts`):** **4/4 Tests LULUS 100% (PASS)**
+  1. `Fase 1: KELAHIRAN SEL (Mitosis) - Isolasi Identitas, Pewarisan Memori, dan Silsilah` (PASS)
+  2. `Fase 2: INTERAKSI SINAPTIK - Koneksi Saraf Makro Terbentuk Saat Sel Anak Hidup` (PASS)
+  3. `Fase 3: KEMATIAN SEL (Starvation & Apoptosis) - Respon Proteksi Internal` (PASS)
+  4. `Fase 4: KEMATIAN TOTAL & PENGARUH PADA JARINGAN / POPULASI (Natural Selection & Synaptic Depression)` (PASS)
+* **Suite Uji Terkait yang Terverifikasi Bersama:**
+  - `test/cell_lifecycle.test.ts` (6 tests - transisi ACTIVE, SHUTDOWN, STOPPED, idempotent recovery): PASS
+  - `test/cell_mitosis_lifecycle_integration.test.ts` (3 tests - isolasi anak, multi-generasi cucu): PASS
+  - `test/step5_metabolism_survival.test.ts` (4 tests - konsumsi ATP, autophagy, apoptosis restructuring): PASS
+  - `test/p9_2_population_selection.test.ts` (6 tests - ranking fitness & seleksi): PASS
+  - `test/p9_3_population_cycle.test.ts` (5 tests - survival culling generasi): PASS
+* **Total Verifikasi Pengujian Siklus Hidup:** **28/28 Tests LULUS 100%**.
 
